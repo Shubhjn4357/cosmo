@@ -3,7 +3,7 @@ name: Whisper AI Space
 on:
   push:
     branches:
-      - server
+      - main
     paths:
       - .github/workflows/whisper-ai-space.yml
       - whisper-ai/**

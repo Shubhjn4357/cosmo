@@ -3,7 +3,7 @@ name: Image Encoder Space
 on:
   push:
     branches:
-      - server
+      - main
     paths:
       - .github/workflows/image-encoder-space.yml
       - image-encoder/**
