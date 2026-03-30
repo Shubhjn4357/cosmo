@@ -1,0 +1,15 @@
+# Ignore native folders - let EAS generate them fresh
+android/
+ios/
+
+# Build artifacts
+dist/
+web-build/
+
+# IDE
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+*.log

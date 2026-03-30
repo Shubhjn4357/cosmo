@@ -1,0 +1,8 @@
+/**
+ * Package dependencies note
+ * 
+ * This component requires @react-native-community/slider
+ * Install with: npm install @react-native-community/slider
+ */
+
+export {};

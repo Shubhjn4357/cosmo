@@ -1,0 +1,1131 @@
+/**
+ * Whisper AI - API Service
+ * Handles all communication with the Whisper AI backend
+ */
+
+// Configure API base URL - update this to your server address
+// Expo requires EXPO_PUBLIC_ prefix for env vars
+const API_BASE_URL: string = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://shubhjn-whisper-ai.hf.space';
+export interface ChatResponse {
+    response: string;
+    tokens_used: number;
+    sources: { source: string }[];
+}
+
+export interface ImageResponse {
+    image_url: string;
+    seed: number;
+    prompt: string;
+}
+
+export interface FileReadResponse {
+    content: string;
+    file_type: string;
+    pages?: number;
+    word_count: number;
+    characters: number;
+}
+
+export interface FileAnalyzeResponse {
+    answer: string;
+    relevant_text: string;
+}
+
+export interface SearchResult {
+    text: string;
+    score: number;
+    source: string;
+}
+
+export interface HealthStatus {
+    status: string;
+    service?: string;
+    model_loaded: boolean;
+    tokenizer_loaded: boolean;
+    vectordb_loaded: boolean;
+    knowledge_chunks?: number;
+    is_training: boolean;
+    daemon_running: boolean;
+}
+
+export interface LLMModel {
+    id: string;
+    name: string;
+    description: string;
+    size_mb: number;
+    ram_required_gb: number;
+    speed: string;
+    repo_id: string;
+    filename: string;
+    quantization: string;
+}
+
+export interface ImageModel {
+    id: string;
+    name: string;
+    description?: string;
+    size_mb?: number;
+    ram_required_gb?: number;
+    speed?: string;
+    type?: string;
+    count?: number;
+    performance?: number;
+    queued?: number;
+    eta?: number;
+    filename?: string;
+    repo_id?: string;
+}
+
+export interface TrainingPair {
+    input: string;
+    output: string;
+    model: string;
+}
+
+export class WhisperAPI {
+    private baseUrl: string;
+
+    constructor(baseUrl: string = API_BASE_URL) {
+        this.baseUrl = baseUrl;
+    }
+
+    setBaseUrl(url: string) {
+        this.baseUrl = url;
+    }
+
+    getBaseUrl(): string {
+        return this.baseUrl;
+    }
+
+    private getHeaders(): HeadersInit {
+        return {
+            'Content-Type': 'application/json',
+            // Add any other default headers here, e.g., Authorization
+        };
+    }
+
+    /**
+     * Get optimal chat endpoint based on mode
+     * - If smart mode enabled -> /api/chat/smart (provider racing)
+     * - Else -> /api/chat (Whisper server runtime)
+     */
+    private getOptimalEndpoint(smartMode: boolean = false): string {
+        return smartMode ? '/api/chat/smart' : '/api/chat';
+    }
+
+    /**
+     * Send a chat message and get a response
+     */
+    async chat(params: {
+        message: string;
+        history?: any[];
+        context?: string;
+        useRAG?: boolean;
+        temperature?: number;
+        maxTokens?: number;
+        systemPrompt?: string;
+        // Token system parameters
+        isLocal?: boolean;  // FREE if true
+        userId?: string;
+        sessionId?: string;
+        smartMode?: boolean;  // NEW: Use smart mode (races all APIs)
+    }): Promise<ChatResponse> {
+        // Determine endpoint: Smart mode or default (AI Horde)
+        const endpoint = this.getOptimalEndpoint(params.smartMode || false);
+
+        const response = await fetch(`${this.baseUrl}${endpoint}`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                message: params.message,
+                history: params.history || [],
+                context: params.context,
+                use_rag: params.useRAG !== false,
+                temperature: params.temperature || 0.8,
+                max_tokens: params.maxTokens || 256,
+                system_prompt: params.systemPrompt,
+                    is_local: params.isLocal !== false,
+                user_id: params.userId,
+                session_id: params.sessionId,
+                    // Smart mode params
+                    conversation_history: params.history?.map(h => ({
+                        text: h.text || h.content,
+                        isUser: h.isUser || h.role === 'user'
+                    })),
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            // Check if insufficient tokens
+            if (error.detail?.error === 'insufficient_tokens') {
+                throw new Error(`Not enough tokens: ${error.detail.message}`);
+            }
+            throw new Error(`Chat failed: ${response.statusText}`);
+        }
+
+        const initialData = await response.json();
+
+        // Check if this is an async task (Horde)
+        if (initialData.task_id) {
+            return this.pollTask(initialData.task_id);
+        }
+
+        return {
+            response: initialData.response ?? initialData.message ?? '',
+            tokens_used: initialData.tokens_used ?? 0,
+            sources: initialData.sources ?? [],
+        };
+    }
+
+    async chatSelfLearner(params: {
+        message: string;
+        history?: any[];
+        context?: string;
+        temperature?: number;
+        maxTokens?: number;
+        systemPrompt?: string;
+        userId?: string;
+        sessionId?: string;
+    }): Promise<ChatResponse> {
+        const response = await fetch(`${this.baseUrl}/api/chat/self-learner`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                message: params.message,
+                history: params.history || [],
+                context: params.context,
+                temperature: params.temperature || 0.7,
+                max_tokens: params.maxTokens || 256,
+                system_prompt: params.systemPrompt,
+                is_local: true,
+                user_id: params.userId,
+                session_id: params.sessionId,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail?.message || error.detail || `Self-learner chat failed: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Poll a task until completion
+     */
+    private async pollTask(taskId: string, intervalMs: number = 2000, maxAttempts: number = 60): Promise<ChatResponse> {
+        for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(resolve => setTimeout(resolve, intervalMs));
+
+            try {
+                const response = await fetch(`${this.baseUrl}/api/horde/tasks/${taskId}`);
+                if (!response.ok) continue;
+
+                const status = await response.json();
+
+                if (status.status === 'completed') {
+                    // Map Horde result to ChatResponse
+                    return {
+                        response: status.result?.response || status.result || "I couldn't generate a response.",
+                        tokens_used: status.result?.tokens_used || 0,
+                        sources: []
+                    };
+                }
+
+                if (status.status === 'failed') {
+                    throw new Error(status.error || 'Generation failed');
+                }
+
+                // Continue polling if 'queued' or 'processing'
+            } catch (e) {
+                console.error('Polling error:', e);
+            }
+        }
+        throw new Error('Timeout waiting for response');
+    }
+
+    /**
+     * Stream chat response using SSE
+     */
+    async *chatStream(
+        message: string,
+        options: { useRag?: boolean; temperature?: number; history?: { role: string; content: string }[] } = {}
+    ): AsyncGenerator<string> {
+        const response = await fetch(`${this.baseUrl}/api/chat/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message,
+                use_rag: options.useRag ?? true,
+                temperature: options.temperature ?? 0.8,
+                history: options.history,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Stream failed: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+
+        if (!reader) return;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.slice(6);
+                    if (data === '[DONE]') return;
+                    yield data;
+                }
+            }
+        }
+    }
+
+    /**
+     * Generate an image from a text prompt
+     */
+    async generateImage(params: {
+        prompt: string;
+        negativePrompt?: string;
+        width?: number;
+        height?: number;
+        numSteps?: number;
+        guidanceScale?: number;
+        modelId?: string;
+        // Token system parameters
+        isLocal?: boolean;  // FREE if true, costs 2.0 tokens if false
+        userId?: string;
+        sessionId?: string;
+    }): Promise<ImageResponse> {
+        const response = await fetch(`${this.baseUrl}/api/image/generate`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                prompt: params.prompt,
+                negative_prompt: params.negativePrompt,
+                width: params.width || 512,
+                height: params.height || 512,
+                num_steps: params.numSteps || 20,
+                guidance_scale: params.guidanceScale || 7.5,
+                model_id: params.modelId || 'sdxl-turbo',
+                // Token params
+                is_local: params.isLocal || false,  // Default FALSE = costs tokens
+                user_id: params.userId,
+                session_id: params.sessionId,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            if (error.detail?.error === 'insufficient_tokens') {
+                throw new Error(`Not enough tokens: ${error.detail.message}`);
+            }
+            throw new Error(`Image generation failed: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        // Convert relative URL to absolute
+        data.image_url = `${this.baseUrl}${data.image_url}`;
+        return data;
+    }
+
+    /**
+     * Transcribe audio to text
+     */
+    async transcribeAudio(params: {
+        audioUri: string;
+        language?: string;
+        userId?: string;
+        sessionId?: string;
+    }): Promise<{ text: string; language: string }> {
+        const formData = new FormData();
+        formData.append('audio', {
+            uri: params.audioUri,
+            name: 'recording.wav',
+            type: 'audio/wav',
+        } as any);
+
+        if (params.language) {
+            formData.append('language', params.language);
+        }
+        if (params.userId) {
+            formData.append('user_id', params.userId);
+        }
+        if (params.sessionId) {
+            formData.append('session_id', params.sessionId);
+        }
+
+        const response = await fetch(`${this.baseUrl}/api/voice/transcribe`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Transcription failed: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Text to speech - convert text to audio
+     */
+    async textToSpeech(params: {
+        text: string;
+        voice?: string;
+        userId?: string;
+        sessionId?: string;
+    }): Promise<{ audio_url: string }> {
+        const response = await fetch(`${this.baseUrl}/api/voice/tts`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                text: params.text,
+                voice: params.voice || 'default',
+                user_id: params.userId,
+                session_id: params.sessionId,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`TTS failed: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        // Make URL absolute
+        if (data.audio_url && !data.audio_url.startsWith('http')) {
+            data.audio_url = `${this.baseUrl}${data.audio_url}`;
+        }
+        return data;
+    }
+
+    /**
+     * Generate image using vision decoder (micro-transformer with learning)
+     * Uses patterns learned from collected data
+     */
+    async generateVisionImage(params: {
+        prompt: string;
+        use_pretrained?: boolean;  // If true, uses AI Horde. If false, uses learned model
+        userId?: string;
+        sessionId?: string;
+    }): Promise<{
+        method: string;
+        message?: string;
+        prompt: string;
+        generated_image?: string;
+        knowledge_base_size?: number;
+        note?: string;
+    }> {
+        const url = `${this.baseUrl}/api/feed/vision/generate?prompt=${encodeURIComponent(params.prompt)}&use_pretrained=${params.use_pretrained !== false}`;
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                user_id: params.userId,
+                session_id: params.sessionId
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Vision generation failed: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Get vision learning stats - see how much the AI has learned
+     */
+    async getVisionStats(): Promise<{
+        storage: {
+            total_images: number;
+            max_capacity: number;
+            embedding_dimension: number;
+        };
+        model: {
+            vision_memories: number;
+            unique_concepts: number;
+            embedding_dimension: number;
+        };
+        capabilities: {
+            can_learn: boolean;
+            can_generate: boolean;
+            generation_method: string;
+        };
+    }> {
+        const response = await fetch(`${this.baseUrl}/api/feed/vision/stats`, {
+            headers: this.getHeaders()
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to get vision stats: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Read and extract text from a file
+     */
+    async readFile(file: {
+        uri: string;
+        name: string;
+        type?: string;
+    }): Promise<FileReadResponse> {
+        const formData = new FormData();
+        formData.append('file', {
+            uri: file.uri,
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+        } as any);
+
+        const response = await fetch(`${this.baseUrl}/api/files/read`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            throw new Error(`File read failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * HuggingFace Dataset Sync APIs
+     */
+
+    /**
+     * Manually trigger HuggingFace sync
+     */
+    async syncToHuggingFace(): Promise<{ status: string; message: string; repo: string }> {
+        const response = await fetch(`${this.baseUrl}/api/learn/sync-now`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HuggingFace sync failed: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Download latest dataset from HuggingFace
+     */
+    async downloadFromHuggingFace(): Promise<{ status: string; count: number; repo: string }> {
+        const response = await fetch(`${this.baseUrl}/api/learn/download-from-hf`, {
+            method: 'GET',
+            headers: this.getHeaders(),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HuggingFace download failed: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Get learning stats including HuggingFace sync status
+     */
+    async getLearningStats(): Promise<{
+        total_training_pairs: number;
+        external_model_pairs: number;
+        total_knowledge: number;
+        learning_enabled: boolean;
+        restrictions: string;
+        content_filter: string;
+        huggingface_repo: string;
+        hf_sync_enabled: boolean;
+        last_sync_count: number;
+        pending_sync: number;
+    }> {
+        const response = await fetch(`${this.baseUrl}/api/learn/stats`, {
+            method: 'GET',
+            headers: this.getHeaders(),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Learning stats failed: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Analyze a file and answer a question about it
+     */
+    async analyzeFile(
+        file: { uri: string; name: string; type?: string },
+        question: string
+    ): Promise<FileAnalyzeResponse> {
+        const formData = new FormData();
+        formData.append('file', {
+            uri: file.uri,
+            name: file.name,
+            type: file.type || 'application/octet-stream',
+        } as any);
+        formData.append('question', question);
+
+        const response = await fetch(`${this.baseUrl}/api/files/analyze`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            throw new Error(`File analysis failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Search the knowledge base
+     */
+    async searchKnowledge(query: string, k: number = 5): Promise<SearchResult[]> {
+        const response = await fetch(`${this.baseUrl}/api/knowledge/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query, k }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Search failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+        return data.results;
+    }
+
+    /**
+     * Add knowledge to the database
+     */
+    async addKnowledge(text: string, source: string = 'app'): Promise<{ chunks_indexed: number }> {
+        const response = await fetch(`${this.baseUrl}/api/knowledge/index`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, source }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Index failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Get server health status
+     */
+    async getHealth(): Promise<HealthStatus> {
+        const response = await fetch(`${this.baseUrl}/api/healthcheck`);
+
+        if (!response.ok) {
+            throw new Error(`Health check failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Ping server to keep it alive (prevents HuggingFace from sleeping)
+     */
+    async ping(): Promise<{ status: string; timestamp: string; message: string }> {
+        const response = await fetch(`${this.baseUrl}/api/ping`);
+
+        if (!response.ok) {
+            throw new Error(`Ping failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Submit a correction for learning
+     */
+    async submitCorrection(
+        inputText: string,
+        expectedOutput: string,
+        actualOutput: string
+    ): Promise<{ status: string }> {
+        const response = await fetch(`${this.baseUrl}/api/chat/correct`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input_text: inputText,
+                expected_output: expectedOutput,
+                actual_output: actualOutput,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Correction failed: ${response.status}`);
+        }
+
+        return response.json();
+    }
+
+    /**
+     * Get available LLM models for on-device download
+     */
+    async getLLMModels(): Promise<LLMModel[]> {
+        const response = await fetch(`${this.baseUrl}/api/models/llm`);
+        if (!response.ok) {
+            throw new Error(`Failed to get LLM models: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Get available image generation models
+     */
+    async getImageModels(): Promise<ImageModel[]> {
+        const response = await fetch(`${this.baseUrl}/api/models/image`);
+        if (!response.ok) {
+            throw new Error(`Failed to get image models: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Sync training data from on-device LLM to server
+     */
+    async syncTrainingData(pairs: TrainingPair[], deviceId: string): Promise<{ status: string; synced: number }> {
+        const response = await fetch(`${this.baseUrl}/api/training/sync`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pairs, device_id: deviceId }),
+        });
+        if (!response.ok) {
+            throw new Error(`Training sync failed: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    // === UPSCALE & FACESWAP APIs ===
+
+    /**
+     * Upscale an image using Real-ESRGAN
+     */
+    async upscaleImage(params: {
+        imageUrl: string;
+        scale?: number;
+        isLocal?: boolean;
+        userId?: string;
+        sessionId?: string;
+    }): Promise<{ upscaled_url: string; scale: number }> {
+        const response = await fetch(`${this.baseUrl}/api/upscale`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                image_url: params.imageUrl,
+                scale: params.scale || 4,
+                is_local: params.isLocal || false,
+                user_id: params.userId,
+                session_id: params.sessionId,
+            }),
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            if (error.detail?.error === 'insufficient_tokens') {
+                throw new Error(`Not enough tokens: ${error.detail.message}`);
+            }
+            throw new Error(error.detail || `Upscale failed: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Face swap between two images
+     */
+    async faceSwap(params: {
+        sourceImage: string;
+        targetImage: string;
+        isLocal?: boolean;
+        userId?: string;
+        sessionId?: string;
+    }): Promise<{ result_url: string }> {
+        const response = await fetch(`${this.baseUrl}/api/faceswap`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                source_image: params.sourceImage,
+                target_image: params.targetImage,
+                is_local: params.isLocal || false,
+                user_id: params.userId,
+                session_id: params.sessionId,
+            }),
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            if (error.detail?.error === 'insufficient_tokens') {
+                throw new Error(`Not enough tokens: ${error.detail.message}`);
+            }
+            throw new Error(error.detail || `Face swap failed: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    // === ROLEPLAY APIs ===
+
+    /**
+     * Get available roleplay characters
+     */
+    async getRoleplayCharacters(): Promise<{ characters: RoleplayCharacter[]; total: number }> {
+        const response = await fetch(`${this.baseUrl}/api/roleplay/characters`);
+        if (!response.ok) {
+            throw new Error(`Failed to get characters: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Chat with a roleplay character
+     */
+    async roleplayChat(params: {
+        characterId: string;
+        message: string;
+        conversationHistory?: { role: string; content: string }[];
+        isLocal?: boolean;
+        userId?: string;
+        sessionId?: string;
+    }): Promise<{ character: string; avatar: string; response: string }> {
+        const response = await fetch(`${this.baseUrl}/api/roleplay/chat`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                character_id: params.characterId,
+                message: params.message,
+                conversation_history: params.conversationHistory || [],
+                is_local: params.isLocal !== false,
+                user_id: params.userId,
+                session_id: params.sessionId,
+            }),
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            if (error.detail?.error === 'insufficient_tokens') {
+                throw new Error(`Not enough tokens: ${error.detail.message}`);
+            }
+            throw new Error(error.detail || `Roleplay chat failed: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Create a custom roleplay character
+     */
+    async createCustomCharacter(character: {
+        name: string;
+        avatar: string;
+        description: string;
+        personality: string;
+        system_prompt: string;
+        tags: string[];
+    }): Promise<{ status: string; character: RoleplayCharacter }> {
+        const response = await fetch(`${this.baseUrl}/api/roleplay/custom`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(character),
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Create character failed: ${response.status}`);
+        }
+        return response.json();
+    }
+    /**
+     * Get chat histories for a user
+     */
+    async getChatHistories(userId: string): Promise<{ success: boolean; histories: any[] }> {
+        const response = await fetch(`${this.baseUrl}/api/history/${userId}`);
+        if (!response.ok) {
+            throw new Error(`Failed to get histories: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Create a new chat history
+     */
+    async createChatHistory(userId: string, title: string, messages: any[]): Promise<{ success: boolean; id: string }> {
+        const response = await fetch(`${this.baseUrl}/api/history`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                user_id: userId,
+                title,
+                messages,
+            }),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to create history: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Update an existing chat history
+     */
+    async updateChatHistory(chatId: string, updates: { title?: string; messages?: any[] }): Promise<{ success: boolean }> {
+        const response = await fetch(`${this.baseUrl}/api/history/${chatId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updates),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to update history: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Delete a chat history
+     */
+    async deleteChatHistory(chatId: string): Promise<{ success: boolean }> {
+        const response = await fetch(`${this.baseUrl}/api/history/${chatId}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to delete history: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    // === PAYMENT APIs ===
+
+    /**
+     * Get subscription plans
+     */
+    async getPaymentPlans(): Promise<{ plans: SubscriptionPlan[] }> {
+        const response = await fetch(`${this.baseUrl}/api/payment/plans`);
+        if (!response.ok) {
+            throw new Error(`Failed to get plans: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Create Razorpay order for token purchase or subscription
+     */
+    async createPaymentOrder(params: {
+        amount: number;
+        planType?: 'free' | 'pro';
+        tokenAmount?: number;
+        userId: string;
+    }): Promise<{ order_id: string; amount: number; currency: string }> {
+        const response = await fetch(`${this.baseUrl}/api/payment/create-order`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(params),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to create order: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Verify payment signature from Razorpay
+     */
+    async verifyPayment(params: {
+        orderId: string;
+        paymentId: string;
+        signature: string;
+        userId: string;
+    }): Promise<{ success: boolean; message: string }> {
+        const response = await fetch(`${this.baseUrl}/api/payment/verify`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                order_id: params.orderId,
+                payment_id: params.paymentId,
+                signature: params.signature,
+                user_id: params.userId,
+            }),
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Payment verification failed: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Buy token pack
+     */
+    async buyTokens(params: {
+        userId: string;
+        tokenAmount: number;
+        paymentId: string;
+    }): Promise<{ success: boolean; new_balance: number }> {
+        const response = await fetch(`${this.baseUrl}/api/payment/buy-tokens`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                user_id: params.userId,
+                token_amount: params.tokenAmount,
+                payment_id: params.paymentId,
+            }),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to buy tokens: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    // === LEARNING SYSTEM APIs ===
+
+    /**
+     * Submit training data to learning system
+     */
+    async submitTrainingData(params: {
+        input: string;
+        output: string;
+        model: string;
+        userId?: string;
+    }): Promise<{ status: string; message: string }> {
+        const response = await fetch(`${this.baseUrl}/api/learn/add`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(params),
+        });
+        if (!response.ok) {
+            throw new Error(`Failed to submit training data: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    // === ANALYTICS APIs ===
+
+    /**
+     * Get user usage analytics
+     */
+    async getUsageAnalytics(params: {
+        userId: string;
+        period?: 'day' | 'week' | 'month';
+    }): Promise<{
+        total_requests: number;
+        successful_requests: number;
+        failed_requests: number;
+        average_response_time: number;
+        requests_by_day: { date: string; count: number }[];
+    }> {
+        const period = params.period || 'week';
+        const response = await fetch(`${this.baseUrl}/api/analytics/usage?user_id=${params.userId}&period=${period}`);
+        if (!response.ok) {
+            throw new Error(`Failed to get usage analytics: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Get token usage analytics
+     */
+    async getTokenAnalytics(params: {
+        userId: string;
+        period?: 'day' | 'week' | 'month';
+    }): Promise<{
+        total_tokens_used: number;
+        tokens_by_feature: { feature: string; tokens: number }[];
+        tokens_by_day: { date: string; tokens: number }[];
+        average_daily_usage: number;
+    }> {
+        const period = params.period || 'week';
+        const response = await fetch(`${this.baseUrl}/api/analytics/tokens?user_id=${params.userId}&period=${period}`);
+        if (!response.ok) {
+            throw new Error(`Failed to get token analytics: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Get popular models analytics
+     */
+    async getPopularModels(): Promise<{
+        models: { model: string; usage_count: number; percentage: number }[];
+    }> {
+        const response = await fetch(`${this.baseUrl}/api/analytics/popular-models`);
+        if (!response.ok) {
+            throw new Error(`Failed to get popular models: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    // === ADMIN APIs ===
+
+    /**
+     * Get admin dashboard stats
+     */
+    async getAdminStats(): Promise<{
+        total_users: number;
+        active_users_today: number;
+        total_requests_today: number;
+        total_tokens_used_today: number;
+        server_health: string;
+    }> {
+        const response = await fetch(`${this.baseUrl}/api/admin/stats`);
+        if (!response.ok) {
+            throw new Error(`Failed to get admin stats: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    /**
+     * Get all users (admin only)
+     */
+    async getUsers(params: {
+        page?: number;
+        limit?: number;
+    }): Promise<{
+        users: any[];
+        total: number;
+        page: number;
+        pages: number;
+    }> {
+        const page = params.page || 1;
+        const limit = params.limit || 20;
+        const response = await fetch(`${this.baseUrl}/api/admin/users?page=${page}&limit=${limit}`);
+        if (!response.ok) {
+            throw new Error(`Failed to get users: ${response.status}`);
+        }
+        return response.json();
+    }
+}
+
+// Roleplay character interface
+export interface RoleplayCharacter {
+    id: string;
+    name: string;
+    avatar: string;
+    description: string;
+    personality: string;
+    tags: string[];
+    premium: boolean;
+}
+
+// Subscription plan interface
+export interface SubscriptionPlan {
+    id: string;
+    name: string;
+    price: number;
+    currency: string;
+    tokens: number;
+    features: string[];
+    duration: string;
+}
+
+// Export singleton instance
+export const whisperAPI = new WhisperAPI();
+export default whisperAPI;

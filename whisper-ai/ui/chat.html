@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Whisper AI Chat</title>
+  <link rel="stylesheet" href="/ui-assets/app.css?v=20260316">
+</head>
+<body>
+  <div class="shell">
+    <h1>Whisper AI</h1>
+    <p class="meta">Local chat, image generation, research-backed knowledge, and runtime status.</p>
+
+    <div class="row">
+      <div class="panel">
+        <h2>Chat</h2>
+        <div id="messages" class="messages"></div>
+        <div class="row">
+          <div>
+            <textarea id="messageInput" rows="5" placeholder="Ask a coding or research question..."></textarea>
+          </div>
+        </div>
+        <div class="row">
+          <div><input id="contextInput" placeholder="Optional manual context"></div>
+          <div><input id="systemPromptInput" placeholder="Optional system prompt"></div>
+        </div>
+        <div class="row">
+          <div><input id="maxTokensInput" type="number" value="256" min="32" max="1024"></div>
+          <div><input id="temperatureInput" type="number" value="0.5" min="0" max="2" step="0.1"></div>
+          <div><button id="sendButton">Send</button></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Image</h2>
+        <textarea id="imagePromptInput" rows="6" placeholder="Describe an image to generate..."></textarea>
+        <div class="row">
+          <div>
+            <select id="imageModelSelect"></select>
+          </div>
+        </div>
+        <div class="row">
+          <div><input id="imageWidthInput" type="number" value="512" min="256" max="1024"></div>
+          <div><input id="imageHeightInput" type="number" value="512" min="256" max="1024"></div>
+        </div>
+        <div class="row">
+          <div><button id="imageButton">Generate Image</button></div>
+        </div>
+        <div id="imageModelMeta" class="meta"></div>
+        <div id="imageStatus" class="meta"></div>
+        <img id="imagePreview" class="image-preview" alt="" hidden>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top: 20px;">
+      <h2>Runtime</h2>
+      <div id="runtimeGrid" class="grid"></div>
+    </div>
+  </div>
+
+  <script src="/ui-assets/chat.js?v=20260316"></script>
+</body>
+</html>

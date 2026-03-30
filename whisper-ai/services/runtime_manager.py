@@ -1,0 +1,978 @@
+"""
+Local chat runtime manager.
+
+Supports a lightweight default transformers backend and optional llama.cpp or
+AirLLM backends when those packages are installed and configured.
+"""
+
+from __future__ import annotations
+
+import json
+import importlib
+import importlib.util
+import os
+import subprocess
+import sys
+import threading
+import time
+import types
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from loguru import logger
+from utils.app_paths import DATA_ROOT, MODELS_DIR, RUNTIME_CONFIG_PATH, ensure_app_dirs
+from utils.system_tuning import apply_process_tuning, recommended_thread_count
+
+ensure_app_dirs()
+apply_process_tuning()
+_AIRLLM_IMPORT_CACHE: Optional[dict[str, Any]] = None
+SELF_LEARNER_DIR = Path(os.getenv("WHISPER_SELF_LEARNER_DIR", str(DATA_ROOT / "checkpoints")))
+SELF_LEARNER_CHECKPOINT = SELF_LEARNER_DIR / "latest.pt"
+SELF_LEARNER_INT8_CHECKPOINT = SELF_LEARNER_DIR / "latest-int8.pt"
+SELF_LEARNER_TOKENIZER = SELF_LEARNER_DIR / "tokenizer.json"
+SELF_LEARNER_STATE = SELF_LEARNER_DIR / "state.json"
+
+
+def _package_available(module_name: str) -> bool:
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _purge_airllm_modules():
+    for name in list(sys.modules):
+        if name == "airllm" or name.startswith("airllm.") or name == "optimum.bettertransformer":
+            sys.modules.pop(name, None)
+
+
+def _install_bettertransformer_shim():
+    shim = types.ModuleType("optimum.bettertransformer")
+
+    class BetterTransformer:
+        @staticmethod
+        def transform(model):
+            return model
+
+    shim.BetterTransformer = BetterTransformer
+    sys.modules["optimum.bettertransformer"] = shim
+
+
+def airllm_import_diagnostics(reset_cache: bool = False) -> dict[str, Any]:
+    global _AIRLLM_IMPORT_CACHE
+    if _AIRLLM_IMPORT_CACHE is not None and not reset_cache:
+        return dict(_AIRLLM_IMPORT_CACHE)
+
+    diagnostics: dict[str, Any] = {
+        "available": False,
+        "shimmed": False,
+        "error": None,
+        "module": None,
+    }
+
+    if not _package_available("airllm"):
+        diagnostics["error"] = "airllm is not installed"
+        _AIRLLM_IMPORT_CACHE = diagnostics
+        return dict(diagnostics)
+
+    try:
+        diagnostics["module"] = importlib.import_module("airllm")
+        diagnostics["available"] = True
+        _AIRLLM_IMPORT_CACHE = diagnostics
+        return dict(diagnostics)
+    except Exception as exc:
+        diagnostics["error"] = str(exc)
+        message = diagnostics["error"]
+        if "BetterTransformer requires transformers<4.49" not in message and "optimum.bettertransformer" not in message:
+            _AIRLLM_IMPORT_CACHE = diagnostics
+            return dict(diagnostics)
+
+    try:
+        _purge_airllm_modules()
+        _install_bettertransformer_shim()
+        diagnostics["module"] = importlib.import_module("airllm")
+        diagnostics["available"] = True
+        diagnostics["shimmed"] = True
+        diagnostics["error"] = None
+    except Exception as retry_exc:
+        diagnostics["error"] = str(retry_exc)
+
+    _AIRLLM_IMPORT_CACHE = diagnostics
+    return dict(diagnostics)
+
+
+@dataclass
+class RuntimeConfig:
+    backend: str = field(default_factory=lambda: os.getenv("LOCAL_CHAT_BACKEND", "auto").lower())
+    model_id: str = field(default_factory=lambda: os.getenv("LOCAL_MODEL_ID", "Qwen/Qwen2.5-Coder-0.5B-Instruct"))
+    gguf_model_path: str = field(default_factory=lambda: os.getenv("LOCAL_GGUF_MODEL_PATH", ""))
+    airllm_model_id: str = field(default_factory=lambda: os.getenv("AIRLLM_MODEL_ID", ""))
+    airllm_model_path: str = field(default_factory=lambda: os.getenv("LOCAL_AIRLLM_MODEL_PATH", ""))
+    max_context_tokens: int = field(default_factory=lambda: int(os.getenv("LOCAL_MAX_CONTEXT_TOKENS", "4096")))
+    max_new_tokens: int = field(default_factory=lambda: int(os.getenv("LOCAL_MAX_NEW_TOKENS", "512")))
+    device: str = field(default_factory=lambda: os.getenv("LOCAL_MODEL_DEVICE", "cpu"))
+    allow_remote_code: bool = field(
+        default_factory=lambda: os.getenv("LOCAL_MODEL_TRUST_REMOTE_CODE", "false").lower() == "true"
+    )
+    n_threads: int = field(
+        default_factory=lambda: int(os.getenv("LOCAL_MODEL_THREADS", str(recommended_thread_count())))
+    )
+    micro_checkpoint_path: str = field(
+        default_factory=lambda: os.getenv("WHISPER_MICRO_CHECKPOINT_PATH", str(SELF_LEARNER_CHECKPOINT))
+    )
+    micro_quantized_checkpoint_path: str = field(
+        default_factory=lambda: os.getenv("WHISPER_MICRO_INT8_CHECKPOINT_PATH", str(SELF_LEARNER_INT8_CHECKPOINT))
+    )
+    micro_tokenizer_path: str = field(
+        default_factory=lambda: os.getenv("WHISPER_MICRO_TOKENIZER_PATH", str(SELF_LEARNER_TOKENIZER))
+    )
+    micro_use_dynamic_quantization: bool = field(
+        default_factory=lambda: os.getenv("WHISPER_MICRO_USE_DYNAMIC_QUANTIZATION", "true").lower() == "true"
+    )
+
+
+@dataclass
+class ResolvedRuntimeChoice:
+    config: RuntimeConfig
+    backend: str
+    model_id: str
+    selected_profile: str
+    reason: str
+
+
+def _test_mode_enabled() -> bool:
+    return os.getenv("WHISPER_TEST_MODE", "false").lower() == "true"
+
+
+def _clone_runtime_config(config: RuntimeConfig) -> RuntimeConfig:
+    return RuntimeConfig(**asdict(config))
+
+
+def _default_self_learner_config() -> RuntimeConfig:
+    return RuntimeConfig(
+        backend="micro_transformer",
+        model_id="whisper-micro-transformer",
+        device="cpu",
+        max_context_tokens=int(os.getenv("WHISPER_MICRO_MAX_CONTEXT_TOKENS", "1024")),
+        max_new_tokens=int(os.getenv("WHISPER_MICRO_MAX_NEW_TOKENS", "384")),
+        micro_checkpoint_path=str(SELF_LEARNER_CHECKPOINT),
+        micro_quantized_checkpoint_path=str(SELF_LEARNER_INT8_CHECKPOINT),
+        micro_tokenizer_path=str(SELF_LEARNER_TOKENIZER),
+        micro_use_dynamic_quantization=os.getenv("WHISPER_MICRO_USE_DYNAMIC_QUANTIZATION", "true").lower() == "true",
+    )
+
+
+def _resolve_gguf_model_path(config: RuntimeConfig) -> Optional[Path]:
+    configured = (config.gguf_model_path or "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.exists():
+            return candidate.resolve()
+
+    search_roots = []
+    llm_root = MODELS_DIR / "llm"
+    if llm_root.exists():
+        search_roots.append(llm_root)
+    search_roots.append(MODELS_DIR)
+
+    for root in search_roots:
+        gguf_files = sorted(
+            (path.resolve() for path in root.rglob("*.gguf")),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        if gguf_files:
+            return gguf_files[0]
+
+    return Path(configured) if configured else None
+
+
+def _resolve_llama_cli_path() -> Optional[Path]:
+    candidates = []
+    configured = os.getenv("LOCAL_LLAMA_CLI_PATH", "").strip()
+    if configured:
+        candidates.append(Path(configured))
+
+    candidates.extend(
+        [
+            Path(".tools/llama-bin/llama-completion.exe"),
+            Path(".tools/llama-bin/llama-cli.exe"),
+            Path(".tools/llama-completion.exe"),
+            Path(".tools/llama-cli.exe"),
+            MODELS_DIR / "llama-bin" / "llama-completion.exe",
+            MODELS_DIR / "llama-bin" / "llama-cli.exe",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return None
+
+
+def _resolve_airllm_model_path(config: RuntimeConfig) -> Optional[Path]:
+    configured = (config.airllm_model_path or "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.exists():
+            return candidate.resolve()
+        return candidate
+
+    candidates = []
+    if config.airllm_model_id:
+        slug = config.airllm_model_id.replace("/", "--")
+        candidates.append(MODELS_DIR / "llm" / slug)
+    candidates.append(MODELS_DIR / "llm" / "heavy-airllm")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return None
+
+
+def _resolve_micro_checkpoint_path(config: RuntimeConfig) -> Optional[Path]:
+    quantized = (config.micro_quantized_checkpoint_path or "").strip()
+    standard = (config.micro_checkpoint_path or "").strip()
+
+    for candidate in (quantized, standard):
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path.exists():
+            return path.resolve()
+
+    fallback_candidates = [SELF_LEARNER_INT8_CHECKPOINT, SELF_LEARNER_CHECKPOINT]
+    for candidate in fallback_candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return Path(quantized or standard) if (quantized or standard) else None
+
+
+def _resolve_micro_tokenizer_path(config: RuntimeConfig) -> Optional[Path]:
+    configured = (config.micro_tokenizer_path or "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.exists():
+            return candidate.resolve()
+        return candidate
+
+    if SELF_LEARNER_TOKENIZER.exists():
+        return SELF_LEARNER_TOKENIZER.resolve()
+
+    return None
+
+
+def load_runtime_state() -> tuple[Optional[RuntimeConfig], Optional[str]]:
+    if not RUNTIME_CONFIG_PATH.exists():
+        return None, None
+
+    try:
+        raw = json.loads(RUNTIME_CONFIG_PATH.read_text(encoding="utf-8"))
+        config_data = raw.get("config") or {}
+        selected_profile = raw.get("selected_profile")
+        return RuntimeConfig(**config_data), selected_profile
+    except Exception as exc:
+        logger.warning(f"Failed to load runtime config: {exc}")
+        return None, None
+
+
+def save_runtime_state(config: RuntimeConfig, selected_profile: Optional[str] = None):
+    payload = {
+        "selected_profile": selected_profile,
+        "config": asdict(config),
+        "updated_at": time.time(),
+    }
+    RUNTIME_CONFIG_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        from utils.persistence import backup_file
+
+        backup_file(str(RUNTIME_CONFIG_PATH))
+    except Exception as exc:
+        logger.debug(f"Runtime config backup skipped: {exc}")
+
+
+def resolve_runtime_choice(config: RuntimeConfig) -> Optional[ResolvedRuntimeChoice]:
+    configured_backend = (config.backend or "").lower()
+    if configured_backend != "auto":
+        return ResolvedRuntimeChoice(
+            config=_clone_runtime_config(config),
+            backend=configured_backend,
+            model_id=config.airllm_model_path or config.airllm_model_id or config.model_id,
+            selected_profile="custom",
+            reason=f"Configured backend: {configured_backend}",
+        )
+
+    gguf_path = _resolve_gguf_model_path(config)
+    llama_available = _package_available("llama_cpp") or _resolve_llama_cli_path() is not None
+    if gguf_path is not None and gguf_path.exists() and llama_available:
+        resolved = _clone_runtime_config(config)
+        resolved.backend = "llama_cpp"
+        resolved.gguf_model_path = str(gguf_path)
+        return ResolvedRuntimeChoice(
+            config=resolved,
+            backend="llama_cpp",
+            model_id=gguf_path.name,
+            selected_profile="gguf-coder",
+            reason="Auto selected GGUF runtime because a local GGUF artifact and llama backend are available",
+        )
+
+    if _package_available("transformers"):
+        resolved = _clone_runtime_config(config)
+        resolved.backend = "transformers"
+        if not resolved.model_id:
+            resolved.model_id = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
+        selected_profile = "fast-coder" if resolved.model_id == "Qwen/Qwen2.5-Coder-0.5B-Instruct" else "custom"
+        return ResolvedRuntimeChoice(
+            config=resolved,
+            backend="transformers",
+            model_id=resolved.model_id,
+            selected_profile=selected_profile,
+            reason="Auto selected transformers backend because no ready GGUF runtime was found",
+        )
+
+    if _package_available("airllm") and (config.airllm_model_id or config.model_id):
+        resolved = _clone_runtime_config(config)
+        resolved.backend = "airllm"
+        resolved.airllm_model_id = resolved.airllm_model_id or resolved.model_id
+        resolved.airllm_model_path = resolved.airllm_model_path or str(_resolve_airllm_model_path(resolved) or "")
+        return ResolvedRuntimeChoice(
+            config=resolved,
+            backend="airllm",
+            model_id=resolved.airllm_model_path or resolved.airllm_model_id,
+            selected_profile="heavy-airllm",
+            reason="Auto selected AirLLM backend because transformers and GGUF backends are unavailable",
+        )
+
+    if _test_mode_enabled():
+        resolved = _clone_runtime_config(config)
+        resolved.backend = "stub"
+        return ResolvedRuntimeChoice(
+            config=resolved,
+            backend="stub",
+            model_id="stub-model",
+            selected_profile="custom",
+            reason="Auto selected stub backend because test mode is enabled and no real local runtime is ready",
+        )
+
+    return None
+
+
+def validate_runtime_config(
+    config: RuntimeConfig,
+    *,
+    selected_profile: Optional[str] = None,
+    test_load: bool = False,
+    refresh_imports: bool = True,
+) -> Dict[str, Any]:
+    """Run a fresh runtime preflight probe without mutating the active app runtime."""
+
+    if refresh_imports:
+        airllm_import_diagnostics(reset_cache=True)
+
+    validated_at = time.time()
+    probe = ChatRuntimeManager(config=_clone_runtime_config(config))
+    if selected_profile:
+        probe._selected_profile = selected_profile
+
+    preflight = probe.readiness()
+    validation: Dict[str, Any] = {
+        "validated_at": validated_at,
+        "configured_backend": config.backend,
+        "resolved_backend": preflight.get("resolved_backend"),
+        "resolved_profile": preflight.get("resolved_profile"),
+        "preflight": preflight,
+        "test_load": {
+            "attempted": False,
+            "loaded": False,
+            "active_backend": None,
+            "last_error": None,
+            "duration_seconds": 0.0,
+        },
+        "ok": bool(preflight.get("can_load")),
+        "summary": preflight.get("summary") or "Validation completed",
+    }
+
+    if not test_load:
+        return validation
+
+    started_at = time.time()
+    loaded = probe.ensure_loaded()
+    status = probe.status()
+    duration_seconds = round(time.time() - started_at, 3)
+    validation["test_load"] = {
+        "attempted": True,
+        "loaded": loaded,
+        "active_backend": status.get("active_backend"),
+        "last_error": status.get("last_error"),
+        "duration_seconds": duration_seconds,
+    }
+    validation["ok"] = loaded
+    validation["summary"] = "Load test passed" if loaded else (status.get("last_error") or validation["summary"])
+    probe.unload()
+    return validation
+
+
+class ChatRuntimeManager:
+    """Lazy-loading wrapper around the configured local text backend."""
+
+    def __init__(self, config: Optional[RuntimeConfig] = None):
+        stored_config, stored_profile = load_runtime_state()
+        self.config = config or stored_config or RuntimeConfig()
+        self._lock = threading.Lock()
+        self._loaded = False
+        self._backend_name = "uninitialized"
+        self._model: Any = None
+        self._tokenizer: Any = None
+        self._last_error: Optional[str] = None
+        self._loaded_at: Optional[float] = None
+        self._selected_profile = stored_profile or "custom"
+        self._resolved_config: Optional[RuntimeConfig] = None
+        self._resolved_profile: Optional[str] = None
+
+    def _load_transformers(self):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        apply_process_tuning()
+        model_id = self.config.model_id
+        logger.info(f"Loading transformers backend: {model_id}")
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_id,
+            trust_remote_code=self.config.allow_remote_code,
+        )
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            trust_remote_code=self.config.allow_remote_code,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=True,
+        )
+        model.to(self.config.device)
+        model.eval()
+
+        self._backend_name = "transformers"
+        self._model = model
+        self._tokenizer = tokenizer
+
+    def _load_stub(self):
+        self._backend_name = "stub"
+        self._model = {"type": "stub"}
+        self._tokenizer = None
+
+    def _load_llama_cpp(self):
+        gguf_path = _resolve_gguf_model_path(self.config)
+        if gguf_path is None:
+            raise RuntimeError("LOCAL_GGUF_MODEL_PATH is required for llama_cpp backend")
+        self.config.gguf_model_path = str(gguf_path)
+        llama_cli_path = _resolve_llama_cli_path()
+
+        if _package_available("llama_cpp"):
+            from llama_cpp import Llama
+
+            logger.info(f"Loading llama.cpp backend: {gguf_path}")
+            self._model = Llama(
+                model_path=str(gguf_path),
+                n_ctx=self.config.max_context_tokens,
+                n_threads=self.config.n_threads,
+                n_batch=min(512, self.config.max_context_tokens),
+                verbose=False,
+            )
+            self._backend_name = "llama_cpp"
+            return
+
+        if llama_cli_path is None:
+            raise RuntimeError("Neither llama-cpp-python nor a llama.cpp completion binary is available")
+
+        logger.info(f"Loading llama.cpp CLI backend: {llama_cli_path}")
+        self._model = {"cli_path": str(llama_cli_path), "model_path": str(gguf_path)}
+        self._backend_name = "llama_cpp_cli"
+
+    def _load_airllm(self):
+        apply_process_tuning()
+        diagnostics = airllm_import_diagnostics()
+        if not diagnostics["available"]:
+            raise RuntimeError(diagnostics["error"] or "airllm import failed")
+        AutoModel = diagnostics["module"].AutoModel
+
+        local_path = _resolve_airllm_model_path(self.config)
+        model_source = str(local_path) if local_path and local_path.exists() else (self.config.airllm_model_id or self.config.model_id)
+        logger.info(f"Loading AirLLM backend: {model_source}")
+
+        model = AutoModel.from_pretrained(model_source)
+        tokenizer = model.tokenizer
+
+        self._backend_name = "airllm"
+        self._model = model
+        self._tokenizer = tokenizer
+
+    def _load_micro_transformer(self):
+        import torch
+
+        from model.quantization import load_quantized_checkpoint, quantize_micro_transformer
+        from model.tokenizer import WhisperTokenizer
+        from model.transformer import MicroTransformer
+
+        checkpoint_path = _resolve_micro_checkpoint_path(self.config)
+        tokenizer_path = _resolve_micro_tokenizer_path(self.config)
+
+        if checkpoint_path is None:
+            raise RuntimeError("Self-learner checkpoint path is not configured")
+        if tokenizer_path is None:
+            raise RuntimeError("Self-learner tokenizer path is not configured")
+        if not checkpoint_path.exists():
+            raise RuntimeError(f"Self-learner checkpoint not found: {checkpoint_path}")
+        if not tokenizer_path.exists():
+            raise RuntimeError(f"Self-learner tokenizer not found: {tokenizer_path}")
+
+        logger.info(f"Loading self-learner runtime from {checkpoint_path}")
+        if str(checkpoint_path).endswith("int8.pt"):
+            model = load_quantized_checkpoint(checkpoint_path, device="cpu")
+        else:
+            model = MicroTransformer.load(str(checkpoint_path), device="cpu")
+            if self.config.micro_use_dynamic_quantization:
+                model = quantize_micro_transformer(model)
+            model.eval()
+
+        tokenizer = WhisperTokenizer.load(str(tokenizer_path))
+
+        self._backend_name = "micro_transformer"
+        self._model = model
+        self._tokenizer = tokenizer
+
+    def readiness(self) -> Dict[str, Any]:
+        configured_backend = self.config.backend
+        resolved = resolve_runtime_choice(self.config)
+        effective_config = resolved.config if resolved is not None else self.config
+        backend = effective_config.backend
+        messages = []
+        backend_available = False
+        artifact_required = backend == "llama_cpp"
+        artifact_path = effective_config.gguf_model_path if artifact_required else ""
+        artifact_exists = None
+        source_target = effective_config.airllm_model_id or effective_config.model_id
+
+        if configured_backend == "auto":
+            if resolved is None:
+                messages.append("Auto backend could not find a usable local runtime")
+            else:
+                messages.append(resolved.reason)
+
+        if backend == "stub":
+            backend_available = True
+        elif backend == "micro_transformer":
+            checkpoint_path = _resolve_micro_checkpoint_path(effective_config)
+            tokenizer_path = _resolve_micro_tokenizer_path(effective_config)
+            backend_available = _package_available("torch")
+            artifact_required = True
+            artifact_path = str(checkpoint_path or "")
+            artifact_exists = bool(
+                checkpoint_path
+                and checkpoint_path.exists()
+                and tokenizer_path
+                and tokenizer_path.exists()
+            )
+            if not backend_available:
+                messages.append("torch is not installed")
+            if checkpoint_path is None:
+                messages.append("Self-learner checkpoint path is not configured")
+            elif not checkpoint_path.exists():
+                messages.append(f"Self-learner checkpoint not found: {checkpoint_path}")
+            if tokenizer_path is None:
+                messages.append("Self-learner tokenizer path is not configured")
+            elif not tokenizer_path.exists():
+                messages.append(f"Self-learner tokenizer not found: {tokenizer_path}")
+            source_target = str(checkpoint_path) if checkpoint_path else "whisper-micro-transformer"
+        elif backend == "llama_cpp":
+            has_python_backend = _package_available("llama_cpp")
+            llama_cli_path = _resolve_llama_cli_path()
+            backend_available = has_python_backend or llama_cli_path is not None
+            if not backend_available:
+                messages.append("llama-cpp-python is not installed and no llama.cpp completion binary was found")
+            resolved_gguf = _resolve_gguf_model_path(effective_config)
+            if resolved_gguf is not None:
+                artifact_path = str(resolved_gguf)
+                artifact_exists = resolved_gguf.exists()
+            if not effective_config.gguf_model_path and resolved_gguf is None:
+                messages.append("LOCAL_GGUF_MODEL_PATH is not configured")
+            elif not artifact_exists:
+                messages.append(f"GGUF file not found: {artifact_path}")
+            if llama_cli_path is not None:
+                messages.append(f"llama.cpp binary available at {llama_cli_path}")
+        elif backend == "airllm":
+            diagnostics = airllm_import_diagnostics()
+            backend_available = diagnostics["available"]
+            resolved_airllm = _resolve_airllm_model_path(effective_config)
+            if resolved_airllm is not None:
+                artifact_path = str(resolved_airllm)
+                artifact_exists = resolved_airllm.exists()
+                if artifact_exists:
+                    source_target = str(resolved_airllm)
+                    messages.append(f"Local AirLLM snapshot available at {resolved_airllm}")
+            elif effective_config.airllm_model_path:
+                artifact_path = effective_config.airllm_model_path
+                artifact_exists = False
+                messages.append(f"AirLLM snapshot path not found: {effective_config.airllm_model_path}")
+            if not backend_available:
+                messages.append(diagnostics.get("error") or "airllm is not installed")
+            elif diagnostics.get("shimmed"):
+                messages.append("AirLLM BetterTransformer compatibility shim is active")
+            elif not artifact_exists:
+                messages.append("AirLLM will load from the Hugging Face Hub at runtime")
+        else:
+            backend_available = _package_available("transformers")
+            if not backend_available:
+                messages.append("transformers is not installed")
+
+        blocking_messages = []
+        for message in messages:
+            if (
+                message.startswith("llama.cpp binary available at")
+                or message.startswith("Auto selected")
+                or message.startswith("Configured backend:")
+                or message.startswith("Local AirLLM snapshot available at")
+                or message.startswith("AirLLM will load from the Hugging Face Hub at runtime")
+                or message.startswith("AirLLM snapshot path not found:")
+                or message.startswith("AirLLM BetterTransformer compatibility shim is active")
+            ):
+                continue
+            blocking_messages.append(message)
+
+        can_load = backend_available and not blocking_messages
+        return {
+            "backend": backend,
+            "configured_backend": configured_backend,
+            "resolved_backend": resolved.backend if resolved is not None else None,
+            "resolved_model_id": resolved.model_id if resolved is not None else None,
+            "resolved_profile": resolved.selected_profile if resolved is not None else None,
+            "backend_available": backend_available,
+            "artifact_required": artifact_required,
+            "artifact_path": artifact_path,
+            "artifact_exists": artifact_exists,
+            "source_target": source_target,
+            "llama_cli_path": str(_resolve_llama_cli_path()) if backend == "llama_cpp" and _resolve_llama_cli_path() else "",
+            "messages": messages,
+            "summary": "; ".join(blocking_messages) if blocking_messages else "Ready to load",
+            "can_load": can_load,
+        }
+
+    def ensure_loaded(self) -> bool:
+        """Load the configured backend on first use."""
+        if self._loaded:
+            return True
+
+        with self._lock:
+            if self._loaded:
+                return True
+
+            readiness = self.readiness()
+            if not readiness["can_load"]:
+                self._last_error = readiness["summary"]
+                logger.error(f"Chat runtime blocked: {self._last_error}")
+                return False
+
+            try:
+                resolved = resolve_runtime_choice(self.config)
+                active_config = resolved.config if resolved is not None else self.config
+                backend = active_config.backend
+                if backend == "stub":
+                    self._load_stub()
+                elif backend == "micro_transformer":
+                    previous_config = self.config
+                    try:
+                        self.config = active_config
+                        self._load_micro_transformer()
+                    finally:
+                        self.config = previous_config
+                elif backend == "llama_cpp":
+                    previous_config = self.config
+                    try:
+                        self.config = active_config
+                        self._load_llama_cpp()
+                    finally:
+                        self.config = previous_config
+                elif backend == "airllm":
+                    previous_config = self.config
+                    try:
+                        self.config = active_config
+                        self._load_airllm()
+                    finally:
+                        self.config = previous_config
+                else:
+                    previous_config = self.config
+                    try:
+                        self.config = active_config
+                        self._load_transformers()
+                    finally:
+                        self.config = previous_config
+
+                self._loaded = True
+                self._last_error = None
+                self._loaded_at = time.time()
+                self._resolved_config = active_config
+                self._resolved_profile = resolved.selected_profile if resolved is not None else self._selected_profile
+                logger.success(f"Chat runtime ready: {self._backend_name}")
+                return True
+            except Exception as exc:
+                self._last_error = str(exc)
+                logger.error(f"Failed to initialize chat runtime: {exc}")
+                self._resolved_config = None
+                self._resolved_profile = None
+                return False
+
+    def is_ready(self) -> bool:
+        return self._loaded
+
+    def unload(self):
+        with self._lock:
+            self._model = None
+            self._tokenizer = None
+            self._loaded = False
+            self._backend_name = "uninitialized"
+            self._loaded_at = None
+            self._last_error = None
+            self._resolved_config = None
+            self._resolved_profile = None
+
+    def reconfigure(
+        self,
+        config: RuntimeConfig,
+        selected_profile: Optional[str] = None,
+        persist: bool = True,
+    ):
+        with self._lock:
+            self._model = None
+            self._tokenizer = None
+            self._loaded = False
+            self._backend_name = "uninitialized"
+            self._loaded_at = None
+            self._last_error = None
+            self._resolved_config = None
+            self._resolved_profile = None
+            self.config = config
+            self._selected_profile = selected_profile or "custom"
+            if persist:
+                save_runtime_state(config, self._selected_profile)
+
+    def get_selected_profile(self) -> str:
+        return self._selected_profile
+
+    def status(self) -> Dict[str, Any]:
+        resolved = resolve_runtime_choice(self.config)
+        return {
+            "configured_backend": self.config.backend,
+            "resolved_backend": (self._resolved_config.backend if self._resolved_config is not None else resolved.backend if resolved else None),
+            "active_backend": self._backend_name,
+            "model_id": (
+                (self._resolved_config.airllm_model_id or self._resolved_config.model_id)
+                if self._resolved_config is not None
+                else (resolved.model_id if resolved is not None else (self.config.airllm_model_id or self.config.model_id))
+            ),
+            "loaded": self._loaded,
+            "loaded_at": self._loaded_at,
+            "last_error": self._last_error,
+            "selected_profile": self._selected_profile,
+            "resolved_profile": self._resolved_profile or (resolved.selected_profile if resolved is not None else None),
+            "auto_selection_reason": resolved.reason if self.config.backend == "auto" and resolved is not None else None,
+            "config": asdict(self.config),
+            "resolved_config": asdict(self._resolved_config) if self._resolved_config is not None else (asdict(resolved.config) if resolved is not None else None),
+            "readiness": self.readiness(),
+        }
+
+    def generate(
+        self,
+        prompt: str,
+        max_new_tokens: int = 256,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+    ) -> Dict[str, Any]:
+        """Run text generation through the active backend."""
+        if not self.ensure_loaded():
+            raise RuntimeError(self._last_error or "Chat runtime not available")
+
+        max_new_tokens = min(max_new_tokens, self.config.max_new_tokens)
+
+        if self._backend_name == "llama_cpp":
+            response = self._model(
+                prompt,
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system"],
+            )
+            text = response["choices"][0]["text"].strip()
+            return {
+                "text": text,
+                "model_used": os.path.basename(self.config.gguf_model_path) or "llama_cpp",
+                "backend": self._backend_name,
+            }
+
+        if self._backend_name == "llama_cpp_cli":
+            cli_path = self._model["cli_path"]
+            model_path = self._model["model_path"]
+            command = [
+                cli_path,
+                "-m",
+                model_path,
+                "-p",
+                prompt,
+                "-n",
+                str(max_new_tokens),
+                "-c",
+                str(self.config.max_context_tokens),
+                "-t",
+                str(self.config.n_threads),
+                "--temp",
+                str(temperature),
+                "--top-p",
+                str(top_p),
+                "--simple-io",
+                "--no-display-prompt",
+                "--no-perf",
+                "--no-warmup",
+                "-no-cnv",
+                "-r",
+                "<|im_end|>",
+            ]
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=max(120, max_new_tokens * 5),
+                cwd=str(Path(cli_path).parent),
+            )
+            if result.returncode != 0:
+                stderr = result.stderr.strip() or result.stdout.strip()
+                raise RuntimeError(stderr or f"llama.cpp completion failed with exit code {result.returncode}")
+            text = result.stdout.strip()
+            if "[end of text]" in text:
+                text = text.replace("[end of text]", "").strip()
+            if "<|im_end|>" in text:
+                text = text.split("<|im_end|>", 1)[0].strip()
+            return {
+                "text": text,
+                "model_used": os.path.basename(model_path) or "llama_cpp_cli",
+                "backend": self._backend_name,
+            }
+
+        if self._backend_name == "stub":
+            preview = prompt.strip().splitlines()[-1] if prompt.strip() else "empty prompt"
+            return {
+                "text": f"stub response: {preview[:120]}",
+                "model_used": "stub-model",
+                "backend": self._backend_name,
+            }
+
+        if self._backend_name == "micro_transformer":
+            import torch
+
+            prompt_ids = self._tokenizer.encode(prompt, add_special_tokens=True)
+            max_prompt_tokens = max(8, self.config.max_context_tokens - max_new_tokens)
+            if len(prompt_ids) > max_prompt_tokens:
+                prompt_ids = prompt_ids[-max_prompt_tokens:]
+                if prompt_ids and prompt_ids[0] != self._tokenizer.bos_id:
+                    prompt_ids = [self._tokenizer.bos_id, *prompt_ids[1:]]
+
+            device = torch.device("cpu")
+            try:
+                device = next(self._model.parameters()).device
+            except (AttributeError, StopIteration, TypeError):
+                device = torch.device("cpu")
+
+            input_ids = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+            output_ids = self._model.generate(
+                input_ids,
+                max_new_tokens=max_new_tokens,
+                temperature=max(temperature, 1e-5),
+                top_k=50,
+                top_p=top_p,
+                stop_tokens=[self._tokenizer.eos_id],
+            )
+            generated_ids = output_ids[0][len(prompt_ids) :].tolist()
+            text = self._tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+            return {
+                "text": text,
+                "model_used": self.config.model_id or "whisper-micro-transformer",
+                "backend": self._backend_name,
+            }
+
+        if self._backend_name == "airllm":
+            import torch
+
+            inputs = self._tokenizer(
+                [prompt],
+                return_tensors="pt",
+                truncation=True,
+                max_length=max(256, self.config.max_context_tokens - max_new_tokens),
+            )
+            if torch.cuda.is_available():
+                input_ids = inputs["input_ids"].cuda()
+            else:
+                input_ids = inputs["input_ids"]
+            output_ids = self._model.generate(
+                input_ids,
+                max_new_tokens=max_new_tokens,
+            )
+            text = self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            if text.startswith(prompt):
+                text = text[len(prompt):].strip()
+            return {
+                "text": text,
+                "model_used": self.config.airllm_model_id or self.config.model_id,
+                "backend": self._backend_name,
+            }
+
+        import torch
+
+        inputs = self._tokenizer(
+            prompt,
+            return_tensors="pt",
+            truncation=True,
+            max_length=max(256, self.config.max_context_tokens - max_new_tokens),
+        )
+        inputs = {key: value.to(self.config.device) for key, value in inputs.items()}
+
+        with torch.inference_mode():
+            output_ids = self._model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=temperature > 0,
+                temperature=max(temperature, 1e-5),
+                top_p=top_p,
+                pad_token_id=self._tokenizer.pad_token_id,
+                eos_token_id=self._tokenizer.eos_token_id,
+            )
+
+        prompt_len = inputs["input_ids"].shape[1]
+        generated_ids = output_ids[0][prompt_len:]
+        text = self._tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+
+        return {
+            "text": text,
+            "model_used": self.config.model_id,
+            "backend": self._backend_name,
+        }
+
+
+_runtime_manager: Optional[ChatRuntimeManager] = None
+_self_learner_runtime_manager: Optional[ChatRuntimeManager] = None
+
+
+def get_chat_runtime_manager() -> ChatRuntimeManager:
+    global _runtime_manager
+    if _runtime_manager is None:
+        _runtime_manager = ChatRuntimeManager()
+    return _runtime_manager
+
+
+def get_self_learner_runtime_manager() -> ChatRuntimeManager:
+    global _self_learner_runtime_manager
+    if _self_learner_runtime_manager is None:
+        _self_learner_runtime_manager = ChatRuntimeManager(config=_default_self_learner_config())
+        _self_learner_runtime_manager._selected_profile = "self-learner-turbo"
+    return _self_learner_runtime_manager

@@ -1,0 +1,33 @@
+{
+  "cli": {
+    "version": ">= 16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
+    "preview": {
+      "autoIncrement": true,
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "EXPO_USE_UPDATES": "1"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "cache": {
+        "key": "production-cache"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      
+    }
+  }
+}

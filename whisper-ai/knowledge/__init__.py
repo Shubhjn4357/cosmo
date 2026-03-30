@@ -1,0 +1,1 @@
+# Whisper AI - Knowledge Module

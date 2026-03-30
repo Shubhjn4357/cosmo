@@ -1,0 +1,27 @@
+.git
+.github
+.Agent
+.codex
+.venv
+venv
+venv312
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+output
+uploads
+models
+.zed
+.gemini
+node_modules
+
+# Runtime and generated
+data
+tmp_train_data
+.tools
+.cache

@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+libsql
+openai
+httpx
+loguru
+python-dotenv
+sse-starlette
+pydantic
+google-genai

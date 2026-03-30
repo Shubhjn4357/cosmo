@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+venv312
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+#env
+.env
+.env.local
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node / Drizzle
+node_modules/
+
+# Runtime and generated
+data/
+tmp_train_data/
+models/
+output/
+uploads/
+.tools/
+.cache/
+
+# IDE / Extensions
+.zed/
+.gemini/

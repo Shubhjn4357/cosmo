@@ -1,0 +1,281 @@
+name: Monorepo CI
+
+on:
+  push:
+    paths:
+      - .github/workflows/monorepo-ci.yml
+      - whisper/**
+      - whisper-ai/**
+      - image-encoder/**
+  pull_request:
+    paths:
+      - .github/workflows/monorepo-ci.yml
+      - whisper/**
+      - whisper-ai/**
+      - image-encoder/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect-changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      android: ${{ steps.filter.outputs.android }}
+      backend: ${{ steps.filter.outputs.backend }}
+      encoder: ${{ steps.filter.outputs.encoder }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "android=true" >> "$GITHUB_OUTPUT"
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+            echo "encoder=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            from_sha="$BASE_SHA"
+            to_sha="$HEAD_SHA"
+            changed_files="$(git diff --name-only "$from_sha" "$to_sha")"
+          else
+            if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+              from_sha="$BEFORE_SHA"
+              changed_files="$(git diff --name-only "$from_sha" "$CURRENT_SHA")"
+            else
+              changed_files="$(git ls-tree -r --name-only "$CURRENT_SHA")"
+            fi
+          fi
+          printf '%s\n' "$changed_files"
+
+          if printf '%s\n' "$changed_files" | grep -Eq '^(whisper/|\.github/workflows/monorepo-ci\.yml$)'; then
+            echo "android=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if printf '%s\n' "$changed_files" | grep -Eq '^(whisper-ai/|\.github/workflows/monorepo-ci\.yml$)'; then
+            echo "backend=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if printf '%s\n' "$changed_files" | grep -Eq '^(image-encoder/|\.github/workflows/monorepo-ci\.yml$)'; then
+            echo "encoder=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "encoder=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-whisper-android:
+    name: Build Whisper Android APKs
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.android == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: whisper/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install mobile app dependencies
+        working-directory: whisper
+        run: npm ci
+
+      - name: Build Android APKs
+        working-directory: whisper
+        run: bash scripts/ci/build-android-apks.sh
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-android-apks-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            whisper/artifacts/android/whisper-debug.apk
+            whisper/artifacts/android/whisper-release-signed.apk
+            whisper/artifacts/android/build-metadata.json
+            whisper/artifacts/android/signing-summary.txt
+
+      - name: Upload signing materials
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-android-signing-materials-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            whisper/artifacts/android/keystores/debug.keystore
+            whisper/artifacts/android/keystores/release.keystore
+            whisper/artifacts/android/credentials/generated-key.properties
+            whisper/artifacts/android/credentials/debug-key-info.txt
+            whisper/artifacts/android/credentials/release-key-info.txt
+
+  deploy-whisper-ai-space:
+    name: Deploy Whisper AI Space
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.backend == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/server')) }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Validate deployment secrets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+
+      - name: Validate Space payload
+        run: |
+          set -euo pipefail
+          test -f whisper-ai/README.md
+          test -f whisper-ai/Dockerfile
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create subtree commit for whisper-ai
+        id: subtree
+        run: |
+          set -euo pipefail
+          split_sha="$(git subtree split --prefix=whisper-ai HEAD)"
+          echo "sha=$split_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve whisper-ai Space URL
+        id: whisper-ai-space
+        run: |
+          set -euo pipefail
+          space_url="$(grep -E '^HF_SPACE_ID=' whisper-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
+          if [ -z "$space_url" ]; then
+            echo "HF_SPACE_ID is not set in whisper-ai/.env.example" >&2
+            exit 1
+          fi
+          echo "url=$space_url" >> "$GITHUB_OUTPUT"
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SUBTREE_SHA: ${{ steps.subtree.outputs.sha }}
+          WHISPER_AI_SPACE_URL: ${{ steps.whisper-ai-space.outputs.url }}
+        run: |
+          set -euo pipefail
+          space_host="${WHISPER_AI_SPACE_URL#https://}"
+          space_host="${space_host#http://}"
+          space_host="${space_host%%/*}"
+          space_slug="${space_host%.hf.space}"
+          space_owner="${space_slug%%-*}"
+          space_name="${space_slug#*-}"
+          if [ -z "$space_owner" ] || [ -z "$space_name" ] || [ "$space_name" = "$space_slug" ]; then
+            echo "Could not derive Hugging Face repo from $WHISPER_AI_SPACE_URL" >&2
+            exit 1
+          fi
+          git push --force "https://${space_owner}:${HF_TOKEN}@huggingface.co/spaces/${space_owner}/${space_name}" "${SUBTREE_SHA}:main"
+
+  deploy-image-encoder-space:
+    name: Deploy Image Encoder Space
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.encoder == 'true' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/server')) }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Validate deployment secret
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+
+      - name: Validate Space payload
+        run: |
+          set -euo pipefail
+          test -f image-encoder/README.md
+          test -f image-encoder/Dockerfile
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create subtree commit for image-encoder
+        id: subtree
+        run: |
+          set -euo pipefail
+          split_sha="$(git subtree split --prefix=image-encoder HEAD)"
+          echo "sha=$split_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image-encoder Space URL
+        id: image-encoder-space
+        run: |
+          set -euo pipefail
+          space_url="$(grep -E '^IMAGE_ENCODER_URL=' whisper-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
+          if [ -z "$space_url" ]; then
+            echo "IMAGE_ENCODER_URL is not set in whisper-ai/.env.example" >&2
+            exit 1
+          fi
+          echo "url=$space_url" >> "$GITHUB_OUTPUT"
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SUBTREE_SHA: ${{ steps.subtree.outputs.sha }}
+          IMAGE_ENCODER_SPACE_URL: ${{ steps.image-encoder-space.outputs.url }}
+        run: |
+          set -euo pipefail
+          space_host="${IMAGE_ENCODER_SPACE_URL#https://}"
+          space_host="${space_host#http://}"
+          space_host="${space_host%%/*}"
+          space_slug="${space_host%.hf.space}"
+          space_owner="${space_slug%%-*}"
+          space_name="${space_slug#*-}"
+          if [ -z "$space_owner" ] || [ -z "$space_name" ] || [ "$space_name" = "$space_slug" ]; then
+            echo "Could not derive Hugging Face repo from $IMAGE_ENCODER_SPACE_URL" >&2
+            exit 1
+          fi
+          git push --force "https://${space_owner}:${HF_TOKEN}@huggingface.co/spaces/${space_owner}/${space_name}" "${SUBTREE_SHA}:main"

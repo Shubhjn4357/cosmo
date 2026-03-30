@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Whisper AI Admin</title>
+  <link rel="stylesheet" href="/ui-assets/app.css?v=20260330a">
+</head>
+<body>
+  <div class="shell">
+    <h1>Whisper AI Admin</h1>
+    <p class="meta">Operational dashboard for runtime, datasets, research, and health.</p>
+
+    <div class="panel" style="margin-bottom: 20px;">
+      <h2>Admin Login</h2>
+      <div class="row">
+        <div><input id="adminUsername" placeholder="Admin email or username"></div>
+        <div><input id="adminPassword" type="password" placeholder="Admin password"></div>
+        <div><button id="adminLoginButton">Login</button></div>
+      </div>
+      <div id="adminAuthStatus" class="meta"></div>
+    </div>
+
+    <div class="panel panel-accent" style="margin-bottom: 20px;">
+      <div class="toolbar">
+        <div>
+          <h2>AI Control Center</h2>
+          <p class="meta">Unified control surface for runtime, self-learner, training, and generator operations.</p>
+        </div>
+        <div class="toolbar-actions">
+          <div id="lastRefreshLabel" class="pill">Last sync: never</div>
+          <label class="toggle"><input id="autoRefreshToggle" type="checkbox" checked> Auto Refresh</label>
+          <button id="refreshControlCenterButton" class="secondary">Refresh Now</button>
+        </div>
+      </div>
+      <div id="controlCenterBanner" class="hero-grid" style="margin-top: 16px;"></div>
+      <div id="aiModeGrid" class="grid" style="margin-top: 16px;"></div>
+      <div class="row" style="margin-top: 16px;">
+        <div><input id="trainingSteps" type="number" value="100" min="1" max="50000" placeholder="Training steps"></div>
+        <div><button id="startTrainingButton">Start Training</button></div>
+        <div><button id="stopTrainingButton" class="secondary">Stop Training</button></div>
+        <div><button id="startGeneratorButton">Start Generator</button></div>
+        <div><button id="stopGeneratorButton" class="secondary">Stop Generator</button></div>
+      </div>
+      <pre id="aiOpsOutput" class="message assistant"></pre>
+      <div id="aiJobGrid" class="grid" style="margin-top: 16px;"></div>
+      <div id="aiLogGrid" class="grid" style="margin-top: 16px;"></div>
+    </div>
+
+    <div class="row">
+      <div class="panel">
+        <h2>Health</h2>
+        <div id="healthGrid" class="grid"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Readiness</h2>
+        <div class="row" style="margin-bottom: 12px;">
+          <div><button id="refreshReadinessButton" class="secondary">Refresh Readiness</button></div>
+          <div><button id="validateDatabaseButton" class="secondary">Validate Database</button></div>
+          <div><button id="validatePaymentsButton" class="secondary">Validate Payments</button></div>
+        </div>
+        <div id="readinessGrid" class="grid"></div>
+        <pre id="readinessOutput" class="message assistant"></pre>
+      </div>
+
+      <div class="panel">
+        <h2>Research</h2>
+        <input id="researchTopic" placeholder="Topic for crawl and indexing" value="python programming best practices">
+        <div class="row" style="margin-top: 12px;">
+          <div><input id="researchPages" type="number" value="3" min="1" max="10"></div>
+          <div>
+            <select id="researchProvider">
+              <option value="auto">Auto</option>
+              <option value="cloudflare">Cloudflare</option>
+              <option value="legacy">Legacy</option>
+            </select>
+          </div>
+          <div><button id="researchButton">Discover</button></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div><input id="researchStartUrl" placeholder="Optional start URL (for direct crawl)"></div>
+          <div><input id="researchDepth" type="number" value="1" min="0" max="5"></div>
+          <div><label><input id="researchRender" type="checkbox"> Render JS</label></div>
+          <div><label><input id="researchRefreshExisting" type="checkbox"> Refresh Existing</label></div>
+        </div>
+        <pre id="researchOutput" class="message assistant"></pre>
+        <div class="row" style="margin-top: 12px;">
+          <div><label><input id="researchRequireAllowed" type="checkbox"> Require allowlisted sources</label></div>
+          <div><label><input id="researchRequireLicensed" type="checkbox"> Require known license metadata</label></div>
+          <div><button id="saveResearchPolicyButton" class="secondary">Save Policy</button></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div><input id="researchAllowedDomains" placeholder="Allowed domains, comma-separated"></div>
+          <div><input id="researchBlockedDomains" placeholder="Blocked domains, comma-separated"></div>
+        </div>
+        <pre id="researchPolicyOutput" class="message assistant"></pre>
+        <div class="row" style="margin-top: 12px;">
+          <div><button id="exportResearchButton" class="secondary">Export Research Dataset</button></div>
+          <div><button id="validateCloudflareButton" class="secondary">Validate Cloudflare</button></div>
+          <div><button id="deleteResearchDocsButton" class="secondary">Delete Matching Documents</button></div>
+          <div><button id="deleteResearchHistoryButton" class="secondary">Delete Matching History</button></div>
+          <div><button id="resetResearchQuotaButton" class="secondary">Reset Cloudflare Quota</button></div>
+          <div><button id="resetResearchScraperButton" class="secondary">Reset Scraper State</button></div>
+          <div><button id="rebuildResearchIndexButton" class="secondary">Rebuild Research Index</button></div>
+        </div>
+        <pre id="researchDatasetOutput" class="message assistant"></pre>
+        <div id="researchDocumentGrid" class="grid" style="margin-top: 16px;"></div>
+        <div id="researchHistoryGrid" class="grid" style="margin-top: 16px;"></div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top: 20px;">
+      <div class="panel">
+        <h2>Runtime Control</h2>
+        <p class="meta">Auto-refreshes every 10 seconds while this page is open.</p>
+        <div class="row">
+          <div><select id="runtimeProfileSelect"></select></div>
+          <div><button id="applyProfileButton">Apply Profile</button></div>
+          <div><button id="reloadRuntimeButton" class="secondary">Load Runtime</button></div>
+          <div><button id="unloadRuntimeButton" class="secondary">Unload</button></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div><button id="validateRuntimeButton" class="secondary">Validate Selected Profile</button></div>
+          <div><label><input id="runtimeValidationLoadTest" type="checkbox"> Attempt Load Test</label></div>
+          <div><button id="downloadProfileButton">Download Selected Model</button></div>
+          <div><button id="refreshRuntimeButton" class="secondary">Refresh Runtime</button></div>
+        </div>
+        <pre id="runtimeOutput" class="message assistant"></pre>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top: 20px;">
+      <div class="panel">
+        <h2>Runtime Profiles</h2>
+        <div id="runtimeProfileGrid" class="grid"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Download Jobs</h2>
+        <div id="runtimeJobGrid" class="grid"></div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top: 20px;">
+      <div class="panel">
+        <h2>Datasets</h2>
+        <input id="datasetFileInput" type="file">
+        <div class="row" style="margin-top: 12px;">
+          <div><button id="uploadDatasetButton">Upload</button></div>
+          <div><button id="validateHfButton" class="secondary">Validate HF</button></div>
+          <div><button id="syncLearningDataButton" class="secondary">Sync Learning Data</button></div>
+          <div><button id="refreshDatasetsButton" class="secondary">Refresh</button></div>
+        </div>
+        <pre id="hfSyncOutput" class="message assistant"></pre>
+        <div id="datasetGrid" class="grid" style="margin-top: 16px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/ui-assets/admin.js?v=20260330a"></script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+httpx>=0.26.0
+pillow>=10.2.0
+numpy>=1.26.0
+loguru>=0.7.2
+transformers>=4.37.0
+torch>=2.1.0
+huggingface-hub>=0.20.0
