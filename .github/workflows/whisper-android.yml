@@ -1,0 +1,76 @@
+name: Whisper Android
+
+on:
+  push:
+    paths:
+      - .github/workflows/whisper-android.yml
+      - whisper/**
+  pull_request:
+    paths:
+      - .github/workflows/whisper-android.yml
+      - whisper/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apks:
+    name: Build Debug And Signed Release APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: whisper/package-lock.json
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install mobile app dependencies
+        working-directory: whisper
+        run: npm ci
+
+      - name: Build Android APKs
+        working-directory: whisper
+        run: bash scripts/ci/build-android-apks.sh
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-android-apks-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            whisper/artifacts/android/whisper-debug.apk
+            whisper/artifacts/android/whisper-release-signed.apk
+            whisper/artifacts/android/build-metadata.json
+            whisper/artifacts/android/signing-summary.txt
+
+      - name: Upload signing materials
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-android-signing-materials-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            whisper/artifacts/android/keystores/debug.keystore
+            whisper/artifacts/android/keystores/release.keystore
+            whisper/artifacts/android/credentials/generated-key.properties
+            whisper/artifacts/android/credentials/debug-key-info.txt
+            whisper/artifacts/android/credentials/release-key-info.txt

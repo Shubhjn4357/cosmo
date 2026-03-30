@@ -1,0 +1,81 @@
+name: Image Encoder Space
+
+on:
+  push:
+    branches:
+      - server
+    paths:
+      - .github/workflows/image-encoder-space.yml
+      - image-encoder/**
+      - whisper-ai/.env.example
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-space:
+    name: Deploy Image Encoder Space
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Validate deployment secret
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+
+      - name: Validate Space payload
+        run: |
+          set -euo pipefail
+          test -f image-encoder/README.md
+          test -f image-encoder/Dockerfile
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create subtree commit for image-encoder
+        id: subtree
+        run: |
+          set -euo pipefail
+          split_sha="$(git subtree split --prefix=image-encoder HEAD)"
+          echo "sha=$split_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image-encoder Space URL
+        id: image-encoder-space
+        run: |
+          set -euo pipefail
+          space_url="$(grep -E '^IMAGE_ENCODER_URL=' whisper-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
+          if [ -z "$space_url" ]; then
+            echo "IMAGE_ENCODER_URL is not set in whisper-ai/.env.example" >&2
+            exit 1
+          fi
+          echo "url=$space_url" >> "$GITHUB_OUTPUT"
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SUBTREE_SHA: ${{ steps.subtree.outputs.sha }}
+          IMAGE_ENCODER_SPACE_URL: ${{ steps.image-encoder-space.outputs.url }}
+        run: |
+          set -euo pipefail
+          space_host="${IMAGE_ENCODER_SPACE_URL#https://}"
+          space_host="${space_host#http://}"
+          space_host="${space_host%%/*}"
+          space_slug="${space_host%.hf.space}"
+          space_owner="${space_slug%%-*}"
+          space_name="${space_slug#*-}"
+          if [ -z "$space_owner" ] || [ -z "$space_name" ] || [ "$space_name" = "$space_slug" ]; then
+            echo "Could not derive Hugging Face repo from $IMAGE_ENCODER_SPACE_URL" >&2
+            exit 1
+          fi
+          git push --force "https://${space_owner}:${HF_TOKEN}@huggingface.co/spaces/${space_owner}/${space_name}" "${SUBTREE_SHA}:main"
