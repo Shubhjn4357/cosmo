@@ -1,0 +1,74 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Mem: Init Session",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "../.Agent/scripts/mem.py",
+        "init"
+      ],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "clear": true
+      },
+      "runOptions": {
+        "runOn": "folderOpen",
+        "instanceLimit": 1
+      }
+    },
+    {
+      "label": "Mem: Load Context",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "../.Agent/scripts/mem.py",
+        "ctx",
+        "--agent",
+        "${input:memAgent}"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Mem: Status",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "../.Agent/scripts/mem.py",
+        "status"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "memAgent",
+      "type": "pickString",
+      "description": "Which agent context should be loaded?",
+      "options": [
+        "codex",
+        "copilot",
+        "cursor",
+        "claude",
+        "antigravity",
+        "claw",
+        "tiny-claw",
+        "pico-claw",
+        "micro-claw",
+        "nano-claw",
+        "rtiny-claw"
+      ],
+      "default": "codex"
+    }
+  ]
+}
