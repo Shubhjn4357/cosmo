@@ -54,39 +54,7 @@ class TokenPricing:
         Returns:
             Token cost
         """
-        if is_local:
-            return cls.LOCAL
-        
-        feature_lower = feature.lower()
-        
-        if is_smart:
-            if 'chat' in feature_lower:
-                return cls.SMART_CHAT
-            elif 'image' in feature_lower:
-                return cls.SMART_IMAGE
-            elif 'file' in feature_lower or 'analysis' in feature_lower:
-                return cls.SMART_FILE
-            elif 'roleplay' in feature_lower:
-                return cls.SMART_ROLEPLAY
-        
-        # Cloud pricing
-        if 'chat' in feature_lower:
-            return cls.CLOUD_CHAT
-        elif 'image' in feature_lower:
-            return cls.CLOUD_IMAGE
-        elif 'file' in feature_lower or 'analysis' in feature_lower:
-            return cls.CLOUD_FILE_ANALYSIS
-        elif 'voice' in feature_lower or 'tts' in feature_lower:
-            return cls.CLOUD_VOICE
-        elif 'faceswap' in feature_lower or 'face' in feature_lower:
-            return cls.CLOUD_FACESWAP
-        elif 'upscale' in feature_lower:
-            return cls.CLOUD_UPSCALE
-        elif 'roleplay' in feature_lower:
-            return cls.CLOUD_ROLEPLAY
-        
-        # Default
-        return cls.CLOUD_CHAT
+        return 0.0
 
 
 @dataclass
@@ -194,8 +162,7 @@ class GuestTokenManager:
 
 class TokenService:
     """
-    Main token service - handles pricing, checking, and deduction
-    Supports guest mode, user tokens, and Pro subscriptions
+    Compatibility token service for the simplified free app.
     """
     
     def __init__(self, db_client=None):
@@ -229,34 +196,17 @@ class TokenService:
         Returns:
             Result dict with success, remaining, etc.
         """
-        # Get cost
-        cost = TokenPricing.get_cost(feature, is_local, is_smart)
-        
-        # Local is always free
-        if is_local or cost == 0:
-            return {
-                'success': True,
-                'cost': 0,
-                'remaining': float('inf'),
-                'is_local': True,
-                'message': 'Local model - FREE'
-            }
-        
-        # Guest mode
-        if not user_id and session_id:
-            return self.guest_manager.use_tokens(session_id, cost)
-        
-        # Require login for cloud if no session
-        if not user_id:
-            return {
-                'success': False,
-                'error': 'authentication_required',
-                'message': 'Please sign in or use local models',
-                'cost': cost
-            }
-        
-        # User tokens
-        return await self._use_user_tokens(user_id, cost, feature)
+        return {
+            'success': True,
+            'cost': 0,
+            'remaining': float('inf'),
+            'feature': feature,
+            'is_local': is_local,
+            'is_smart': is_smart,
+            'user_id': user_id,
+            'session_id': session_id,
+            'message': 'Token limits disabled',
+        }
     
     async def _use_user_tokens(
         self,
@@ -264,77 +214,14 @@ class TokenService:
         cost: float,
         feature: str
     ) -> Dict[str, Any]:
-        """
-        Deduct tokens from user account
-        
-        Args:
-            user_id: User ID
-            cost: Token cost
-            feature: Feature name
-            
-        Returns:
-            Result dict
-        """
-        if not self.supabase:
-            return {'success': False, 'error': 'database_unavailable'}
-        
-        try:
-            # Get user profile
-            result = self.supabase.table("profiles").select(
-                "tokens_used, tokens_limit, subscription_tier, last_token_refresh"
-            ).eq("id", user_id).execute()
-            
-            if not result.data:
-                return {'success': False, 'error': 'user_not_found'}
-            
-            profile = result.data[0]
-            tokens_used = profile.get('tokens_used', 0)
-            tokens_limit = profile.get('tokens_limit', TokenLimits.FREE_DAILY)
-            last_refresh = profile.get('last_token_refresh')
-            
-            # Check if we need to refresh daily tokens
-            if self._should_refresh_tokens(last_refresh):
-                tokens_used = 0
-                # Update refresh time
-                self.supabase.table("profiles").update({
-                    'tokens_used': 0,
-                    'last_token_refresh': datetime.now(timezone.utc).isoformat()
-                }).eq("id", user_id).execute()
-            
-            # Calculate remaining
-            remaining = tokens_limit - tokens_used
-            
-            # Check if enough
-            if remaining < cost:
-                tier = profile.get('subscription_tier', 'free')
-                return {
-                    'success': False,
-                    'error': 'insufficient_tokens',
-                    'message': f'Not enough tokens. You have {remaining:.1f} but need {cost}.',
-                    'remaining': remaining,
-                    'required': cost,
-                    'tier': tier
-                }
-            
-            # Deduct tokens
-            new_used = tokens_used + cost
-            self.supabase.table("profiles").update({
-                'tokens_used': new_used
-            }).eq("id", user_id).execute()
-            
-            # Log usage
-            await self._log_token_usage(user_id, cost, feature, False)
-            
-            return {
-                'success': True,
-                'cost': cost,
-                'remaining': tokens_limit - new_used,
-                'used_today': new_used
-            }
-            
-        except Exception as e:
-            logger.error(f"Token deduction failed: {e}")
-            return {'success': False, 'error': str(e)}
+        return {
+            'success': True,
+            'cost': 0,
+            'remaining': float('inf'),
+            'used_today': 0,
+            'user_id': user_id,
+            'feature': feature,
+        }
     
     def _should_refresh_tokens(self, last_refresh: Optional[str]) -> bool:
         """
@@ -389,46 +276,14 @@ class TokenService:
             logger.warning(f"Failed to log token usage: {e}")
     
     async def get_user_tokens(self, user_id: str) -> Dict[str, Any]:
-        """
-        Get user token information
-        
-        Args:
-            user_id: User ID
-            
-        Returns:
-            Token info dict
-        """
-        if not self.supabase:
-            return {'error': 'database_unavailable'}
-        
-        try:
-            result = self.supabase.table("profiles").select(
-                "tokens_used, tokens_limit, subscription_tier, last_token_refresh"
-            ).eq("id", user_id).execute()
-            
-            if not result.data:
-                return {'error': 'user_not_found'}
-            
-            profile = result.data[0]
-            tokens_used = profile.get('tokens_used', 0)
-            tokens_limit = profile.get('tokens_limit', TokenLimits.FREE_DAILY)
-            last_refresh = profile.get('last_token_refresh')
-            
-            # Check refresh
-            if self._should_refresh_tokens(last_refresh):
-                tokens_used = 0
-            
-            return {
-                'used': tokens_used,
-                'limit': tokens_limit,
-                'remaining': tokens_limit - tokens_used,
-                'tier': profile.get('subscription_tier', 'free'),
-                'last_refresh': last_refresh
-            }
-            
-        except Exception as e:
-            logger.error(f"Failed to get user tokens: {e}")
-            return {'error': str(e)}
+        return {
+            'used': 0,
+            'limit': float('inf'),
+            'remaining': float('inf'),
+            'tier': 'unlimited',
+            'last_refresh': None,
+            'user_id': user_id,
+        }
 
 
 # Example usage convenience function

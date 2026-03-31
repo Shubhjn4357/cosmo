@@ -6,8 +6,11 @@ const hfSyncOutput = document.getElementById("hfSyncOutput");
 const researchOutput = document.getElementById("researchOutput");
 const researchPolicyOutput = document.getElementById("researchPolicyOutput");
 const researchDatasetOutput = document.getElementById("researchDatasetOutput");
+const researchAutonomyOutput = document.getElementById("researchAutonomyOutput");
 const researchDocumentGrid = document.getElementById("researchDocumentGrid");
 const researchHistoryGrid = document.getElementById("researchHistoryGrid");
+const researchHistoryScope = document.getElementById("researchHistoryScope");
+const researchAutonomyGrid = document.getElementById("researchAutonomyGrid");
 const controlCenterBanner = document.getElementById("controlCenterBanner");
 const aiModeGrid = document.getElementById("aiModeGrid");
 const aiJobGrid = document.getElementById("aiJobGrid");
@@ -16,6 +19,13 @@ const aiOpsOutput = document.getElementById("aiOpsOutput");
 const readinessOutput = document.getElementById("readinessOutput");
 const runtimeOutput = document.getElementById("runtimeOutput");
 const authStatus = document.getElementById("adminAuthStatus");
+const authBadge = document.getElementById("adminAuthBadge");
+const adminLoginHint = document.getElementById("adminLoginHint");
+const adminLoginForm = document.getElementById("adminLoginForm");
+const adminLoginButton = document.getElementById("adminLoginButton");
+const adminLogoutButton = document.getElementById("adminLogoutButton");
+const adminUsernameInput = document.getElementById("adminUsername");
+const adminPasswordInput = document.getElementById("adminPassword");
 const runtimeProfileSelect = document.getElementById("runtimeProfileSelect");
 const runtimeProfileGrid = document.getElementById("runtimeProfileGrid");
 const runtimeJobGrid = document.getElementById("runtimeJobGrid");
@@ -26,7 +36,10 @@ const trainingStepsInput = document.getElementById("trainingSteps");
 const tokenKey = "whisper_admin_token";
 let runtimeProfileState = null;
 let controlCenterState = null;
+let researchAutonomyState = null;
+let selectedAutonomySourceId = null;
 let refreshInFlight = false;
+let adminConfigState = null;
 
 function getAdminToken() {
   return window.localStorage.getItem(tokenKey) || "";
@@ -38,6 +51,88 @@ function setAdminToken(token) {
   } else {
     window.localStorage.removeItem(tokenKey);
   }
+}
+
+function setAuthBadge(label, tone = "status-warn") {
+  if (!authBadge) {
+    return;
+  }
+  authBadge.textContent = label;
+  authBadge.className = `pill ${tone}`;
+}
+
+function setAuthMessage(message, tone = "status-warn") {
+  if (!authStatus) {
+    return;
+  }
+  authStatus.textContent = message;
+  authStatus.className = `auth-feedback ${tone}`;
+}
+
+function updateAdminConfigUi() {
+  const configured = adminConfigState?.admin_configured;
+  const legacyEnabled = Boolean(adminConfigState?.legacy_admin_enabled);
+  const aliases = Array.isArray(adminConfigState?.admin_aliases)
+    ? adminConfigState.admin_aliases.filter(Boolean)
+    : [];
+
+  if (configured === false) {
+    setAuthBadge("Admin not configured", "status-error");
+    setAuthMessage(
+      "No server admin account is configured. Set ADMIN_USERNAME or ADMIN_EMAIL with ADMIN_PASSWORD or ADMIN_PASSWORD_HASH.",
+      "status-error",
+    );
+    if (adminLoginHint) {
+      adminLoginHint.textContent = "Server admin credentials are missing. Update the backend config, then reload this page.";
+    }
+    adminLoginButton.disabled = true;
+    adminUsernameInput.disabled = true;
+    adminPasswordInput.disabled = true;
+    return;
+  }
+
+  adminLoginButton.disabled = false;
+  adminUsernameInput.disabled = false;
+  adminPasswordInput.disabled = false;
+
+  if (adminLoginHint) {
+    const identifierText = aliases.length
+      ? `Accepted identifiers: ${aliases.join(" or ")}.`
+      : "Accepted identifiers: configured admin username or admin email.";
+    adminLoginHint.textContent = `${identifierText}${legacyEnabled ? " Legacy admin fallback is enabled." : ""}`;
+  }
+
+  if (!getAdminToken()) {
+    setAuthBadge("Login required", "status-warn");
+    setAuthMessage("Sign in with the server admin account to unlock the control surface.", "status-warn");
+  }
+}
+
+async function refreshAdminConfigStatus() {
+  try {
+    const response = await fetch("/api/auth/admin-status");
+    const payload = await readJson(response);
+    adminConfigState = response.ok ? payload : null;
+  } catch (error) {
+    adminConfigState = null;
+  }
+
+  if (!adminConfigState) {
+    adminLoginButton.disabled = false;
+    adminUsernameInput.disabled = false;
+    adminPasswordInput.disabled = false;
+    if (!getAdminToken()) {
+      setAuthBadge("Status unavailable", "status-warn");
+      setAuthMessage("Could not verify admin configuration. You can still try signing in.", "status-warn");
+    }
+    if (adminLoginHint) {
+      adminLoginHint.textContent = "The server did not return admin status. Check auth routing or try signing in directly.";
+    }
+    return null;
+  }
+
+  updateAdminConfigUi();
+  return adminConfigState;
 }
 
 function escapeHtml(value) {
@@ -83,6 +178,21 @@ function formatDuration(seconds) {
     return `${mins}m ${secs}s`;
   }
   return `${secs}s`;
+}
+
+function parseCsvList(value) {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeNumericField(value) {
+  if (value === "" || value === null || value === undefined) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function statusClass(ok) {
@@ -168,6 +278,10 @@ function renderLockedPanels() {
   hfSyncOutput.textContent = "Login to inspect Hugging Face dataset sync status.";
   researchHistoryGrid.innerHTML = locked;
   researchDocumentGrid.innerHTML = locked;
+  researchAutonomyGrid.innerHTML = locked;
+  if (researchHistoryScope) {
+    researchHistoryScope.textContent = "Research history is locked until admin login.";
+  }
   runtimeProfileGrid.innerHTML = locked;
   runtimeJobGrid.innerHTML = locked;
   controlCenterBanner.innerHTML = locked;
@@ -178,6 +292,7 @@ function renderLockedPanels() {
   runtimeOutput.textContent = "Login to manage runtime profiles, datasets, and download jobs.";
   readinessOutput.textContent = "Login to view deployment readiness and blocker details.";
   researchPolicyOutput.textContent = "Login to manage research source policy.";
+  researchAutonomyOutput.textContent = "Login to manage autonomous research sources and schedules.";
   researchDatasetOutput.textContent = "Login to browse and export research documents.";
   aiOpsOutput.textContent = "Login to control training, generator, and AI runtime operations.";
   ["startTrainingButton", "stopTrainingButton", "startGeneratorButton", "stopGeneratorButton"].forEach((id) => {
@@ -504,7 +619,6 @@ function renderReadiness(report) {
     ["HF Sync", sections.dataset_sync?.configured ? "configured" : "not configured"],
     ["Cloudflare", sections.cloudflare?.status_message || "unknown"],
     ["Google Auth", sections.google_auth?.configured ? "configured" : "not configured"],
-    ["Payments", sections.payments?.last_message || (sections.payments?.configured ? "configured" : "not configured")],
   ];
 
   readinessGrid.innerHTML = "";
@@ -526,8 +640,11 @@ function renderReadiness(report) {
   );
 }
 
-function renderResearchHistory(runs) {
+function renderResearchHistory(runs, summary = null, scopeLabel = "Recent research runs.") {
   researchHistoryGrid.innerHTML = "";
+  if (researchHistoryScope) {
+    researchHistoryScope.textContent = scopeLabel;
+  }
 
   if (!runs.length) {
     researchHistoryGrid.innerHTML = `
@@ -550,6 +667,8 @@ function renderResearchHistory(runs) {
       <div class="meta">${escapeHtml(run.provider || "none")} | ${escapeHtml(new Date((run.timestamp || 0) * 1000).toLocaleString())}</div>
       <div class="meta ${statusClassName}">Status: ${escapeHtml(status)}</div>
       <div class="meta">Pages: ${escapeHtml(run.pages_crawled ?? 0)} | Texts: ${escapeHtml(run.texts_processed ?? 0)} | Chunks: ${escapeHtml(run.chunks_indexed ?? 0)}</div>
+      ${run.learning_records_added !== undefined ? `<div class="meta">Learning added: ${escapeHtml(run.learning_records_added ?? 0)} | skipped: ${escapeHtml(run.learning_records_skipped ?? 0)}</div>` : ""}
+      ${run.autonomy_source_label || run.autonomy_source_id ? `<div class="meta">Source: ${escapeHtml(run.autonomy_source_label || run.autonomy_source_id)}</div>` : ""}
       <div class="meta">Job: ${escapeHtml(run.job_id || "n/a")}</div>
       ${run.start_url ? `<div class="meta">Start URL: ${escapeHtml(run.start_url)}</div>` : ""}
       ${fallback ? `<div class="meta">Fallback: ${escapeHtml(`${fallback.from || "cloudflare"} -> ${fallback.to || "legacy"}`)}</div>` : ""}
@@ -558,6 +677,7 @@ function renderResearchHistory(runs) {
     `;
     researchHistoryGrid.appendChild(card);
   });
+
 }
 
 function renderResearchDocuments(documents, summary) {
@@ -613,10 +733,195 @@ function renderResearchPolicy(policy) {
   );
 }
 
+function renderResearchAutonomy(autonomy) {
+  researchAutonomyState = autonomy || null;
+  const runtime = autonomy?.runtime || {};
+  const sources = autonomy?.sources || [];
+  document.getElementById("autonomyEnabled").checked = Boolean(autonomy?.enabled);
+  document.getElementById("autonomyIntervalMinutes").value = autonomy?.interval_minutes || 60;
+  document.getElementById("autonomyChunkChars").value = autonomy?.learning_chunk_chars || 1200;
+  document.getElementById("autonomyMaxChunks").value = autonomy?.learning_max_chunks_per_document || 2;
+  document.getElementById("autonomyAutoSyncHf").checked = Boolean(autonomy?.auto_sync_hf);
+
+  researchAutonomyGrid.innerHTML = "";
+  if (!sources.length) {
+    researchAutonomyGrid.innerHTML = `
+      <div class="card">
+        <strong>No autonomous sources</strong>
+        <div class="meta">Add a topic or start URL to let the server keep learning after startup.</div>
+      </div>
+    `;
+  } else {
+    sources.forEach((source) => {
+      const card = document.createElement("div");
+      const active = runtime.current_source_id === source.id;
+      const selected = selectedAutonomySourceId === source.id;
+      const tone = source.enabled ? "status-ok" : "status-warn";
+      card.className = `card${active || selected ? " card-active" : ""}`;
+      card.innerHTML = `
+        <strong>${escapeHtml(source.label || source.topic || "Research source")}</strong>
+        <div class="status-chip ${tone}">${source.enabled ? "enabled" : "disabled"}</div>
+        <div class="meta">Topic: ${escapeHtml(source.topic || "n/a")}</div>
+        <div class="meta">Provider: ${escapeHtml(source.provider || "auto")} | Pages: ${escapeHtml(source.max_pages || 0)} | Depth: ${escapeHtml(source.depth || 0)}</div>
+        <div class="meta">Sites: ${escapeHtml(source.max_sites || 1)} | Source mode: ${escapeHtml(source.source || "all")} | Formats: ${escapeHtml((source.formats || []).join(", ") || "markdown")}</div>
+        ${source.start_url ? `<div class="meta">Start URL: ${escapeHtml(source.start_url)}</div>` : ""}
+        ${(source.tags || []).length ? `<div class="meta">Tags: ${escapeHtml(source.tags.join(", "))}</div>` : ""}
+        <div class="meta">Last run: ${escapeHtml(source.last_run_at ? new Date(source.last_run_at * 1000).toLocaleString() : "never")}</div>
+        <div class="meta">Last status: ${escapeHtml(source.last_status || "n/a")}</div>
+        ${(source.last_result && Object.keys(source.last_result).length) ? `<div class="meta">Last result: ${escapeHtml(JSON.stringify(source.last_result))}</div>` : ""}
+        ${source.last_error ? `<div class="meta status-error">${escapeHtml(source.last_error)}</div>` : ""}
+        <div class="meta">Completed: ${escapeHtml(source.runs_completed || 0)} | Failed: ${escapeHtml(source.runs_failed || 0)}</div>
+        <div class="row" style="margin-top: 12px;">
+          <div><button class="secondary autonomy-view-history-button" data-source-id="${escapeHtml(source.id)}">Runs</button></div>
+          <div><button class="secondary autonomy-edit-button" data-source-id="${escapeHtml(source.id)}">Edit</button></div>
+          <div><button class="secondary autonomy-run-button" data-source-id="${escapeHtml(source.id)}">Run</button></div>
+          <div><button class="secondary autonomy-toggle-button" data-source-id="${escapeHtml(source.id)}" data-enabled="${source.enabled ? "false" : "true"}">${source.enabled ? "Disable" : "Enable"}</button></div>
+          <div><button class="secondary autonomy-delete-button" data-source-id="${escapeHtml(source.id)}">Delete</button></div>
+        </div>
+      `;
+      researchAutonomyGrid.appendChild(card);
+    });
+  }
+
+  researchAutonomyOutput.textContent = JSON.stringify(
+    {
+      enabled: autonomy?.enabled,
+      interval_minutes: autonomy?.interval_minutes,
+      auto_sync_hf: autonomy?.auto_sync_hf,
+      learning_chunk_chars: autonomy?.learning_chunk_chars,
+      learning_max_chunks_per_document: autonomy?.learning_max_chunks_per_document,
+      task_running: autonomy?.task_running,
+      runtime,
+      source_count: autonomy?.source_count,
+      enabled_source_count: autonomy?.enabled_source_count,
+      config_path: autonomy?.config_path,
+    },
+    null,
+    2,
+  );
+
+  if (selectedAutonomySourceId && !findAutonomySource(selectedAutonomySourceId)) {
+    selectedAutonomySourceId = null;
+  }
+}
+
+function findAutonomySource(sourceId) {
+  return (researchAutonomyState?.sources || []).find((source) => source.id === sourceId) || null;
+}
+
+function resetAutonomySourceForm() {
+  document.getElementById("autonomySourceId").value = "";
+  document.getElementById("autonomySourceFormMode").textContent = "Create a new autonomous source.";
+  document.getElementById("addAutonomySourceButton").textContent = "Save Autonomous Source";
+  document.getElementById("autonomySourceLabel").value = "";
+  document.getElementById("autonomySourceTopic").value = "";
+  document.getElementById("autonomySourceStartUrl").value = "";
+  document.getElementById("autonomySourceTags").value = "";
+  document.getElementById("autonomySourceProvider").value = "auto";
+  document.getElementById("autonomySourcePages").value = 3;
+  document.getElementById("autonomySourceMaxSites").value = 1;
+  document.getElementById("autonomySourceDepth").value = 1;
+  document.getElementById("autonomySourceEnabled").checked = true;
+  document.getElementById("autonomySourceSource").value = "all";
+  document.getElementById("autonomySourceFormats").value = "markdown";
+  document.getElementById("autonomySourceIncludePatterns").value = "";
+  document.getElementById("autonomySourceExcludePatterns").value = "";
+  document.getElementById("autonomySourceModifiedSince").value = "";
+  document.getElementById("autonomySourceMaxAge").value = "";
+  document.getElementById("autonomySourceRender").checked = false;
+  document.getElementById("autonomySourceRefreshExisting").checked = false;
+  document.getElementById("autonomySourceExternalLinks").checked = false;
+  document.getElementById("autonomySourceSubdomains").checked = false;
+}
+
+function populateAutonomySourceForm(source) {
+  if (!source) {
+    resetAutonomySourceForm();
+    return;
+  }
+  document.getElementById("autonomySourceId").value = source.id || "";
+  document.getElementById("autonomySourceFormMode").textContent = `Editing autonomous source: ${source.label || source.topic || source.id}`;
+  document.getElementById("addAutonomySourceButton").textContent = "Update Autonomous Source";
+  document.getElementById("autonomySourceLabel").value = source.label || "";
+  document.getElementById("autonomySourceTopic").value = source.topic || "";
+  document.getElementById("autonomySourceStartUrl").value = source.start_url || "";
+  document.getElementById("autonomySourceTags").value = (source.tags || []).join(", ");
+  document.getElementById("autonomySourceProvider").value = source.provider || "auto";
+  document.getElementById("autonomySourcePages").value = source.max_pages || 3;
+  document.getElementById("autonomySourceMaxSites").value = source.max_sites || 1;
+  document.getElementById("autonomySourceDepth").value = source.depth || 1;
+  document.getElementById("autonomySourceEnabled").checked = Boolean(source.enabled);
+  document.getElementById("autonomySourceSource").value = source.source || "all";
+  document.getElementById("autonomySourceFormats").value = (source.formats || []).join(", ");
+  document.getElementById("autonomySourceIncludePatterns").value = (source.include_patterns || []).join(", ");
+  document.getElementById("autonomySourceExcludePatterns").value = (source.exclude_patterns || []).join(", ");
+  document.getElementById("autonomySourceModifiedSince").value = source.modified_since ?? "";
+  document.getElementById("autonomySourceMaxAge").value = source.max_age ?? "";
+  document.getElementById("autonomySourceRender").checked = Boolean(source.render);
+  document.getElementById("autonomySourceRefreshExisting").checked = Boolean(source.refresh_existing);
+  document.getElementById("autonomySourceExternalLinks").checked = Boolean(source.include_external_links);
+  document.getElementById("autonomySourceSubdomains").checked = Boolean(source.include_subdomains);
+}
+
+function collectAutonomySourcePayload() {
+  const topic = document.getElementById("autonomySourceTopic").value.trim();
+  const startUrl = document.getElementById("autonomySourceStartUrl").value.trim();
+  return {
+    label: document.getElementById("autonomySourceLabel").value.trim() || null,
+    topic: topic || null,
+    start_url: startUrl || null,
+    provider: document.getElementById("autonomySourceProvider").value,
+    max_pages: Math.max(1, Number(document.getElementById("autonomySourcePages").value) || 3),
+    max_sites: Math.max(1, Number(document.getElementById("autonomySourceMaxSites").value) || 1),
+    depth: Math.max(0, Number(document.getElementById("autonomySourceDepth").value) || 1),
+    enabled: document.getElementById("autonomySourceEnabled").checked,
+    source: document.getElementById("autonomySourceSource").value.trim() || "all",
+    formats: parseCsvList(document.getElementById("autonomySourceFormats").value || "markdown"),
+    include_patterns: parseCsvList(document.getElementById("autonomySourceIncludePatterns").value),
+    exclude_patterns: parseCsvList(document.getElementById("autonomySourceExcludePatterns").value),
+    modified_since: normalizeNumericField(document.getElementById("autonomySourceModifiedSince").value),
+    max_age: normalizeNumericField(document.getElementById("autonomySourceMaxAge").value),
+    render: document.getElementById("autonomySourceRender").checked,
+    refresh_existing: document.getElementById("autonomySourceRefreshExisting").checked,
+    include_external_links: document.getElementById("autonomySourceExternalLinks").checked,
+    include_subdomains: document.getElementById("autonomySourceSubdomains").checked,
+    tags: parseCsvList(document.getElementById("autonomySourceTags").value),
+  };
+}
+
+async function refreshResearchHistoryView(defaultRuns, defaultSummary) {
+  if (!selectedAutonomySourceId) {
+    const summary = defaultSummary || null;
+    const scopeLabel = summary
+      ? `Recent research runs. Completed: ${summary.completed_runs || 0}, failed: ${summary.failed_runs || 0}, indexed: ${summary.documents_indexed || 0}.`
+      : "Recent research runs.";
+    renderResearchHistory(defaultRuns || [], summary, scopeLabel);
+    return;
+  }
+
+  const response = await adminFetch(`/api/research/autonomy/sources/${encodeURIComponent(selectedAutonomySourceId)}/history?limit=20`);
+  const payload = await readJson(response);
+  if (!response.ok) {
+    selectedAutonomySourceId = null;
+    renderResearchHistory(
+      defaultRuns || [],
+      defaultSummary || null,
+      `Recent research runs. Source history unavailable: ${payload.detail || payload.error || "unknown source"}`,
+    );
+    return;
+  }
+
+  renderResearchHistory(
+    payload.runs || [],
+    payload.summary || null,
+    `Recent runs for ${payload.source?.label || payload.source?.topic || selectedAutonomySourceId}. Completed: ${payload.summary?.completed_runs || 0}, failed: ${payload.summary?.failed_runs || 0}, indexed: ${payload.summary?.documents_indexed || 0}.`,
+  );
+}
+
 async function verifyAdminToken() {
   const token = getAdminToken();
   if (!token) {
-    authStatus.textContent = "Not logged in.";
+    updateAdminConfigUi();
     return false;
   }
 
@@ -624,14 +929,21 @@ async function verifyAdminToken() {
   const payload = await readJson(response);
   if (!response.ok) {
     setAdminToken("");
-    authStatus.textContent = "Admin session expired.";
+    setAuthBadge("Session expired", "status-error");
+    setAuthMessage("Admin session expired. Sign in again.", "status-error");
     return false;
   }
 
-  authStatus.textContent = payload.is_admin
-    ? `Logged in as ${payload.username}`
-    : "Token is valid but not admin.";
-  return Boolean(payload.is_admin);
+  if (!payload.is_admin) {
+    setAdminToken("");
+    setAuthBadge("Access denied", "status-error");
+    setAuthMessage("This session belongs to a regular user account, not the server admin.", "status-error");
+    return false;
+  }
+
+  setAuthBadge("Admin unlocked", "status-ok");
+  setAuthMessage(`Logged in as ${payload.username}`, "status-ok");
+  return true;
 }
 
 async function refreshAdmin() {
@@ -641,6 +953,7 @@ async function refreshAdmin() {
   refreshInFlight = true;
 
   try {
+    const adminStatusPromise = refreshAdminConfigStatus();
     const [runtimeRes, researchRes] = await Promise.all([
       fetch("/api/admin/runtime-status"),
       fetch("/api/research/stats"),
@@ -657,6 +970,7 @@ async function refreshAdmin() {
     const runtimeStatus = runtimePayload.runtime || {};
     renderHealth(runtimeStatus, runtimePayload.knowledge || {}, researchPayload);
 
+    await adminStatusPromise;
     const isAdmin = await verifyAdminToken();
     if (!isAdmin) {
       renderLockedPanels();
@@ -676,11 +990,15 @@ async function refreshAdmin() {
     renderDatasetCards(controlCenterPayload.datasets?.datasets || []);
     renderHfSyncStatus(controlCenterPayload.hf_sync || {});
     renderReadiness(controlCenterPayload.readiness || {});
-    renderResearchHistory(controlCenterPayload.research_history?.runs || []);
     renderResearchPolicy(controlCenterPayload.research_policy || {});
+    renderResearchAutonomy(controlCenterPayload.research_autonomy || {});
     renderResearchDocuments(
       controlCenterPayload.research_documents?.documents || [],
       controlCenterPayload.research_documents?.summary || {},
+    );
+    await refreshResearchHistoryView(
+      controlCenterPayload.research_history?.runs || [],
+      controlCenterPayload.research_history?.summary || null,
     );
     renderControlCenter(controlCenterPayload);
 
@@ -873,6 +1191,177 @@ document.getElementById("saveResearchPolicyButton").addEventListener("click", as
   await refreshAdmin();
 });
 
+document.getElementById("saveAutonomySettingsButton").addEventListener("click", async () => {
+  const isAdmin = await verifyAdminToken();
+  if (!isAdmin) {
+    researchAutonomyOutput.textContent = "Admin login required.";
+    return;
+  }
+
+  const response = await adminFetch("/api/research/autonomy", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      enabled: document.getElementById("autonomyEnabled").checked,
+      interval_minutes: Math.max(1, Number(document.getElementById("autonomyIntervalMinutes").value) || 60),
+      auto_sync_hf: document.getElementById("autonomyAutoSyncHf").checked,
+      learning_chunk_chars: Math.max(200, Number(document.getElementById("autonomyChunkChars").value) || 1200),
+      learning_max_chunks_per_document: Math.max(1, Number(document.getElementById("autonomyMaxChunks").value) || 2),
+    }),
+  });
+  const payload = await readJson(response);
+  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
+  await refreshAdmin();
+});
+
+document.getElementById("runAutonomyNowButton").addEventListener("click", async () => {
+  const isAdmin = await verifyAdminToken();
+  if (!isAdmin) {
+    researchAutonomyOutput.textContent = "Admin login required.";
+    return;
+  }
+
+  const response = await adminFetch("/api/research/autonomy/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const payload = await readJson(response);
+  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
+  await refreshAdmin();
+});
+
+document.getElementById("startAutonomyButton").addEventListener("click", async () => {
+  const isAdmin = await verifyAdminToken();
+  if (!isAdmin) {
+    researchAutonomyOutput.textContent = "Admin login required.";
+    return;
+  }
+
+  const response = await adminFetch("/api/research/autonomy/start", {
+    method: "POST",
+  });
+  const payload = await readJson(response);
+  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
+  await refreshAdmin();
+});
+
+document.getElementById("stopAutonomyButton").addEventListener("click", async () => {
+  const isAdmin = await verifyAdminToken();
+  if (!isAdmin) {
+    researchAutonomyOutput.textContent = "Admin login required.";
+    return;
+  }
+
+  const response = await adminFetch("/api/research/autonomy/stop", {
+    method: "POST",
+  });
+  const payload = await readJson(response);
+  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
+  await refreshAdmin();
+});
+
+document.getElementById("addAutonomySourceButton").addEventListener("click", async () => {
+  const isAdmin = await verifyAdminToken();
+  if (!isAdmin) {
+    researchAutonomyOutput.textContent = "Admin login required.";
+    return;
+  }
+
+  const sourceId = document.getElementById("autonomySourceId").value.trim();
+  const payloadBody = collectAutonomySourcePayload();
+  const topic = payloadBody.topic || "";
+  const startUrl = payloadBody.start_url || "";
+  if (!topic && !startUrl) {
+    researchAutonomyOutput.textContent = "Topic or start URL is required.";
+    return;
+  }
+
+  const response = await adminFetch(
+    sourceId
+      ? `/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`
+      : "/api/research/autonomy/sources",
+    {
+      method: sourceId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloadBody),
+    },
+  );
+  const payload = await readJson(response);
+  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
+  if (response.ok) {
+    selectedAutonomySourceId = payload.source?.id || sourceId || null;
+    resetAutonomySourceForm();
+  }
+  await refreshAdmin();
+});
+
+document.getElementById("cancelAutonomySourceEditButton").addEventListener("click", () => {
+  resetAutonomySourceForm();
+});
+
+document.getElementById("clearResearchHistoryScopeButton").addEventListener("click", async () => {
+  selectedAutonomySourceId = null;
+  await refreshAdmin();
+});
+
+researchAutonomyGrid.addEventListener("click", async (event) => {
+  const target = event.target.closest("button");
+  if (!target) {
+    return;
+  }
+
+  const sourceId = target.getAttribute("data-source-id");
+  if (!sourceId) {
+    return;
+  }
+
+  const isAdmin = await verifyAdminToken();
+  if (!isAdmin) {
+    researchAutonomyOutput.textContent = "Admin login required.";
+    return;
+  }
+
+  let response;
+  if (target.classList.contains("autonomy-view-history-button")) {
+    selectedAutonomySourceId = sourceId;
+    await refreshAdmin();
+    return;
+  }
+  if (target.classList.contains("autonomy-edit-button")) {
+    populateAutonomySourceForm(findAutonomySource(sourceId));
+    return;
+  }
+  if (target.classList.contains("autonomy-run-button")) {
+    response = await adminFetch("/api/research/autonomy/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId }),
+    });
+  } else if (target.classList.contains("autonomy-toggle-button")) {
+    response = await adminFetch(`/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: target.getAttribute("data-enabled") === "true",
+      }),
+    });
+  } else if (target.classList.contains("autonomy-delete-button")) {
+    response = await adminFetch(`/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`, {
+      method: "DELETE",
+    });
+  } else {
+    return;
+  }
+
+  const payload = await readJson(response);
+  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
+  if (target.classList.contains("autonomy-delete-button") && selectedAutonomySourceId === sourceId) {
+    selectedAutonomySourceId = null;
+  }
+  await refreshAdmin();
+});
+
 document.getElementById("exportResearchButton").addEventListener("click", async () => {
   const isAdmin = await verifyAdminToken();
   if (!isAdmin) {
@@ -953,6 +1442,7 @@ document.getElementById("deleteResearchHistoryButton").addEventListener("click",
     body: JSON.stringify({
       topic: topic || null,
       provider: provider === "auto" ? null : provider,
+      source_id: selectedAutonomySourceId || null,
     }),
   });
   const payload = await readJson(response);
@@ -1012,28 +1502,58 @@ document.getElementById("rebuildResearchIndexButton").addEventListener("click", 
   await refreshAdmin();
 });
 
-document.getElementById("adminLoginButton").addEventListener("click", async () => {
-  const username = document.getElementById("adminUsername").value.trim();
-  const password = document.getElementById("adminPassword").value;
+async function submitAdminLogin() {
+  const username = adminUsernameInput.value.trim();
+  const password = adminPasswordInput.value;
   if (!username || !password) {
-    authStatus.textContent = "Username and password are required.";
+    setAuthBadge("Missing fields", "status-error");
+    setAuthMessage("Username and password are required.", "status-error");
     return;
   }
 
-  const response = await fetch("/api/auth/signin", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
-  });
-  const payload = await readJson(response);
-  const token = payload?.session?.access_token;
-  if (!response.ok || !token) {
-    authStatus.textContent = payload.error || "Admin login failed.";
-    return;
-  }
+  try {
+    setBusy(adminLoginButton, true, "Logging in...");
+    const response = await fetch("/api/auth/signin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const payload = await readJson(response);
+    const token = payload?.session?.access_token;
 
-  setAdminToken(token);
-  document.getElementById("adminPassword").value = "";
+    if (!response.ok || !token) {
+      setAuthBadge("Login failed", "status-error");
+      setAuthMessage(payload.error || "Admin login failed.", "status-error");
+      return;
+    }
+
+    setAdminToken(token);
+    const isAdmin = await verifyAdminToken();
+    if (!isAdmin) {
+      setAdminToken("");
+      return;
+    }
+
+    adminPasswordInput.value = "";
+    await refreshAdmin();
+  } catch (error) {
+    setAuthBadge("Login failed", "status-error");
+    setAuthMessage(error.message || String(error), "status-error");
+  } finally {
+    setBusy(adminLoginButton, false);
+  }
+}
+
+adminLoginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submitAdminLogin();
+});
+
+adminLogoutButton.addEventListener("click", async () => {
+  setAdminToken("");
+  adminPasswordInput.value = "";
+  setAuthBadge("Logged out", "status-warn");
+  setAuthMessage("Admin session cleared.", "status-warn");
   await refreshAdmin();
 });
 
@@ -1142,9 +1662,7 @@ document.getElementById("validatePaymentsButton").addEventListener("click", asyn
     return;
   }
 
-  const response = await adminFetch("/api/admin/payments/validate", {
-    method: "POST",
-  });
+  const response = await adminFetch("/api/admin/readiness");
   const payload = await readJson(response);
   readinessOutput.textContent = JSON.stringify(payload, null, 2);
   await refreshAdmin();
@@ -1211,4 +1729,5 @@ window.setInterval(() => {
   }
 }, REFRESH_INTERVAL_MS);
 
+resetAutonomySourceForm();
 refreshAdmin();

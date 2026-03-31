@@ -21,7 +21,7 @@ import { characterService, RoleplayCharacter } from '@/services/characterService
 interface CharacterSelectorProps {
   visible: boolean;
   onClose: () => void;
-  onSelect: (character: RoleplayCharacter) => void;
+  onSelect: (character: RoleplayCharacter | null) => void;
   selectedCharacter?: RoleplayCharacter | null;
 }
 
@@ -63,6 +63,7 @@ export function CharacterSelector({
 
   const renderCharacter = ({ item }: { item: RoleplayCharacter }) => {
     const isSelected = selectedCharacter?.id === item.id;
+    const avatarSource = characterService.getAvatarSource(item);
 
     return (
       <TouchableOpacity
@@ -80,7 +81,7 @@ export function CharacterSelector({
       >
         <View style={styles.avatarContainer}>
           <Image
-            source={{ uri: characterService.getAvatarSource(item) }}
+            source={typeof avatarSource === 'string' ? { uri: avatarSource } : avatarSource}
             style={styles.avatar}
           />
           {isSelected && (
@@ -185,7 +186,7 @@ export function CharacterSelector({
                   },
                 ]}
                 onPress={() => {
-                  onSelect(null as any);
+                  onSelect(null);
                   onClose();
                 }}
               >

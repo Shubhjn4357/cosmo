@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from loguru import logger
 
+from services.approved_model_catalog import DEFAULT_TEXT_MODEL_ID, get_text_model
 from services.admin_state import get_model_enabled
 from services.runtime_manager import (
     RuntimeConfig,
@@ -70,13 +71,21 @@ class RuntimeProfile:
         )
 
 
+_DEFAULT_TEXT_MODEL = get_text_model(DEFAULT_TEXT_MODEL_ID)
+_DEFAULT_BALANCED_MODEL = get_text_model("qwen3-4b-q4km")
+_DEFAULT_REASONING_MODEL = get_text_model("deepseek-r1-distill-qwen-7b-q4km")
+
+if _DEFAULT_TEXT_MODEL is None or _DEFAULT_BALANCED_MODEL is None or _DEFAULT_REASONING_MODEL is None:
+    raise RuntimeError("Approved model catalog defaults are missing")
+
+
 RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
     "fast-coder": RuntimeProfile(
         id="fast-coder",
         name="Fast Coder",
-        description="Small local coder model for HF free CPU and quick replies.",
+        description="Small approved CPU-friendly profile for quick replies.",
         backend="transformers",
-        model_id="Qwen/Qwen2.5-Coder-0.5B-Instruct",
+        model_id="Qwen/Qwen3-1.7B",
         recommended_for="Default coding chat on CPU",
         max_context_tokens=4096,
         max_new_tokens=384,
@@ -84,9 +93,9 @@ RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
     "balanced-coder": RuntimeProfile(
         id="balanced-coder",
         name="Balanced Coder",
-        description="Bigger coder model with better code quality and slower cold start.",
+        description="Higher-quality approved 4B profile for better responses on CPU.",
         backend="transformers",
-        model_id="Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        model_id=_DEFAULT_BALANCED_MODEL.repo_id,
         recommended_for="Higher-quality coding on CPU",
         max_context_tokens=4096,
         max_new_tokens=512,
@@ -94,23 +103,23 @@ RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
     "gguf-coder": RuntimeProfile(
         id="gguf-coder",
         name="GGUF Coder",
-        description="llama.cpp profile for local GGUF inference once the file is downloaded.",
+        description="Approved default GGUF profile prepared after startup in the background.",
         backend="llama_cpp",
-        model_id="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+        model_id=_DEFAULT_TEXT_MODEL.repo_id,
         recommended_for="CPU-optimized GGUF serving",
-        repo_id="Qwen/Qwen2.5-1.5B-Instruct-GGUF",
-        filename="qwen2.5-1.5b-instruct-q4_k_m.gguf",
-        gguf_model_path=str(MODELS_DIR / "llm" / "gguf-coder" / "qwen2.5-1.5b-instruct-q4_k_m.gguf"),
+        repo_id=_DEFAULT_TEXT_MODEL.repo_id,
+        filename=_DEFAULT_TEXT_MODEL.filename,
+        gguf_model_path=str(MODELS_DIR / "llm" / "gguf-coder" / _DEFAULT_TEXT_MODEL.filename),
         max_context_tokens=8192,
         max_new_tokens=512,
     ),
     "heavy-airllm": RuntimeProfile(
         id="heavy-airllm",
         name="Heavy AirLLM",
-        description="Experimental heavy coding profile for bigger local weights.",
+        description="Reasoning-oriented larger profile for stronger server responses.",
         backend="airllm",
-        model_id="Qwen/Qwen2.5-Coder-7B-Instruct",
-        airllm_model_id="Qwen/Qwen2.5-Coder-7B-Instruct",
+        model_id=_DEFAULT_REASONING_MODEL.repo_id,
+        airllm_model_id=_DEFAULT_REASONING_MODEL.repo_id,
         airllm_model_path=str(MODELS_DIR / "llm" / "heavy-airllm"),
         recommended_for="Upgraded hardware or experimental full-local tier",
         max_context_tokens=8192,

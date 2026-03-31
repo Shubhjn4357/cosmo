@@ -58,12 +58,41 @@ export interface LLMModel {
     repo_id: string;
     filename: string;
     quantization: string;
+    provider: string;
+    download_url: string;
+    recommended?: boolean;
+    adult?: boolean;
+    supports_local?: boolean;
+    supports_server?: boolean;
+    roles?: string[];
+    auto_bootstrap?: boolean;
+    artifact_path?: string;
+    downloaded?: boolean;
+    install_status?: string;
+    install_error?: string | null;
+    size_bytes?: number;
+    kind?: string;
 }
 
 export interface ImageModel {
     id: string;
     name: string;
     description?: string;
+    provider?: string;
+    generation_mode?: string;
+    download_url?: string;
+    downloadable?: boolean;
+    recommended?: boolean;
+    adult?: boolean;
+    supports_local?: boolean;
+    supports_server?: boolean;
+    supports_text_prompt?: boolean;
+    auto_bootstrap?: boolean;
+    artifact_path?: string;
+    downloaded?: boolean;
+    install_status?: string;
+    install_error?: string | null;
+    tags?: string[];
     size_mb?: number;
     ram_required_gb?: number;
     speed?: string;
@@ -124,6 +153,8 @@ export class WhisperAPI {
         temperature?: number;
         maxTokens?: number;
         systemPrompt?: string;
+        nsfwMode?: boolean;
+        roleplayMode?: boolean;
         // Token system parameters
         isLocal?: boolean;  // FREE if true
         userId?: string;
@@ -144,14 +175,15 @@ export class WhisperAPI {
                 temperature: params.temperature || 0.8,
                 max_tokens: params.maxTokens || 256,
                 system_prompt: params.systemPrompt,
-                    is_local: params.isLocal !== false,
+                nsfw_mode: params.nsfwMode || false,
+                roleplay_mode: params.roleplayMode || false,
+                is_local: params.isLocal !== false,
                 user_id: params.userId,
                 session_id: params.sessionId,
-                    // Smart mode params
-                    conversation_history: params.history?.map(h => ({
-                        text: h.text || h.content,
-                        isUser: h.isUser || h.role === 'user'
-                    })),
+                conversation_history: params.history?.map(h => ({
+                    text: h.text || h.content,
+                    isUser: h.isUser || h.role === 'user'
+                })),
             }),
         });
 
@@ -185,6 +217,8 @@ export class WhisperAPI {
         temperature?: number;
         maxTokens?: number;
         systemPrompt?: string;
+        nsfwMode?: boolean;
+        roleplayMode?: boolean;
         userId?: string;
         sessionId?: string;
     }): Promise<ChatResponse> {
@@ -198,6 +232,8 @@ export class WhisperAPI {
                 temperature: params.temperature || 0.7,
                 max_tokens: params.maxTokens || 256,
                 system_prompt: params.systemPrompt,
+                nsfw_mode: params.nsfwMode || false,
+                roleplay_mode: params.roleplayMode || false,
                 is_local: true,
                 user_id: params.userId,
                 session_id: params.sessionId,
@@ -316,7 +352,7 @@ export class WhisperAPI {
                 height: params.height || 512,
                 num_steps: params.numSteps || 20,
                 guidance_scale: params.guidanceScale || 7.5,
-                model_id: params.modelId || 'sdxl-turbo',
+                model_id: params.modelId || 'flux-schnell',
                 // Token params
                 is_local: params.isLocal || false,  // Default FALSE = costs tokens
                 user_id: params.userId,
@@ -690,8 +726,12 @@ export class WhisperAPI {
     /**
      * Get available image generation models
      */
-    async getImageModels(): Promise<ImageModel[]> {
-        const response = await fetch(`${this.baseUrl}/api/models/image`);
+    async getImageModels(params: { includeAdult?: boolean; includeEdit?: boolean } = {}): Promise<ImageModel[]> {
+        const includeAdult = params.includeAdult !== false;
+        const includeEdit = params.includeEdit === true;
+        const response = await fetch(
+            `${this.baseUrl}/api/models/image?include_adult=${includeAdult}&include_edit=${includeEdit}`
+        );
         if (!response.ok) {
             throw new Error(`Failed to get image models: ${response.status}`);
         }
@@ -903,88 +943,6 @@ export class WhisperAPI {
         return response.json();
     }
 
-    // === PAYMENT APIs ===
-
-    /**
-     * Get subscription plans
-     */
-    async getPaymentPlans(): Promise<{ plans: SubscriptionPlan[] }> {
-        const response = await fetch(`${this.baseUrl}/api/payment/plans`);
-        if (!response.ok) {
-            throw new Error(`Failed to get plans: ${response.status}`);
-        }
-        return response.json();
-    }
-
-    /**
-     * Create Razorpay order for token purchase or subscription
-     */
-    async createPaymentOrder(params: {
-        amount: number;
-        planType?: 'free' | 'pro';
-        tokenAmount?: number;
-        userId: string;
-    }): Promise<{ order_id: string; amount: number; currency: string }> {
-        const response = await fetch(`${this.baseUrl}/api/payment/create-order`, {
-            method: 'POST',
-            headers: this.getHeaders(),
-            body: JSON.stringify(params),
-        });
-        if (!response.ok) {
-            throw new Error(`Failed to create order: ${response.status}`);
-        }
-        return response.json();
-    }
-
-    /**
-     * Verify payment signature from Razorpay
-     */
-    async verifyPayment(params: {
-        orderId: string;
-        paymentId: string;
-        signature: string;
-        userId: string;
-    }): Promise<{ success: boolean; message: string }> {
-        const response = await fetch(`${this.baseUrl}/api/payment/verify`, {
-            method: 'POST',
-            headers: this.getHeaders(),
-            body: JSON.stringify({
-                order_id: params.orderId,
-                payment_id: params.paymentId,
-                signature: params.signature,
-                user_id: params.userId,
-            }),
-        });
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.detail || `Payment verification failed: ${response.status}`);
-        }
-        return response.json();
-    }
-
-    /**
-     * Buy token pack
-     */
-    async buyTokens(params: {
-        userId: string;
-        tokenAmount: number;
-        paymentId: string;
-    }): Promise<{ success: boolean; new_balance: number }> {
-        const response = await fetch(`${this.baseUrl}/api/payment/buy-tokens`, {
-            method: 'POST',
-            headers: this.getHeaders(),
-            body: JSON.stringify({
-                user_id: params.userId,
-                token_amount: params.tokenAmount,
-                payment_id: params.paymentId,
-            }),
-        });
-        if (!response.ok) {
-            throw new Error(`Failed to buy tokens: ${response.status}`);
-        }
-        return response.json();
-    }
-
     // === LEARNING SYSTEM APIs ===
 
     /**
@@ -1113,17 +1071,6 @@ export interface RoleplayCharacter {
     personality: string;
     tags: string[];
     premium: boolean;
-}
-
-// Subscription plan interface
-export interface SubscriptionPlan {
-    id: string;
-    name: string;
-    price: number;
-    currency: string;
-    tokens: number;
-    features: string[];
-    duration: string;
 }
 
 // Export singleton instance

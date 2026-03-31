@@ -46,7 +46,7 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
         }
 
         // Step 5: Protect specific tabs/features that require login
-        const protectedTabs = ['settings', 'models', 'admin', 'profile', 'subscription'];
+        const protectedTabs = ['admin', 'profile'];
         const currentTab = segments[1] ?? '';
         if (segments[0] === '(tabs)' && protectedTabs.includes(currentTab)) {
             if (!isAuthenticated) {

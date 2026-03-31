@@ -1,6 +1,6 @@
 /**
  * Whisper App - MessageBubble Component
- * Displays a single chat message with animations and actions
+ * Displays a single chat message with animations and actions.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
@@ -20,6 +20,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { Ionicons } from '@expo/vector-icons';
+
 import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 import { Message } from '@/types';
 import { useToast } from '@/components/Toast';
@@ -35,9 +36,43 @@ interface MessageBubbleProps {
     onDelete?: (id: string) => void;
     onRetry?: (message: Message) => void;
     onSpeak?: (text: string) => void;
-    onGenerateVision?: (text: string) => Promise<string | null>; // Returns image URL
+    onGenerateVision?: (text: string) => Promise<string | null>;
     isFailed?: boolean;
     isSpeaking?: boolean;
+}
+
+type MessageSegment =
+    | { type: 'text'; content: string }
+    | { type: 'code'; content: string; language?: string };
+
+function parseMessageSegments(content: string): MessageSegment[] {
+    const normalized = content.replace(/\r\n/g, '\n');
+    const segments: MessageSegment[] = [];
+    const pattern = /```([^\n`]*)\n?([\s\S]*?)```/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(normalized)) !== null) {
+        const [fullMatch, language, code] = match;
+        const textBefore = normalized.slice(lastIndex, match.index);
+        if (textBefore.trim()) {
+            segments.push({ type: 'text', content: textBefore.trim() });
+        }
+
+        segments.push({
+            type: 'code',
+            language: language.trim() || undefined,
+            content: code.replace(/\n$/, ''),
+        });
+        lastIndex = match.index + fullMatch.length;
+    }
+
+    const trailing = normalized.slice(lastIndex);
+    if (trailing.trim()) {
+        segments.push({ type: 'text', content: trailing.trim() });
+    }
+
+    return segments.length > 0 ? segments : [{ type: 'text', content: normalized }];
 }
 
 export function MessageBubble({
@@ -60,59 +95,55 @@ export function MessageBubble({
     const [isGeneratingVision, setIsGeneratingVision] = useState(false);
     const [visionImageUrl, setVisionImageUrl] = useState<string | null>(null);
 
-    // Animation values
     const fadeAnim = useRef(new Animated.Value(isNew ? 0 : 1)).current;
     const scaleAnim = useRef(new Animated.Value(isNew ? 0.8 : 1)).current;
     const slideAnim = useRef(new Animated.Value(isNew ? 20 : 0)).current;
     const glowAnim = useRef(new Animated.Value(0)).current;
     const actionsAnim = useRef(new Animated.Value(0)).current;
 
-    // Popup + fade animation on mount
     useEffect(() => {
-        if (isNew) {
-            Animated.parallel([
-                Animated.timing(fadeAnim, {
-                    toValue: 1,
-                    duration: 300,
-                    useNativeDriver: true,
-                    easing: Easing.out(Easing.back(1.5)),
-                }),
-                Animated.spring(scaleAnim, {
-                    toValue: 1,
-                    friction: 6,
-                    tension: 80,
-                    useNativeDriver: true,
-                }),
-                Animated.timing(slideAnim, {
-                    toValue: 0,
-                    duration: 250,
-                    useNativeDriver: true,
-                    easing: Easing.out(Easing.ease),
-                }),
-            ]).start();
+        if (!isNew) return;
 
-            // Subtle glow pulse for AI messages
-            if (!message.isUser) {
-                Animated.loop(
-                    Animated.sequence([
-                        Animated.timing(glowAnim, {
-                            toValue: 1,
-                            duration: 1000,
-                            useNativeDriver: false,
-                        }),
-                        Animated.timing(glowAnim, {
-                            toValue: 0,
-                            duration: 1000,
-                            useNativeDriver: false,
-                        }),
-                    ]),
-                    { iterations: 2 }
-                ).start();
-            }
+        Animated.parallel([
+            Animated.timing(fadeAnim, {
+                toValue: 1,
+                duration: 300,
+                useNativeDriver: true,
+                easing: Easing.out(Easing.back(1.5)),
+            }),
+            Animated.spring(scaleAnim, {
+                toValue: 1,
+                friction: 6,
+                tension: 80,
+                useNativeDriver: true,
+            }),
+            Animated.timing(slideAnim, {
+                toValue: 0,
+                duration: 250,
+                useNativeDriver: true,
+                easing: Easing.out(Easing.ease),
+            }),
+        ]).start();
+
+        if (!message.isUser) {
+            Animated.loop(
+                Animated.sequence([
+                    Animated.timing(glowAnim, {
+                        toValue: 1,
+                        duration: 1000,
+                        useNativeDriver: false,
+                    }),
+                    Animated.timing(glowAnim, {
+                        toValue: 0,
+                        duration: 1000,
+                        useNativeDriver: false,
+                    }),
+                ]),
+                { iterations: 2 }
+            ).start();
         }
-    }, [isNew]);
+    }, [fadeAnim, glowAnim, isNew, message.isUser, scaleAnim, slideAnim]);
 
-    // Toggle actions animation
     useEffect(() => {
         Animated.spring(actionsAnim, {
             toValue: showActions ? 1 : 0,
@@ -120,11 +151,7 @@ export function MessageBubble({
             tension: 100,
             useNativeDriver: true,
         }).start();
-    }, [showActions]);
-
-    const handleLongPress = () => {
-        setShowActions(true);
-    };
+    }, [actionsAnim, showActions]);
 
     const handleCopy = async () => {
         await Clipboard.setStringAsync(message.text);
@@ -137,35 +164,29 @@ export function MessageBubble({
 
         setIsDownloading(true);
         try {
-            // Request permission
             const { status } = await MediaLibrary.requestPermissionsAsync();
             if (status !== 'granted') {
                 toast.error('Permission Required', 'Please grant media library access to download images');
                 return;
             }
 
-            // Create full URL if needed
             let imageUrl = message.imageUri;
             if (imageUrl.startsWith('/')) {
                 const apiUrl = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://shubhjn-whisper-ai.hf.space';
                 imageUrl = `${apiUrl}${imageUrl}`;
             }
 
-            // Download image to cache
             const fileName = `Whisper_image_${Date.now()}.png`;
-            const downloadPath = FileSystem.cacheDirectory + fileName;
-
+            const downloadPath = `${FileSystem.cacheDirectory}${fileName}`;
             const downloadResult = await FileSystem.downloadAsync(imageUrl, downloadPath);
 
-            if (downloadResult.status === 200) {
-                // Save to device gallery
-                const asset = await MediaLibrary.createAssetAsync(downloadResult.uri);
-                await MediaLibrary.createAlbumAsync('Whisper AI', asset, false);
-
-                toast.success('Downloaded!', 'Image saved to your gallery in "Whisper AI" album');
-            } else {
+            if (downloadResult.status !== 200) {
                 throw new Error('Download failed');
             }
+
+            const asset = await MediaLibrary.createAssetAsync(downloadResult.uri);
+            await MediaLibrary.createAlbumAsync('Whisper AI', asset, false);
+            toast.success('Downloaded', 'Image saved to your gallery in the "Whisper AI" album');
         } catch (error) {
             console.error('Download error:', error);
             toast.error('Error', 'Failed to download image. Please try again.');
@@ -191,11 +212,6 @@ export function MessageBubble({
         });
     };
 
-    const handleRetry = () => {
-        onRetry?.(message);
-        setShowActions(false);
-    };
-
     const handleGenerateVision = async () => {
         if (!onGenerateVision || isGeneratingVision) return;
 
@@ -204,12 +220,13 @@ export function MessageBubble({
 
         try {
             const imageUrl = await onGenerateVision(message.text);
-            if (imageUrl) {
-                setVisionImageUrl(imageUrl);
-                toast.success('Vision Generated!', 'Image created from your message');
-            } else {
+            if (!imageUrl) {
                 toast.error('Failed', 'Could not generate vision');
+                return;
             }
+
+            setVisionImageUrl(imageUrl);
+            toast.success('Vision Generated', 'Image created from your message');
         } catch (error) {
             console.error('Vision generation error:', error);
             toast.error('Error', 'Failed to generate vision. Try again.');
@@ -228,54 +245,122 @@ export function MessageBubble({
         outputRange: [0.8, 1],
     });
 
+    const bubbleTextColor = message.isUser ? '#fff' : theme.colors.text;
+    const displayedText = streamingText || message.text;
+
+    const renderRichText = (content: string) => {
+        const segments = parseMessageSegments(content);
+
+        return (
+            <View style={styles.richTextContainer}>
+                {segments.map((segment, index) => (
+                    segment.type === 'code' ? (
+                        <View
+                            key={`code-${index}`}
+                            style={[
+                                styles.codeBlock,
+                                {
+                                    backgroundColor: message.isUser
+                                        ? 'rgba(15, 23, 42, 0.28)'
+                                        : isDark
+                                            ? 'rgba(15, 23, 42, 0.92)'
+                                            : 'rgba(15, 23, 42, 0.08)',
+                                    borderColor: message.isUser
+                                        ? 'rgba(255,255,255,0.16)'
+                                        : theme.colors.surfaceBorder,
+                                },
+                            ]}
+                        >
+                            {segment.language && (
+                                <Text
+                                    style={[
+                                        styles.codeLanguage,
+                                        { color: message.isUser ? 'rgba(255,255,255,0.72)' : theme.colors.textMuted },
+                                    ]}
+                                >
+                                    {segment.language}
+                                </Text>
+                            )}
+                            <Text
+                                style={[
+                                    styles.codeText,
+                                    { color: message.isUser ? '#f8fafc' : theme.colors.text },
+                                ]}
+                            >
+                                {segment.content}
+                            </Text>
+                        </View>
+                    ) : (
+                        <Text
+                            key={`text-${index}`}
+                            style={[
+                                styles.text,
+                                index > 0 && styles.textBlockSpacing,
+                                { color: bubbleTextColor },
+                            ]}
+                        >
+                            {segment.content}
+                        </Text>
+                    )
+                ))}
+                {isStreaming && !message.isUser && (
+                    <Text style={[styles.streamingCursor, { color: bubbleTextColor }]}>|</Text>
+                )}
+            </View>
+        );
+    };
+
     return (
         <Pressable
-            onLongPress={handleLongPress}
+            onLongPress={() => setShowActions(true)}
             onPress={() => showActions && setShowActions(false)}
             delayLongPress={400}
         >
-            <Animated.View style={[
-                styles.container,
-                message.isUser ? styles.userContainer : styles.aiContainer,
-                {
-                    opacity: fadeAnim,
-                    transform: [
-                        { scale: scaleAnim },
-                        { translateY: slideAnim },
-                    ],
-                }
-            ]}>
-                {/* AI Avatar with glow */}
+            <Animated.View
+                style={[
+                    styles.container,
+                    message.isUser ? styles.userContainer : styles.aiContainer,
+                    {
+                        opacity: fadeAnim,
+                        transform: [
+                            { scale: scaleAnim },
+                            { translateY: slideAnim },
+                        ],
+                    },
+                ]}
+            >
                 {!message.isUser && (
                     <View style={styles.avatarWrapper}>
-                        <Animated.View style={[
-                            styles.avatarGlow,
-                            {
-                                backgroundColor: theme.colors.primary,
-                                opacity: glowOpacity,
-                            }
-                        ]} />
-                        <View style={[styles.avatar, { backgroundColor: theme.colors.primary + '20' }]}>
+                        <Animated.View
+                            style={[
+                                styles.avatarGlow,
+                                {
+                                    backgroundColor: theme.colors.primary,
+                                    opacity: glowOpacity,
+                                },
+                            ]}
+                        />
+                        <View style={[styles.avatar, { backgroundColor: `${theme.colors.primary}20` }]}>
                             <Ionicons name="sparkles" size={14} color={theme.colors.primary} />
                         </View>
                     </View>
                 )}
 
-                <View style={{ flexShrink: 1 }}>
-                    {/* Content Bubble */}
-                    <View style={[
-                        styles.bubble,
-                        message.isUser ?
-                            { backgroundColor: theme.colors.primary, borderBottomRightRadius: 4 } :
-                            {
-                                backgroundColor: isDark ? 'rgba(30,35,50,0.9)' : 'rgba(255,255,255,0.95)',
-                                borderBottomLeftRadius: 4,
-                                borderWidth: 1,
-                                borderColor: theme.colors.surfaceBorder
-                            },
-                        isFailed && { borderColor: theme.colors.error, borderWidth: 1 }
-                    ]}>
-                        {/* File attachment indicator */}
+                <View style={styles.contentColumn}>
+                    <View
+                        style={[
+                            styles.bubble,
+                            message.isUser
+                                ? { backgroundColor: theme.colors.primary, borderBottomRightRadius: 4 }
+                                : {
+                                    backgroundColor: isDark ? 'rgba(30,35,50,0.9)' : 'rgba(255,255,255,0.95)',
+                                    borderBottomLeftRadius: 4,
+                                    borderWidth: 1,
+                                    borderColor: theme.colors.surfaceBorder,
+                                },
+                            isFailed && { borderColor: theme.colors.error, borderWidth: 1 },
+                        ]}
+                    >
                         {message.file && (
                             <View style={[styles.fileIndicator, { backgroundColor: theme.colors.surfaceLight }]}>
                                 <Ionicons name="document-attach" size={12} color={theme.colors.primary} />
@@ -291,29 +376,21 @@ export function MessageBubble({
                                     source={{
                                         uri: message.imageUri.startsWith('/')
                                             ? `${process.env.EXPO_PUBLIC_API_BASE_URL || 'https://shubhjn-whisper-ai.hf.space'}${message.imageUri}`
-                                            : message.imageUri
+                                            : message.imageUri,
                                     }}
                                     style={styles.image}
                                     resizeMode="cover"
                                 />
-                                {message.text && (
-                                    <Text style={[
-                                        styles.text,
-                                        message.isUser ? { color: '#fff' } : { color: theme.colors.text }
-                                    ]}>{message.text}</Text>
-                                )}
+                                {message.text ? (
+                                    <View style={styles.imageCaption}>
+                                        {renderRichText(message.text)}
+                                    </View>
+                                ) : null}
                             </View>
                         ) : (
-                            <Text style={[
-                                styles.text,
-                                message.isUser ? { color: '#fff' } : { color: theme.colors.text }
-                                ]}>
-                                    {streamingText || message.text}
-                                    {isStreaming && !message.isUser && <Text style={{ opacity: 0.5 }}>▊</Text>}
-                                </Text>
+                            renderRichText(displayedText)
                         )}
 
-                        {/* Failed indicator */}
                         {isFailed && (
                             <View style={styles.failedIndicator}>
                                 <Ionicons name="alert-circle" size={14} color={theme.colors.error} />
@@ -324,31 +401,30 @@ export function MessageBubble({
                         )}
                     </View>
 
-                    {/* Generated Vision Image (inline) */}
                     {visionImageUrl && (
-                        <View style={{ marginTop: spacing.xs }}>
+                        <View style={styles.generatedVisionContainer}>
                             <Image
                                 source={{ uri: visionImageUrl }}
                                 style={[styles.image, { borderRadius: borderRadius.md }]}
                                 resizeMode="cover"
                             />
                             <Text style={[styles.visionLabel, { color: theme.colors.textMuted }]}>
-                                Generated Vision ✨
+                                Generated Vision
                             </Text>
                         </View>
                     )}
 
-                    {/* Action buttons */}
                     {showActions && (
-                        <Animated.View style={[
-                            styles.actionsRow,
-                            {
-                                opacity: actionsAnim,
-                                transform: [{ scale: actionsScale }],
-                            },
-                            message.isUser ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' }
-                        ]}>
-                            {/* Copy button */}
+                        <Animated.View
+                            style={[
+                                styles.actionsRow,
+                                {
+                                    opacity: actionsAnim,
+                                    transform: [{ scale: actionsScale }],
+                                },
+                                message.isUser ? { alignSelf: 'flex-end' } : { alignSelf: 'flex-start' },
+                            ]}
+                        >
                             <TouchableOpacity
                                 style={[styles.actionBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}
                                 onPress={handleCopy}
@@ -357,15 +433,14 @@ export function MessageBubble({
                                 <Text style={[styles.actionLabel, { color: theme.colors.textMuted }]}>Copy</Text>
                             </TouchableOpacity>
 
-                            {/* Download button (for images) */}
                             {message.imageUri && (
                                 <TouchableOpacity
-                                    style={[styles.actionBtn, { backgroundColor: theme.colors.success + '20' }]}
+                                    style={[styles.actionBtn, { backgroundColor: `${theme.colors.success}20` }]}
                                     onPress={handleDownloadImage}
                                     disabled={isDownloading}
                                 >
                                     <Ionicons
-                                        name={isDownloading ? "hourglass-outline" : "download-outline"}
+                                        name={isDownloading ? 'hourglass-outline' : 'download-outline'}
                                         size={16}
                                         color={theme.colors.success || '#10B981'}
                                     />
@@ -375,10 +450,9 @@ export function MessageBubble({
                                 </TouchableOpacity>
                             )}
 
-                            {/* TTS Button (AI messages only) */}
                             {!message.isUser && onSpeak && (
                                 <TouchableOpacity
-                                    style={[styles.actionBtn, { backgroundColor: theme.colors.primary + '20' }]}
+                                    style={[styles.actionBtn, { backgroundColor: `${theme.colors.primary}20` }]}
                                     onPress={() => {
                                         onSpeak(message.text);
                                         setShowActions(false);
@@ -395,15 +469,14 @@ export function MessageBubble({
                                 </TouchableOpacity>
                             )}
 
-                            {/* Generate Vision Button (User messages only) */}
                             {message.isUser && onGenerateVision && !message.imageUri && (
                                 <TouchableOpacity
-                                    style={[styles.actionBtn, { backgroundColor: theme.colors.primary + '20' }]}
+                                    style={[styles.actionBtn, { backgroundColor: `${theme.colors.primary}20` }]}
                                     onPress={handleGenerateVision}
                                     disabled={isGeneratingVision}
                                 >
                                     <Ionicons
-                                        name={isGeneratingVision ? "hourglass-outline" : "image-outline"}
+                                        name={isGeneratingVision ? 'hourglass-outline' : 'image-outline'}
                                         size={16}
                                         color={theme.colors.primary}
                                     />
@@ -415,8 +488,11 @@ export function MessageBubble({
 
                             {isFailed && onRetry && (
                                 <TouchableOpacity
-                                    style={[styles.actionBtn, { backgroundColor: theme.colors.warning + '20' }]}
-                                    onPress={handleRetry}
+                                    style={[styles.actionBtn, { backgroundColor: `${theme.colors.warning}20` }]}
+                                    onPress={() => {
+                                        onRetry(message);
+                                        setShowActions(false);
+                                    }}
                                 >
                                     <Ionicons name="refresh" size={16} color={theme.colors.warning} />
                                     <Text style={[styles.actionLabel, { color: theme.colors.warning }]}>Retry</Text>
@@ -425,7 +501,7 @@ export function MessageBubble({
 
                             {onDelete && (
                                 <TouchableOpacity
-                                    style={[styles.actionBtn, { backgroundColor: theme.colors.error + '20' }]}
+                                    style={[styles.actionBtn, { backgroundColor: `${theme.colors.error}20` }]}
                                     onPress={handleDelete}
                                 >
                                     <Ionicons name="trash-outline" size={16} color={theme.colors.error} />
@@ -471,6 +547,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    contentColumn: {
+        flexShrink: 1,
+    },
     bubble: {
         padding: spacing.md,
         borderRadius: borderRadius.lg,
@@ -495,9 +574,41 @@ const styles = StyleSheet.create({
         borderRadius: borderRadius.md,
         marginBottom: spacing.xs,
     },
+    imageCaption: {
+        marginTop: spacing.xs,
+    },
+    richTextContainer: {
+        width: '100%',
+    },
     text: {
         fontSize: fontSize.md,
         lineHeight: 22,
+    },
+    textBlockSpacing: {
+        marginTop: spacing.sm,
+    },
+    codeBlock: {
+        borderRadius: borderRadius.md,
+        borderWidth: 1,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.sm,
+        marginTop: spacing.sm,
+    },
+    codeLanguage: {
+        fontSize: 11,
+        fontWeight: '700',
+        marginBottom: spacing.xs,
+        textTransform: 'uppercase',
+    },
+    codeText: {
+        fontSize: fontSize.sm,
+        lineHeight: 20,
+        fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    },
+    streamingCursor: {
+        marginTop: spacing.xs,
+        fontSize: fontSize.md,
+        opacity: 0.6,
     },
     failedIndicator: {
         flexDirection: 'row',
@@ -507,6 +618,9 @@ const styles = StyleSheet.create({
     },
     failedText: {
         fontSize: fontSize.xs,
+    },
+    generatedVisionContainer: {
+        marginTop: spacing.xs,
     },
     actionsRow: {
         flexDirection: 'row',

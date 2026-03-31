@@ -47,6 +47,8 @@ export interface CompletionRequest {
     temperature?: number;
     stream?: boolean;
     samplerSettings?: Partial<SamplerSettings>;
+    nsfwMode?: boolean;
+    roleplayMode?: boolean;
 }
 
 export interface CompletionResponse {
@@ -308,20 +310,37 @@ class LLMBackendService {
                     return; // Exit gracefully
                 }
 
-                // Init
                 const samplerSettings = backend.quantization
                     ? getSettingsForQuantization(backend.quantization)
                     : undefined;
 
-                console.log(`Initializing local model: ${modelPath}`);
-                this.localContext = await initLlama({
-                    model: modelPath,
-                    n_ctx: samplerSettings?.n_ctx ?? 2048,
-                    n_batch: samplerSettings?.n_batch ?? 512,
-                    n_threads: samplerSettings?.n_threads ?? 4,
-                });
-                this.currentLocalModelPath = backend.modelPath;
-                console.log('Local model initialized successfully');
+                const initProfiles = this.buildLocalInitProfiles(samplerSettings);
+                let lastInitError: unknown = null;
+
+                for (const profile of initProfiles) {
+                    try {
+                        console.log(`Initializing local model: ${modelPath} with ctx=${profile.n_ctx} batch=${profile.n_batch} threads=${profile.n_threads}`);
+                        this.localContext = await initLlama({
+                            model: modelPath,
+                            n_ctx: profile.n_ctx,
+                            n_batch: profile.n_batch,
+                            n_threads: profile.n_threads,
+                        });
+                        this.currentLocalModelPath = backend.modelPath;
+                        console.log('Local model initialized successfully');
+                        return;
+                    } catch (profileError) {
+                        lastInitError = profileError;
+                        console.warn(
+                            `Local init profile failed (ctx=${profile.n_ctx}, batch=${profile.n_batch}, threads=${profile.n_threads})`,
+                            profileError
+                        );
+                    }
+                }
+
+                throw lastInitError instanceof Error
+                    ? lastInitError
+                    : new Error('Failed to initialize local model after trying low-memory profiles');
 
             } catch (error) {
                 console.error('Failed to initialize local model:', error);
@@ -331,6 +350,27 @@ class LLMBackendService {
                 // Only log the error, don't crash the app
             }
         }
+    }
+
+    private buildLocalInitProfiles(samplerSettings?: SamplerSettings) {
+        const baseCtx = samplerSettings?.n_ctx ?? 2048;
+        const baseBatch = samplerSettings?.n_batch ?? 512;
+        const baseThreads = samplerSettings?.n_threads ?? 4;
+
+        const candidates = [
+            { n_ctx: baseCtx, n_batch: Math.min(baseBatch, 512), n_threads: baseThreads },
+            { n_ctx: Math.min(baseCtx, 2048), n_batch: Math.min(baseBatch, 256), n_threads: Math.min(baseThreads, 3) },
+            { n_ctx: Math.min(baseCtx, 1536), n_batch: Math.min(baseBatch, 128), n_threads: Math.min(baseThreads, 2) },
+            { n_ctx: Math.min(baseCtx, 1024), n_batch: Math.min(baseBatch, 64), n_threads: 1 },
+        ];
+
+        return candidates.filter((candidate, index, array) => (
+            array.findIndex((other) => (
+                other.n_ctx === candidate.n_ctx
+                && other.n_batch === candidate.n_batch
+                && other.n_threads === candidate.n_threads
+            )) === index
+        ));
     }
 
     private async completeLocal(
@@ -653,9 +693,12 @@ class LLMBackendService {
             { 'Content-Type': 'application/json' },
             JSON.stringify({
                 message: request.messages[request.messages.length - 1]?.content ?? '',
+                history: request.messages.slice(0, -1),
                 system_prompt: request.systemPrompt,
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.maxTokens ?? 512,
+                nsfw_mode: request.nsfwMode ?? false,
+                roleplay_mode: request.roleplayMode ?? false,
                 stream: true,
             }),
             abortSignal
@@ -1137,9 +1180,12 @@ class LLMBackendService {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message: request.messages[request.messages.length - 1]?.content ?? '',
+                history: request.messages.slice(0, -1),
                 system_prompt: request.systemPrompt,
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.maxTokens ?? 512,
+                nsfw_mode: request.nsfwMode ?? false,
+                roleplay_mode: request.roleplayMode ?? false,
             }),
         });
 
@@ -1173,6 +1219,8 @@ class LLMBackendService {
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.maxTokens ?? 512,
                 is_local: true,
+                nsfw_mode: request.nsfwMode ?? false,
+                roleplay_mode: request.roleplayMode ?? false,
             }),
         });
 

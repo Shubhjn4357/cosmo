@@ -10,9 +10,6 @@ export interface UserProfile {
     email: string | null;
     display_name: string | null;
     avatar_url: string | null;
-    subscription_tier: 'free' | 'pro';
-    tokens_used: number;
-    tokens_limit: number;
     consent_given: boolean;
     data_collection_consent: boolean;
     is_admin: boolean;
@@ -333,30 +330,6 @@ export const historyAPI = {
             return data.success;
         } catch (error) {
             console.error('Delete chat error:', error);
-            return false;
-        }
-    },
-};
-
-// ============================================================================
-// SUBSCRIPTION API
-// ============================================================================
-
-export const subscriptionAPI = {
-    /**
-     * Upgrade to pro (Mock implementation - update with real RevenueCat later)
-     */
-    async upgradeToPro(userId: string): Promise<boolean> {
-        try {
-            const response = await fetch(`${whisperAPI.getBaseUrl()}/api/subscription/upgrade`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: userId }),
-            });
-            const data = await response.json();
-            return data.success;
-        } catch (error) {
-            console.error('Upgrade to pro error:', error);
             return false;
         }
     },

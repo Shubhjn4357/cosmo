@@ -1,0 +1,8 @@
+{
+  "require_allowed_sources": false,
+  "require_license_metadata": false,
+  "allowed_domains": [],
+  "allowed_prefixes": [],
+  "blocked_domains": [],
+  "source_overrides": {}
+}

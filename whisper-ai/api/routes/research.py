@@ -18,6 +18,16 @@ from .auth import verify_admin_token
 from knowledge.google_search import GoogleSearchIntegration, SearchConfig
 from knowledge.scraper import ContentProcessor, ScraperConfig, WebScraper
 from services.cloudflare_crawl import CRAWLER
+from services.research_autonomy import (
+    add_autonomy_source,
+    autonomy_status,
+    delete_autonomy_source,
+    load_autonomy_config,
+    record_autonomy_run,
+    select_next_autonomy_source,
+    update_autonomy_settings,
+    update_autonomy_source,
+)
 from services.research_documents import (
     RESEARCH_DOCUMENTS_PATH,
     append_research_documents,
@@ -35,6 +45,15 @@ from utils.app_paths import DATA_ROOT
 
 router = APIRouter(prefix="/research", tags=["research"])
 AUTO_RESEARCH_TASK = None
+AUTO_RESEARCH_RUNTIME = {
+    "running": False,
+    "current_source_id": None,
+    "current_source_label": None,
+    "last_cycle_started_at": None,
+    "last_cycle_finished_at": None,
+    "last_error": None,
+    "completed_cycles": 0,
+}
 
 SEARCH = GoogleSearchIntegration(SearchConfig())
 SCRAPER = WebScraper(
@@ -100,6 +119,9 @@ class ResearchHistoryDeleteRequest(BaseModel):
     topic: Optional[str] = None
     provider: Optional[str] = None
     status: Optional[str] = None
+    source_id: Optional[str] = None
+    source_label: Optional[str] = None
+    search: Optional[str] = None
 
 
 class ResearchIndexRebuildRequest(BaseModel):
@@ -107,6 +129,40 @@ class ResearchIndexRebuildRequest(BaseModel):
     domain: Optional[str] = None
     provider: Optional[str] = None
     search: Optional[str] = None
+
+
+class AutonomousResearchSettingsUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    interval_minutes: Optional[int] = None
+    auto_sync_hf: Optional[bool] = None
+    learning_chunk_chars: Optional[int] = None
+    learning_max_chunks_per_document: Optional[int] = None
+
+
+class AutonomousResearchSourceRequest(BaseModel):
+    label: Optional[str] = None
+    topic: Optional[str] = None
+    start_url: Optional[str] = None
+    provider: str = "auto"
+    max_pages: int = 3
+    max_sites: int = 1
+    depth: int = 1
+    render: bool = False
+    source: str = "all"
+    include_patterns: List[str] = Field(default_factory=list)
+    exclude_patterns: List[str] = Field(default_factory=list)
+    formats: List[str] = Field(default_factory=lambda: ["markdown"])
+    include_external_links: bool = False
+    include_subdomains: bool = False
+    modified_since: Optional[int] = None
+    max_age: Optional[int] = None
+    refresh_existing: bool = False
+    enabled: bool = True
+    tags: List[str] = Field(default_factory=list)
+
+
+class AutonomousResearchRunRequest(BaseModel):
+    source_id: Optional[str] = None
 
 
 def _index_documents(topic: str, documents: List[dict[str, Any]]) -> int:
@@ -132,9 +188,61 @@ def _index_documents(topic: str, documents: List[dict[str, Any]]) -> int:
     return indexed
 
 
+async def _mirror_documents_into_learning(documents: List[dict[str, Any]]) -> dict[str, int]:
+    if not documents:
+        return {
+            "added": 0,
+            "skipped": 0,
+            "training_pairs": 0,
+            "external_sources": 0,
+            "total_sequences": 0,
+        }
+
+    from api.routes.learn import ingest_research_documents, should_sync, sync_to_huggingface
+
+    autonomy = autonomy_status()
+    learning = ingest_research_documents(
+        documents,
+        chunk_chars=int(autonomy.get("learning_chunk_chars") or 1200),
+        max_chunks_per_document=int(autonomy.get("learning_max_chunks_per_document") or 2),
+    )
+    if learning.get("added") and autonomy.get("auto_sync_hf") and should_sync():
+        asyncio.create_task(asyncio.to_thread(sync_to_huggingface))
+    return learning
+
+
 def _refresh_research_stats():
     RESEARCH_STATS.update(summarize_research_runs())
     RESEARCH_STATS.update(summarize_research_documents())
+
+
+def get_background_research_status() -> dict[str, Any]:
+    return {
+        **autonomy_status(),
+        "task_running": bool(AUTO_RESEARCH_TASK and not AUTO_RESEARCH_TASK.done()),
+        "runtime": dict(AUTO_RESEARCH_RUNTIME),
+    }
+
+
+def _source_to_discover_request(source: dict[str, Any]) -> DiscoverRequest:
+    return DiscoverRequest(
+        topic=source.get("topic") or source.get("label") or "research",
+        max_pages=max(1, int(source.get("max_pages") or 3)),
+        provider=source.get("provider") or "auto",
+        start_url=source.get("start_url"),
+        max_sites=max(1, int(source.get("max_sites") or 1)),
+        depth=max(0, int(source.get("depth") or 1)),
+        render=bool(source.get("render")),
+        source=source.get("source") or "all",
+        include_patterns=list(source.get("include_patterns") or []),
+        exclude_patterns=list(source.get("exclude_patterns") or []),
+        formats=list(source.get("formats") or ["markdown"]),
+        include_external_links=bool(source.get("include_external_links")),
+        include_subdomains=bool(source.get("include_subdomains")),
+        modified_since=source.get("modified_since"),
+        max_age=source.get("max_age"),
+        refresh_existing=bool(source.get("refresh_existing")),
+    )
 
 
 def _store_research_history(entry: dict):
@@ -271,6 +379,7 @@ async def _discover_with_cloudflare(
     request: DiscoverRequest,
     urls: List[str],
     policy_summary: Optional[dict[str, Any]] = None,
+    autonomy_source: Optional[dict[str, Any]] = None,
 ) -> dict:
     reason = CRAWLER.unavailable_reason()
     if reason:
@@ -298,6 +407,8 @@ async def _discover_with_cloudflare(
     total_pages = 0
     total_texts = 0
     total_indexed = 0
+    total_learning_added = 0
+    total_learning_skipped = 0
     last_job_id = None
     policy_rejections: List[dict[str, Any]] = []
 
@@ -321,6 +432,9 @@ async def _discover_with_cloudflare(
         policy_rejections.extend(rejected)
         append_research_documents(documents)
         indexed = _index_documents(request.topic, documents)
+        learning = await _mirror_documents_into_learning(documents)
+        total_learning_added += int(learning.get("added") or 0)
+        total_learning_skipped += int(learning.get("skipped") or 0)
         total_indexed += indexed
         total_pages += int(crawl_result.get("finished") or 0)
         total_texts += len(documents)
@@ -333,6 +447,8 @@ async def _discover_with_cloudflare(
                 "total": crawl_result.get("total"),
                 "texts_processed": len(documents),
                 "chunks_indexed": indexed,
+                "learning_records_added": learning.get("added"),
+                "learning_records_skipped": learning.get("skipped"),
                 "policy_rejections": len(rejected),
             }
         )
@@ -344,6 +460,8 @@ async def _discover_with_cloudflare(
         "pages_crawled": total_pages,
         "texts_processed": total_texts,
         "chunks_indexed": total_indexed,
+        "learning_records_added": total_learning_added,
+        "learning_records_skipped": total_learning_skipped,
         "jobs": jobs,
         "policy_rejections": policy_rejections[:10],
     }
@@ -356,6 +474,8 @@ async def _discover_with_cloudflare(
             "pages_crawled": total_pages,
             "texts_processed": total_texts,
             "chunks_indexed": total_indexed,
+            "learning_records_added": total_learning_added,
+            "learning_records_skipped": total_learning_skipped,
             "job_id": last_job_id,
             "status": "completed",
             "start_url": request.start_url,
@@ -367,6 +487,8 @@ async def _discover_with_cloudflare(
             "jobs": jobs,
             "policy_rejections": policy_rejections[:10],
             "policy": policy_summary,
+            "autonomy_source_id": autonomy_source.get("id") if autonomy_source else None,
+            "autonomy_source_label": autonomy_source.get("label") if autonomy_source else None,
         }
     )
     return result
@@ -377,6 +499,7 @@ async def _discover_with_legacy_scraper(
     urls: List[str],
     fallback: Optional[dict] = None,
     policy_summary: Optional[dict[str, Any]] = None,
+    autonomy_source: Optional[dict[str, Any]] = None,
 ) -> dict:
     if os.getenv("WHISPER_TEST_MODE", "false").lower() == "true":
         documents = [
@@ -409,6 +532,7 @@ async def _discover_with_legacy_scraper(
         pages_crawled = len(results)
     append_research_documents(documents)
     indexed = _index_documents(request.topic, documents)
+    learning = await _mirror_documents_into_learning(documents)
     result = {
         "topic": request.topic,
         "provider": "legacy",
@@ -416,6 +540,8 @@ async def _discover_with_legacy_scraper(
         "pages_crawled": pages_crawled,
         "texts_processed": len(documents),
         "chunks_indexed": indexed,
+        "learning_records_added": learning.get("added"),
+        "learning_records_skipped": learning.get("skipped"),
     }
     if fallback:
         result["fallback"] = fallback
@@ -428,6 +554,8 @@ async def _discover_with_legacy_scraper(
             "pages_crawled": pages_crawled,
             "texts_processed": len(documents),
             "chunks_indexed": indexed,
+            "learning_records_added": learning.get("added"),
+            "learning_records_skipped": learning.get("skipped"),
             "job_id": None,
             "status": "completed",
             "start_url": request.start_url,
@@ -438,12 +566,14 @@ async def _discover_with_legacy_scraper(
             "source": request.source,
             "fallback": fallback,
             "policy": policy_summary,
+            "autonomy_source_id": autonomy_source.get("id") if autonomy_source else None,
+            "autonomy_source_label": autonomy_source.get("label") if autonomy_source else None,
         }
     )
     return result
 
 
-async def _discover_and_ingest(request: DiscoverRequest) -> dict:
+async def _discover_and_ingest(request: DiscoverRequest, *, autonomy_source: Optional[dict[str, Any]] = None) -> dict:
     candidate_urls = [request.start_url] if request.start_url else await SEARCH.search_query(request.topic)
     candidate_urls = [url for url in candidate_urls if url][: max(1, request.max_sites if request.provider == "cloudflare" else request.max_pages)]
     accepted_urls, decisions, policy_summary = _policy_filter_urls(candidate_urls)
@@ -466,6 +596,8 @@ async def _discover_and_ingest(request: DiscoverRequest) -> dict:
                 "max_sites": request.max_sites,
                 "source": request.source,
                 "policy": policy_summary,
+                "autonomy_source_id": autonomy_source.get("id") if autonomy_source else None,
+                "autonomy_source_label": autonomy_source.get("label") if autonomy_source else None,
             }
         )
         return {
@@ -483,12 +615,22 @@ async def _discover_and_ingest(request: DiscoverRequest) -> dict:
         raise HTTPException(status_code=400, detail="provider must be one of: auto, cloudflare, legacy")
 
     if provider == "cloudflare":
-        result = await _discover_with_cloudflare(request, accepted_urls, policy_summary=policy_summary)
+        result = await _discover_with_cloudflare(
+            request,
+            accepted_urls,
+            policy_summary=policy_summary,
+            autonomy_source=autonomy_source,
+        )
         result["policy"] = policy_summary
         return result
 
     if provider == "auto" and CRAWLER.is_available():
-        result = await _discover_with_cloudflare(request, accepted_urls, policy_summary=policy_summary)
+        result = await _discover_with_cloudflare(
+            request,
+            accepted_urls,
+            policy_summary=policy_summary,
+            autonomy_source=autonomy_source,
+        )
         result["policy"] = policy_summary
         return result
 
@@ -505,6 +647,7 @@ async def _discover_and_ingest(request: DiscoverRequest) -> dict:
         accepted_urls,
         fallback=fallback,
         policy_summary=policy_summary,
+        autonomy_source=autonomy_source,
     )
     result["policy"] = policy_summary
     return result
@@ -579,8 +722,203 @@ async def get_research_stats():
         "scraper": SCRAPER.get_stats(),
         "cloudflare": CRAWLER.status(),
         "policy": SOURCE_POLICY.status(),
+        "autonomy": get_background_research_status(),
         "data_file": str(RESEARCH_DOCUMENTS_PATH),
         "data_file_exists": RESEARCH_DOCUMENTS_PATH.exists(),
+    }
+
+
+@router.get("/autonomy")
+async def get_research_autonomy(payload: dict = Depends(verify_admin_token)):
+    return get_background_research_status()
+
+
+@router.put("/autonomy")
+async def update_research_autonomy(
+    request: AutonomousResearchSettingsUpdateRequest,
+    payload: dict = Depends(verify_admin_token),
+):
+    updated = update_autonomy_settings(request.model_dump(exclude_none=True))
+    if updated.get("enabled"):
+        await start_background_research_task()
+    else:
+        await stop_background_research_task()
+    return {
+        "status": "updated",
+        "autonomy": get_background_research_status(),
+    }
+
+
+@router.get("/autonomy/sources")
+async def get_research_autonomy_sources(payload: dict = Depends(verify_admin_token)):
+    return {
+        "sources": autonomy_status().get("sources", []),
+    }
+
+
+@router.post("/autonomy/sources")
+async def create_research_autonomy_source(
+    request: AutonomousResearchSourceRequest,
+    payload: dict = Depends(verify_admin_token),
+):
+    if not (request.topic or request.start_url):
+        raise HTTPException(status_code=400, detail="topic or start_url is required")
+    source = add_autonomy_source(request.model_dump(exclude_none=True))
+    return {
+        "status": "created",
+        "source": source,
+        "autonomy": get_background_research_status(),
+    }
+
+
+@router.put("/autonomy/sources/{source_id}")
+async def patch_research_autonomy_source(
+    source_id: str,
+    request: AutonomousResearchSourceRequest,
+    payload: dict = Depends(verify_admin_token),
+):
+    try:
+        source = update_autonomy_source(source_id, request.model_dump(exclude_unset=True, exclude_none=True))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown autonomy source '{source_id}'") from exc
+    return {
+        "status": "updated",
+        "source": source,
+        "autonomy": get_background_research_status(),
+    }
+
+
+@router.delete("/autonomy/sources/{source_id}")
+async def remove_research_autonomy_source(source_id: str, payload: dict = Depends(verify_admin_token)):
+    result = delete_autonomy_source(source_id)
+    if not result.get("deleted"):
+        raise HTTPException(status_code=404, detail=f"Unknown autonomy source '{source_id}'")
+    return {
+        "status": "deleted",
+        **result,
+        "autonomy": get_background_research_status(),
+    }
+
+
+async def _run_autonomous_research_cycle(source_id: Optional[str] = None) -> dict[str, Any]:
+    config = load_autonomy_config()
+    if not config.get("enabled", True):
+        return {
+            "status": "skipped",
+            "reason": "autonomy_disabled",
+        }
+
+    source: Optional[dict[str, Any]] = None
+    if source_id:
+        source = next((item for item in config.get("sources", []) if item.get("id") == source_id), None)
+    else:
+        source = select_next_autonomy_source()
+
+    if source is None:
+        return {
+            "status": "skipped",
+            "reason": "no_enabled_sources",
+        }
+    if not source.get("enabled", True):
+        return {
+            "status": "skipped",
+            "reason": "source_disabled",
+            "source": source,
+        }
+
+    AUTO_RESEARCH_RUNTIME["running"] = True
+    AUTO_RESEARCH_RUNTIME["current_source_id"] = source.get("id")
+    AUTO_RESEARCH_RUNTIME["current_source_label"] = source.get("label") or source.get("topic")
+    AUTO_RESEARCH_RUNTIME["last_cycle_started_at"] = time.time()
+    AUTO_RESEARCH_RUNTIME["last_error"] = None
+
+    request = _source_to_discover_request(source)
+    try:
+        logger.info(f"Auto research cycle: {source.get('label') or source.get('topic')}")
+        result = await _discover_and_ingest(request, autonomy_source=source)
+        AUTO_RESEARCH_RUNTIME["completed_cycles"] = int(AUTO_RESEARCH_RUNTIME.get("completed_cycles") or 0) + 1
+        record_autonomy_run(
+            source["id"],
+            status="completed",
+            result={
+                "pages_crawled": result.get("pages_crawled"),
+                "texts_processed": result.get("texts_processed"),
+                "chunks_indexed": result.get("chunks_indexed"),
+                "learning_records_added": result.get("learning_records_added"),
+            },
+        )
+        return {
+            "status": "completed",
+            "source": source,
+            "result": result,
+        }
+    except Exception as exc:
+        AUTO_RESEARCH_RUNTIME["last_error"] = str(exc)
+        record_autonomy_run(source["id"], status="failed", error=str(exc))
+        _store_research_history(
+            {
+                "topic": request.topic,
+                "provider": request.provider,
+                "requested_provider": request.provider,
+                "urls": [request.start_url] if request.start_url else [],
+                "pages_crawled": 0,
+                "texts_processed": 0,
+                "chunks_indexed": 0,
+                "learning_records_added": 0,
+                "learning_records_skipped": 0,
+                "job_id": None,
+                "status": "failed",
+                "error": str(exc),
+                "start_url": request.start_url,
+                "depth": request.depth,
+                "render": request.render,
+                "max_pages": request.max_pages,
+                "max_sites": request.max_sites,
+                "source": request.source,
+                "autonomy_source_id": source.get("id"),
+                "autonomy_source_label": source.get("label"),
+            }
+        )
+        logger.warning(f"Auto research cycle failed: {exc}")
+        raise
+    finally:
+        AUTO_RESEARCH_RUNTIME["running"] = False
+        AUTO_RESEARCH_RUNTIME["last_cycle_finished_at"] = time.time()
+        AUTO_RESEARCH_RUNTIME["current_source_id"] = None
+        AUTO_RESEARCH_RUNTIME["current_source_label"] = None
+
+
+@router.post("/autonomy/run")
+async def run_research_autonomy_now(
+    request: AutonomousResearchRunRequest,
+    payload: dict = Depends(verify_admin_token),
+):
+    result = await _run_autonomous_research_cycle(request.source_id)
+    return {
+        **result,
+        "autonomy": get_background_research_status(),
+    }
+
+
+@router.post("/autonomy/start")
+async def start_research_autonomy(payload: dict = Depends(verify_admin_token)):
+    settings = update_autonomy_settings({"enabled": True})
+    await start_background_research_task()
+    return {
+        "status": "started",
+        "autonomy": get_background_research_status(),
+        "settings": settings,
+    }
+
+
+@router.post("/autonomy/stop")
+async def stop_research_autonomy(payload: dict = Depends(verify_admin_token)):
+    settings = update_autonomy_settings({"enabled": False})
+    await stop_background_research_task()
+    return {
+        "status": "stopped",
+        "autonomy": get_background_research_status(),
+        "settings": settings,
     }
 
 
@@ -600,9 +938,50 @@ async def update_research_policy(request: ResearchPolicyUpdateRequest, payload: 
 
 
 @router.get("/history")
-async def get_research_history(limit: int = 20, payload: dict = Depends(verify_admin_token)):
+async def get_research_history(
+    limit: int = 20,
+    topic: Optional[str] = None,
+    provider: Optional[str] = None,
+    status: Optional[str] = None,
+    source_id: Optional[str] = None,
+    source_label: Optional[str] = None,
+    search: Optional[str] = None,
+    payload: dict = Depends(verify_admin_token),
+):
     return {
-        "runs": list_research_runs(limit=max(1, min(limit, 100))),
+        "runs": list_research_runs(
+            limit=max(1, min(limit, 100)),
+            topic=topic,
+            provider=provider,
+            status=status,
+            source_id=source_id,
+            source_label=source_label,
+            search=search,
+        ),
+        "summary": summarize_research_runs(
+            topic=topic,
+            provider=provider,
+            status=status,
+            source_id=source_id,
+            source_label=source_label,
+            search=search,
+        ),
+    }
+
+
+@router.get("/autonomy/sources/{source_id}/history")
+async def get_research_autonomy_source_history(
+    source_id: str,
+    limit: int = 20,
+    payload: dict = Depends(verify_admin_token),
+):
+    source = next((item for item in autonomy_status().get("sources", []) if item.get("id") == source_id), None)
+    if source is None:
+        raise HTTPException(status_code=404, detail=f"Unknown autonomy source '{source_id}'")
+    return {
+        "source": source,
+        "runs": list_research_runs(limit=max(1, min(limit, 100)), source_id=source_id),
+        "summary": summarize_research_runs(source_id=source_id),
     }
 
 
@@ -708,6 +1087,9 @@ async def delete_research_history_endpoint(
         topic=request.topic,
         provider=request.provider,
         status=request.status,
+        source_id=request.source_id,
+        source_label=request.source_label,
+        search=request.search,
     )
     _refresh_research_stats()
     return {
@@ -751,44 +1133,18 @@ async def rebuild_research_index_endpoint(
 
 
 async def _background_research_loop():
-    interval_minutes = int(os.getenv("AUTO_CRAWL_INTERVAL_MINUTES", "60"))
-    topics = [
-        "python programming best practices",
-        "software engineering patterns",
-        "artificial intelligence research",
-        "developer tooling updates",
-    ]
-    index = 0
-
     while True:
-        await asyncio.sleep(interval_minutes * 60)
-        topic = topics[index % len(topics)]
-        index += 1
+        settings = load_autonomy_config()
+        if not settings.get("enabled", True):
+            await asyncio.sleep(60)
+            continue
+
         try:
-            logger.info(f"Auto research cycle: {topic}")
-            await _discover_and_ingest(
-                DiscoverRequest(
-                    topic=topic,
-                    max_pages=int(os.getenv("AUTO_CRAWL_MAX_PAGES", "3")),
-                )
-            )
-        except Exception as exc:
-            _store_research_history(
-                {
-                    "topic": topic,
-                    "provider": "auto",
-                    "requested_provider": "auto",
-                    "urls": [],
-                    "pages_crawled": 0,
-                    "texts_processed": 0,
-                    "chunks_indexed": 0,
-                    "job_id": None,
-                    "status": "failed",
-                    "error": str(exc),
-                    "max_pages": int(os.getenv("AUTO_CRAWL_MAX_PAGES", "3")),
-                }
-            )
-            logger.warning(f"Auto research cycle failed: {exc}")
+            await _run_autonomous_research_cycle()
+        except Exception:
+            pass
+
+        await asyncio.sleep(max(60, int(settings.get("interval_minutes") or 60) * 60))
 
 
 async def start_background_research_task():
@@ -797,6 +1153,9 @@ async def start_background_research_task():
     if os.getenv("WHISPER_TEST_MODE", "false").lower() == "true":
         return
     if os.getenv("AUTO_CRAWL_ENABLED", "true").lower() != "true":
+        logger.info("Auto research disabled by environment configuration")
+        return
+    if not load_autonomy_config().get("enabled", True):
         logger.info("Auto research disabled by configuration")
         return
     if AUTO_RESEARCH_TASK and not AUTO_RESEARCH_TASK.done():

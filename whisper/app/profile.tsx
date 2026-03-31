@@ -117,8 +117,6 @@ export default function ProfileScreen() {
         })();
     }, []);
 
-    const isPro = profile?.subscription_tier === 'pro';
-
     return (
         <LinearGradient
             colors={[theme.colors.background, theme.colors.surface]}
@@ -140,22 +138,6 @@ export default function ProfileScreen() {
                         <View style={[styles.avatar, { backgroundColor: theme.colors.primary }]}>
                             <Text style={styles.avatarText}>
                                 {profile?.display_name?.[0]?.toUpperCase() || 'U'}
-                            </Text>
-                        </View>
-                        <View style={[
-                            styles.tierBadge,
-                            { backgroundColor: isPro ? theme.colors.primary : theme.colors.surfaceLight }
-                        ]}>
-                            <Ionicons
-                                name={isPro ? 'star' : 'sparkles-outline'}
-                                size={14}
-                                color={isPro ? '#000' : theme.colors.textMuted}
-                            />
-                            <Text style={[
-                                styles.tierText,
-                                { color: isPro ? '#000' : theme.colors.textMuted }
-                            ]}>
-                                {isPro ? 'Pro Plan' : 'Free Plan'}
                             </Text>
                         </View>
                     </View>
@@ -239,41 +221,6 @@ export default function ProfileScreen() {
                         )}
                     </View>
 
-                    {/* Token Usage */}
-                    <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
-                        <Text style={[styles.cardTitle, { color: theme.colors.text }]}>
-                            Token Usage
-                        </Text>
-                        <View style={styles.tokenRow}>
-                            <Ionicons name="flash" size={20} color={theme.colors.primary} />
-                            <Text style={[styles.tokenValue, { color: theme.colors.text }]}>
-                                {profile?.tokens_used || 0} / {profile?.tokens_limit || 20}
-                            </Text>
-                            <Text style={[styles.tokenLabel, { color: theme.colors.textMuted }]}>
-                                tokens used this month
-                            </Text>
-                        </View>
-                        <View style={[styles.progressBar, { backgroundColor: theme.colors.surfaceLight }]}>
-                            <View
-                                style={[
-                                    styles.progressFill,
-                                    {
-                                        backgroundColor: theme.colors.primary,
-                                        width: `${Math.min(100, ((profile?.tokens_used || 0) / (profile?.tokens_limit || 20)) * 100)}%`
-                                    }
-                                ]}
-                            />
-                        </View>
-                        <TouchableOpacity
-                            style={[styles.upgradeBtn, { backgroundColor: theme.colors.primary }]}
-                            onPress={() => router.push('/subscription')}
-                        >
-                            <Text style={styles.upgradeBtnText}>
-                                {isPro ? 'Manage Subscription' : 'Upgrade to Pro'}
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-
                     {/* Model Settings */}
                     <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
                         <Text style={[styles.cardTitle, { color: theme.colors.text }]}>
@@ -349,8 +296,6 @@ const styles = StyleSheet.create({
     avatarSection: { alignItems: 'center', marginBottom: spacing.xl },
     avatar: { width: 100, height: 100, borderRadius: 50, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.md },
     avatarText: { color: '#000', fontSize: 36, fontWeight: '700' },
-    tierBadge: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: borderRadius.full, gap: spacing.xs },
-    tierText: { fontSize: fontSize.sm, fontWeight: '600' },
     card: { marginHorizontal: spacing.lg, marginBottom: spacing.lg, padding: spacing.lg, borderRadius: borderRadius.lg, borderWidth: 1 },
     cardTitle: { fontSize: fontSize.lg, fontWeight: '700', marginBottom: spacing.md },
     field: { marginBottom: spacing.md },
@@ -364,13 +309,6 @@ const styles = StyleSheet.create({
     saveBtnText: { color: '#000', fontSize: fontSize.sm, fontWeight: '600' },
     editBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: spacing.sm, borderRadius: borderRadius.md, borderWidth: 1, gap: spacing.xs, marginTop: spacing.sm },
     editBtnText: { fontSize: fontSize.sm, fontWeight: '600' },
-    tokenRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm },
-    tokenValue: { fontSize: fontSize.lg, fontWeight: '700' },
-    tokenLabel: { fontSize: fontSize.sm },
-    progressBar: { height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: spacing.md },
-    progressFill: { height: '100%', borderRadius: 4 },
-    upgradeBtn: { paddingVertical: spacing.sm, borderRadius: borderRadius.md, alignItems: 'center' },
-    upgradeBtnText: { color: '#000', fontSize: fontSize.sm, fontWeight: '600' },
     modelInfo: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md },
     modelName: { fontSize: fontSize.md, fontWeight: '600' },
     modelDetails: { fontSize: fontSize.xs, marginTop: 2 },

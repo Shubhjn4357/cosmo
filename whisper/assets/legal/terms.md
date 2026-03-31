@@ -66,12 +66,11 @@ We DO NOT:
 - Monitor your messages or generated content
 - Track you across other apps or websites
 
-## 7. Subscriptions & Payments
+## 7. Feature Availability
 
-- Free tier includes limited tokens
-- Pro/Unlimited subscriptions provide more tokens
-- All sales are final (no refunds)
-- You may cancel your subscription at any time
+- Features may change as the app evolves
+- Some capabilities may depend on device or server availability
+- We may add, remove, or update features to improve reliability and safety
 
 ## 8. Disclaimers
 

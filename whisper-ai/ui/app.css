@@ -11,6 +11,15 @@ body {
   padding: 24px;
 }
 
+.page-header {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
 .panel {
   background: rgba(17, 24, 39, 0.9);
   border: 1px solid rgba(148, 163, 184, 0.15);
@@ -36,6 +45,19 @@ body {
   flex: 1 1 300px;
 }
 
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-group label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #cbd5e1;
+  letter-spacing: 0.02em;
+}
+
 textarea,
 input,
 select,
@@ -48,6 +70,14 @@ button {
   color: #e5e7eb;
   padding: 12px 14px;
   font-size: 14px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.5);
+  outline-offset: 1px;
+  border-color: rgba(59, 130, 246, 0.45);
 }
 
 button {
@@ -73,6 +103,62 @@ button:disabled {
 button.secondary {
   background: #1f2937;
   border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.admin-auth-panel {
+  position: relative;
+}
+
+.auth-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.2fr) minmax(260px, 1fr);
+  gap: 16px;
+}
+
+.auth-card {
+  padding: 18px;
+  border-radius: 16px;
+  background: rgba(2, 6, 23, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-card-info {
+  background:
+    radial-gradient(circle at top right, rgba(37, 99, 235, 0.16), transparent 38%),
+    rgba(2, 6, 23, 0.76);
+}
+
+.auth-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.auth-feedback {
+  min-height: 22px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.84);
+  border: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .messages {
@@ -266,4 +352,10 @@ button.secondary {
 
 .status-warn {
   color: #fbbf24;
+}
+
+@media (max-width: 900px) {
+  .auth-grid {
+    grid-template-columns: 1fr;
+  }
 }

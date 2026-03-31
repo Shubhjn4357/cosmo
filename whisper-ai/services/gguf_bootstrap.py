@@ -50,7 +50,7 @@ def _test_mode_enabled() -> bool:
 
 
 def _bootstrap_enabled() -> bool:
-    return _env_enabled("WHISPER_BOOTSTRAP_GGUF_RUNTIME", False) and not _test_mode_enabled()
+    return _env_enabled("WHISPER_BOOTSTRAP_GGUF_RUNTIME", True) and not _test_mode_enabled()
 
 
 def _download_enabled() -> bool:

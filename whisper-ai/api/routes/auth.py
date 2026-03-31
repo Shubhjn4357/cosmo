@@ -11,8 +11,10 @@ import hmac
 import json
 import os
 import time
+from pathlib import Path
 from typing import Optional
 
+from dotenv import dotenv_values
 from fastapi import APIRouter, Depends, Header, HTTPException
 from loguru import logger
 from pydantic import BaseModel
@@ -25,19 +27,82 @@ router = APIRouter()
 
 LEGACY_ADMIN_USERNAME = "shubhjain"
 LEGACY_ADMIN_PASSWORD_HASH = hashlib.sha256("@Jainshubh261998".encode()).hexdigest()
-ALLOW_LEGACY_ADMIN = os.environ.get("ALLOW_LEGACY_ADMIN", "false").lower() == "true"
-
-ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME") or os.environ.get("ADMIN_EMAIL", "")
-ADMIN_PASSWORD_HASH = os.environ.get("ADMIN_PASSWORD_HASH")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
-if not ADMIN_PASSWORD_HASH and ADMIN_PASSWORD:
-    ADMIN_PASSWORD_HASH = hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest()
-if not ADMIN_PASSWORD_HASH and ALLOW_LEGACY_ADMIN:
-    ADMIN_USERNAME = ADMIN_USERNAME or LEGACY_ADMIN_USERNAME
-    ADMIN_PASSWORD_HASH = LEGACY_ADMIN_PASSWORD_HASH
-
-JWT_SECRET = os.environ.get("JWT_SECRET", "whisper-ai-secret-key-change-in-production")
+APP_ROOT = Path(__file__).resolve().parents[2]
+ENV_FILE = APP_ROOT / ".env"
 JWT_EXPIRY = 86400 * 7
+
+
+def _load_runtime_env() -> dict[str, str]:
+    keys = (
+        "ALLOW_LEGACY_ADMIN",
+        "ADMIN_USERNAME",
+        "ADMIN_EMAIL",
+        "ADMIN_PASSWORD",
+        "ADMIN_PASSWORD_HASH",
+        "JWT_SECRET",
+    )
+    values: dict[str, str] = {}
+    for key in keys:
+        current = os.environ.get(key)
+        if current is not None:
+            values[key] = current
+
+    # Prefer the checked-in `.env` file when present so local credential edits
+    # take effect without needing to restart the server process.
+    if ENV_FILE.exists():
+        file_values = dotenv_values(ENV_FILE)
+        for key in keys:
+            current = file_values.get(key)
+            if current not in (None, ""):
+                values[key] = str(current)
+
+    return values
+
+
+def _env_bool(value: Optional[str], default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _admin_auth_config() -> dict:
+    runtime_env = _load_runtime_env()
+    admin_username = (runtime_env.get("ADMIN_USERNAME") or "").strip()
+    admin_email = (runtime_env.get("ADMIN_EMAIL") or "").strip()
+    allow_legacy_admin = _env_bool(runtime_env.get("ALLOW_LEGACY_ADMIN"), False)
+
+    password_hashes: set[str] = set()
+    configured_hash = (runtime_env.get("ADMIN_PASSWORD_HASH") or "").strip().lower()
+    if configured_hash:
+        password_hashes.add(configured_hash)
+
+    configured_password = runtime_env.get("ADMIN_PASSWORD") or ""
+    if configured_password:
+        password_hashes.add(hashlib.sha256(configured_password.encode()).hexdigest())
+
+    if allow_legacy_admin:
+        admin_username = admin_username or LEGACY_ADMIN_USERNAME
+        password_hashes.add(LEGACY_ADMIN_PASSWORD_HASH)
+
+    admin_aliases = {
+        alias.strip().lower()
+        for alias in (admin_username, admin_email)
+        if alias and alias.strip()
+    }
+
+    return {
+        "admin_username": admin_username,
+        "admin_email": admin_email,
+        "aliases": admin_aliases,
+        "password_hashes": password_hashes,
+        "allow_legacy_admin": allow_legacy_admin,
+        "configured": bool(admin_aliases and password_hashes),
+    }
+
+
+def _jwt_secret() -> str:
+    runtime_env = _load_runtime_env()
+    return runtime_env.get("JWT_SECRET", "whisper-ai-secret-key-change-in-production")
 
 
 class LoginRequest(BaseModel):
@@ -79,7 +144,7 @@ def create_jwt(username: str, user_id: Optional[str] = None, is_admin: bool = Fa
     header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
     payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     message = f"{header_b64}.{payload_b64}"
-    signature = hmac.new(JWT_SECRET.encode(), message.encode(), hashlib.sha256).digest()
+    signature = hmac.new(_jwt_secret().encode(), message.encode(), hashlib.sha256).digest()
     signature_b64 = base64.urlsafe_b64encode(signature).decode().rstrip("=")
     return f"{header_b64}.{payload_b64}.{signature_b64}"
 
@@ -91,7 +156,7 @@ def verify_jwt(token: str) -> Optional[dict]:
             return None
         header_b64, payload_b64, signature_b64 = parts
         message = f"{header_b64}.{payload_b64}"
-        expected_sig = hmac.new(JWT_SECRET.encode(), message.encode(), hashlib.sha256).digest()
+        expected_sig = hmac.new(_jwt_secret().encode(), message.encode(), hashlib.sha256).digest()
         expected_sig_b64 = base64.urlsafe_b64encode(expected_sig).decode().rstrip("=")
         if not hmac.compare_digest(signature_b64, expected_sig_b64):
             return None
@@ -124,23 +189,21 @@ async def verify_admin_token(authorization: Optional[str] = Header(None)) -> dic
 def _is_admin_login(username_or_email: str, password: str) -> bool:
     if not username_or_email or not password:
         return False
-    if not ADMIN_USERNAME or not ADMIN_PASSWORD_HASH:
+    config = _admin_auth_config()
+    if not config["configured"]:
         return False
 
-    admin_aliases = {ADMIN_USERNAME.lower()}
-    admin_email = os.environ.get("ADMIN_EMAIL")
-    if admin_email:
-        admin_aliases.add(admin_email.lower())
-
     password_hash = hashlib.sha256(password.encode()).hexdigest()
-    return username_or_email.lower() in admin_aliases and password_hash == ADMIN_PASSWORD_HASH
+    return username_or_email.strip().lower() in config["aliases"] and password_hash in config["password_hashes"]
 
 
 @router.get("/auth/admin-status")
 async def admin_status():
+    config = _admin_auth_config()
     return {
-        "admin_configured": bool(ADMIN_USERNAME and ADMIN_PASSWORD_HASH),
-        "legacy_admin_enabled": ALLOW_LEGACY_ADMIN,
+        "admin_configured": config["configured"],
+        "legacy_admin_enabled": config["allow_legacy_admin"],
+        "admin_aliases": sorted(config["aliases"]),
         "google_auth": google_auth_status(),
     }
 

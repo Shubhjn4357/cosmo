@@ -34,6 +34,7 @@ mkdir -p "$KEYSTORE_DIR" "$CREDENTIAL_DIR"
 
 pushd "$ROOT_DIR" >/dev/null
 
+node scripts/ci/patch-expo-dev-launcher-android.js
 npx expo prebuild --platform android --clean --no-install
 write_local_properties
 

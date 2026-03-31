@@ -22,7 +22,7 @@ const PRIVACY_SECTIONS = [
     },
     {
         title: 'How We Use Your Information',
-        content: 'Your data is used to: provide and improve our services, personalize your experience, process payments, send important updates, and ensure security. We do not sell your personal data.',
+        content: 'Your data is used to: provide and improve our services, personalize your experience, send important updates, and ensure security. We do not sell your personal data.',
     },
     {
         title: 'On-Device Processing',
@@ -34,7 +34,7 @@ const PRIVACY_SECTIONS = [
     },
     {
         title: 'Third-Party Services',
-        content: 'We use third-party services including: cloud AI providers (for server-based features), payment processors (Razorpay), and analytics. Each has their own privacy policies.',
+        content: 'We use third-party services including cloud AI providers for server-based features and analytics providers to help us improve the app. Each service has its own privacy policy.',
     },
     {
         title: 'Your Rights',

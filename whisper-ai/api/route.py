@@ -44,7 +44,6 @@ from api.routes import (
     knowledge,
     learn,
     models,
-    payment,
     ping,
     profile,
     research,
@@ -135,6 +134,7 @@ def _background_feature_enabled(env_name: str, default: bool = True) -> bool:
 
 async def _startup(app: FastAPI):
     from api.routes.profile import get_supabase
+    from services.catalog_bootstrap import start_catalog_bootstrap
     from services.gguf_bootstrap import start_gguf_runtime_bootstrap
     from services.hf_keepalive import get_keepalive, keepalive_enabled
 
@@ -221,6 +221,15 @@ async def _startup(app: FastAPI):
         except Exception as exc:
             logger.warning(f"GGUF runtime bootstrap skipped: {exc}")
 
+        try:
+            catalog_status = start_catalog_bootstrap()
+            logger.info(
+                "Approved model bootstrap status: {}",
+                catalog_status.get("status"),
+            )
+        except Exception as exc:
+            logger.warning(f"Approved model bootstrap skipped: {exc}")
+
     logger.info(f"Server started in {time.time() - startup_start:.2f}s")
 
 
@@ -304,7 +313,6 @@ app.include_router(models.router, prefix="/api", tags=["Models"])
 app.include_router(profile.router, prefix="/api", tags=["Profile"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(dashboard.dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
-app.include_router(payment.router, prefix="/api", tags=["Payment"])
 app.include_router(voice.router, prefix="/api", tags=["Voice"])
 app.include_router(faceswap.router, prefix="/api", tags=["FaceSwap"])
 app.include_router(upscale.router, prefix="/api", tags=["Upscale"])

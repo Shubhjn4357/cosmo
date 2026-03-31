@@ -37,8 +37,8 @@ const TERMS_CONTENT = [
         content: 'AI-generated content may not always be accurate. You are responsible for verifying any information before relying on it. Whisper AI is not liable for decisions made based on AI output.',
     },
     {
-        title: '6. Payments & Subscriptions',
-        content: 'Pro subscriptions are billed monthly. Refunds are handled on a case-by-case basis. You can cancel your subscription at any time from your account settings.',
+        title: '6. Availability',
+        content: 'Features may change over time as Whisper AI evolves. We may add, remove, or adjust capabilities to improve reliability, safety, and overall product quality.',
     },
     {
         title: '7. Privacy',

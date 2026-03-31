@@ -5,7 +5,7 @@ User profile management with Turso-backed persistence.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -60,6 +60,10 @@ class ProfileUpdate(BaseModel):
     hf_model_preference: Optional[str] = None
 
 
+class TokenUseRequest(BaseModel):
+    amount: int = 0
+
+
 @router.post("/profile")
 async def create_profile(data: ProfileCreate):
     """Create a new user profile."""
@@ -74,15 +78,11 @@ async def create_profile(data: ProfileCreate):
             "id": data.user_id,
             "email": data.email,
             "display_name": data.display_name or (data.email.split("@")[0] if data.email else "User"),
-            "subscription_tier": "free",
-            "tokens_used": 0,
-            "tokens_limit": 20,
             "consent_given": data.consent_given,
             "data_collection_consent": data.data_collection_consent,
             "is_admin": False,
             "created_at": now,
             "updated_at": now,
-            "last_token_refresh": now,
             "last_active": now,
         }
         if data.consent_given:
@@ -140,13 +140,9 @@ async def accept_consent(user_id: str, data_collection: bool):
 
 
 @router.post("/profile/{user_id}/tokens/use")
-async def use_tokens(user_id: str, amount: int):
-    """Use tokens from the user's balance."""
-    try:
-        result = get_supabase().rpc("use_tokens", {"p_user_id": user_id, "p_tokens": amount}).execute()
-        return {"success": bool(result.data[0]) if result.data else False, "remaining": 0}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+async def use_tokens(user_id: str, request: TokenUseRequest):
+    """Compatibility endpoint kept as a no-op for the simplified free app."""
+    return {"success": True, "remaining": 0, "used": max(0, request.amount)}
 
 
 class ChatHistoryRequest(BaseModel):
@@ -214,32 +210,6 @@ async def delete_chat(chat_id: str):
     """Delete chat history."""
     try:
         get_supabase().table("chat_history").delete().eq("id", chat_id).execute()
-        return {"success": True}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.post("/subscription/upgrade")
-async def upgrade_to_pro(user_id: str, razorpay_subscription_id: str):
-    """Upgrade a user to pro and create a subscription record."""
-    try:
-        client = get_supabase()
-        client.table("profiles").update(
-            {
-                "subscription_tier": "pro",
-                "tokens_limit": 1000,
-                "updated_at": _utc_now(),
-            }
-        ).eq("id", user_id).execute()
-        client.table("subscriptions").insert(
-            {
-                "user_id": user_id,
-                "tier": "pro",
-                "razorpay_subscription_id": razorpay_subscription_id,
-                "status": "active",
-                "expires_at": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
-            }
-        ).execute()
         return {"success": True}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

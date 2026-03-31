@@ -1,12 +1,13 @@
 /**
  * Whisper App - useChat Hook
- * Handles chat logic: sending messages, history, settings
+ * Handles chat logic, history persistence, image intents, and runtime routing.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Animated, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { Message, ChatHistory, ModelType } from '@/types';
 import { whisperAPI, ChatResponse } from '@/services/api';
 import LLMBackendService from '@/services/llmBackend';
@@ -18,6 +19,14 @@ import { smartModeAPI } from '@/services/smartModeAPI';
 
 interface UseChatOptions {
     useRag?: boolean;
+}
+
+export interface SendMessageOptions {
+    file?: { uri: string; name: string; type?: string; size?: number } | null;
+    systemPrompt?: string;
+    roleplayMode?: boolean;
+    nsfwMode?: boolean;
+    context?: string;
 }
 
 interface UseChatReturn {
@@ -38,13 +47,135 @@ interface UseChatReturn {
     cycleModel: () => Promise<ModelType>;
     setCreateImageMode: (mode: boolean) => void;
     setUseRag: (enabled: boolean) => void;
-    sendMessage: (file?: { uri: string; name: string; type?: string; size?: number } | null) => Promise<void>;
+    sendMessage: (options?: SendMessageOptions) => Promise<void>;
     stopGeneration: () => void;
-    generateImage: (prompt: string, useLocal?: boolean) => Promise<void>;
-    saveToHistory: () => void;
+    generateImage: (prompt: string, useLocal?: boolean, modelId?: string) => Promise<void>;
+    saveToHistory: (historyMessages?: Message[]) => Promise<void>;
     loadHistory: (history: ChatHistory) => void;
+    deleteHistory: (historyId: string) => Promise<void>;
+    hydrateMessages: (nextMessages: Message[], chatId?: string | null) => void;
     startNewChat: () => void;
     fadeAnim: Animated.Value;
+}
+
+const STORAGE_KEY = 'chatHistories';
+const DEFAULT_IMAGE_MODEL_ID = 'flux-schnell';
+const DEFAULT_IMAGE_NEGATIVE_PROMPT = 'blurry, bad quality, distorted, ugly, low resolution, watermark, text, signature';
+
+function truncate(text: string, maxLength: number) {
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, maxLength - 1).trim()}…`;
+}
+
+function normalizeTimestamp(value: unknown): Date {
+    if (value instanceof Date) return value;
+    if (typeof value === 'string' || typeof value === 'number') {
+        const parsed = new Date(value);
+        if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date();
+}
+
+function normalizeMessage(raw: any): Message {
+    return {
+        id: String(raw?.id ?? `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+        text: String(raw?.text ?? raw?.content ?? ''),
+        imageUri: raw?.imageUri ?? raw?.image_url,
+        isUser: Boolean(raw?.isUser ?? raw?.role === 'user'),
+        timestamp: normalizeTimestamp(raw?.timestamp),
+        file: raw?.file,
+        metadata: raw?.metadata,
+    };
+}
+
+function normalizeHistory(raw: any): ChatHistory {
+    const messages = Array.isArray(raw?.messages) ? raw.messages.map(normalizeMessage) : [];
+    return {
+        id: String(raw?.id ?? `history-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+        title: String(raw?.title ?? buildHistoryTitle(messages)),
+        messages,
+        createdAt: normalizeTimestamp(raw?.createdAt ?? raw?.created_at ?? messages[0]?.timestamp),
+    };
+}
+
+function serializeMessages(messages: Message[]) {
+    return messages.map((message) => ({
+        role: message.isUser ? 'user' : 'assistant',
+        content: message.text,
+        timestamp: normalizeTimestamp(message.timestamp).toISOString(),
+    }));
+}
+
+function buildHistoryTitle(historyMessages: Message[]) {
+    const firstUserMessage = historyMessages.find((message) => message.isUser && message.text.trim());
+    if (firstUserMessage) return truncate(firstUserMessage.text.trim().replace(/\s+/g, ' '), 60);
+    const fallback = historyMessages.find((message) => message.text.trim());
+    return truncate(fallback?.text.trim().replace(/\s+/g, ' ') || 'Chat', 60);
+}
+
+function historySignature(history: ChatHistory) {
+    const firstUser = history.messages.find((message) => message.isUser)?.text.trim().toLowerCase() || '';
+    const firstAssistant = history.messages.find((message) => !message.isUser)?.text.trim().toLowerCase() || '';
+    return `${firstUser.slice(0, 80)}::${firstAssistant.slice(0, 80)}::${history.messages.length}`;
+}
+
+function dedupeHistories(histories: ChatHistory[]) {
+    const sorted = [...histories].sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
+    const seenIds = new Set<string>();
+    const seenSignatures = new Set<string>();
+    const deduped: ChatHistory[] = [];
+
+    for (const history of sorted) {
+        const signature = historySignature(history);
+        if (seenIds.has(history.id) || seenSignatures.has(signature)) continue;
+        seenIds.add(history.id);
+        seenSignatures.add(signature);
+        deduped.push(history);
+    }
+
+    return deduped;
+}
+
+function shouldAutoGenerateImage(prompt: string) {
+    const normalized = prompt.trim().toLowerCase();
+    return /^(generate|create|make|draw|imagine|show)\s+(an?\s+)?image\b/.test(normalized)
+        || /^(render|illustrate)\b/.test(normalized)
+        || /^\/(image|imagine)\b/.test(normalized);
+}
+
+function extractImagePrompt(prompt: string) {
+    const trimmed = prompt.trim();
+    const normalized = trimmed.toLowerCase();
+
+    if (normalized.startsWith('/image ')) return trimmed.slice(7).trim();
+    if (normalized.startsWith('/imagine ')) return trimmed.slice(9).trim();
+
+    const patterns = [
+        /^(generate|create|make|draw|show)\s+(an?\s+)?image\s+(of|for)?\s*/i,
+        /^(imagine|render|illustrate)\s+(an?\s+)?/i,
+    ];
+
+    for (const pattern of patterns) {
+        if (pattern.test(trimmed)) {
+            return trimmed.replace(pattern, '').trim();
+        }
+    }
+
+    return trimmed;
+}
+
+function buildConversationContext(historyMessages: Message[]) {
+    const textOnlyMessages = historyMessages
+        .filter((message) => !message.imageUri && message.text.trim())
+        .slice(0, -12);
+
+    if (textOnlyMessages.length === 0) return '';
+
+    const summaryLines = textOnlyMessages.slice(-8).map((message) => (
+        `${message.isUser ? 'User' : 'Assistant'}: ${truncate(message.text.replace(/\s+/g, ' '), 180)}`
+    ));
+
+    return `Conversation memory summary:\n${summaryLines.map((line) => `- ${line}`).join('\n')}`;
 }
 
 export function useChat(options: UseChatOptions = {}): UseChatReturn {
@@ -52,35 +183,24 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     const { tokenInfo, checkTokens, useTokens: deductTokens, getTokenCost, getApiParams } = useUnifiedTokens();
     const { getSystemPrompt } = usePersonality();
     const { mode: useModel, setMode, cycleMode, cloudModel } = useAIRuntime();
-    
-    // State - include welcome message
+
     const [useRag, setUseRag] = useState(options.useRag ?? true);
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            id: '0',
-            text: "Hi! I'm Whisper AI. Ask me anything or let me help you analyze files.",
-            isUser: false,
-            timestamp: new Date(),
-        },
-    ]);
+    const [messages, setMessages] = useState<Message[]>([]);
     const [inputText, setInputText] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
     const [streamingMessage, setStreamingMessage] = useState('');
-    const [progressStatus, setProgressStatus] = useState(''); // Progress message
+    const [progressStatus, setProgressStatus] = useState('');
     const [chatHistories, setChatHistories] = useState<ChatHistory[]>([]);
-    const [modelSwitchEnabled, setModelSwitchEnabled] = useState(false);
     const [createImageMode, setCreateImageMode] = useState(false);
     const [isGeneratingImage, setIsGeneratingImage] = useState(false);
-    const [currentChatId, setCurrentChatId] = useState<string | null>(null); // Track active server chat ID
+    const [currentChatId, setCurrentChatId] = useState<string | null>(null);
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Load settings and history on mount
     useEffect(() => {
-        loadHistories();
-        // fetchSettings(); // Commented out - endpoint doesn't exist
-    }, [user]); // Re-load when user changes
+        void loadHistories();
+    }, [user?.id]);
 
     useEffect(() => {
         LLMBackendService.updateBackend('gemini', {
@@ -91,61 +211,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         });
     }, [cloudModel]);
 
-    const loadHistories = async () => {
-        try {
-            if (user?.id) {
-                // Load from server
-                const { success, histories } = await whisperAPI.getChatHistories(user.id);
-                if (success) {
-                    setChatHistories(histories.map((h: any) => ({
-                        id: h.id,
-                        title: h.title,
-                        messages: h.messages,
-                        createdAt: new Date(h.created_at),
-                    })));
-                }
-            } else {
-                // Load from local storage
-                const val = await AsyncStorage.getItem('chatHistories');
-                if (val) setChatHistories(JSON.parse(val));
-            }
-        } catch (err) {
-            // console.log('Error loading histories:', err);
-            // Fallback to local on error
-            const val = await AsyncStorage.getItem('chatHistories');
-            if (val) setChatHistories(JSON.parse(val));
-        }
-    };
-
-    // Settings endpoint doesn't exist on server - using defaults
-    // const fetchSettings = async () => {
-    //     try {
-    //         const response = await fetch(`${API_URL}/api/settings`);
-    //         const data = await response.json();
-    //         setModelSwitchEnabled(data.model_switch_enabled || false);
-    //     } catch (err) {
-    //         console.log('Could not fetch settings');
-    //     }
-    // };
-
-    // Check and load custom model on mount
-    /*
-    useEffect(() => {
-        (async () => {
-            const customModel = await modelLoader.getLoadedModel();
-            if (customModel && customModel.format === 'gguf') {
-                try {
-                    // await localLLM.loadCustomModel();
-                    // console.log('Custom .gguf model loaded successfully');
-                } catch (error) {
-                    console.error('Failed to load custom model:', error);
-                }
-            }
-        })();
-    }, []);
-    */
-
-    // Animation helper
     const animateMessage = useCallback(() => {
         fadeAnim.setValue(0);
         Animated.timing(fadeAnim, {
@@ -155,265 +220,288 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         }).start();
     }, [fadeAnim]);
 
-    // Generate image - adds both prompt and result to chat
-    const generateImage = useCallback(async (prompt: string, useLocal: boolean = false) => {
-        if (!prompt.trim() || isGeneratingImage) return;
+    const persistLocalHistories = useCallback(async (histories: ChatHistory[]) => {
+        try {
+            await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(histories));
+        } catch (error) {
+            console.error('Failed to persist local histories:', error);
+        }
+    }, []);
+
+    const loadHistories = useCallback(async () => {
+        try {
+            let loadedHistories: ChatHistory[] = [];
+
+            if (user?.id) {
+                const { success, histories } = await whisperAPI.getChatHistories(user.id);
+                if (success) {
+                    loadedHistories = histories.map(normalizeHistory);
+                }
+            } else {
+                const stored = await AsyncStorage.getItem(STORAGE_KEY);
+                if (stored) {
+                    loadedHistories = JSON.parse(stored).map(normalizeHistory);
+                }
+            }
+
+            setChatHistories(dedupeHistories(loadedHistories));
+        } catch (error) {
+            console.error('Failed to load chat histories:', error);
+            try {
+                const stored = await AsyncStorage.getItem(STORAGE_KEY);
+                if (stored) {
+                    setChatHistories(dedupeHistories(JSON.parse(stored).map(normalizeHistory)));
+                }
+            } catch (fallbackError) {
+                console.error('Failed to load fallback chat histories:', fallbackError);
+            }
+        }
+    }, [user?.id]);
+
+    const hydrateMessages = useCallback((nextMessages: Message[], chatId?: string | null) => {
+        setMessages(nextMessages.map(normalizeMessage));
+        setCurrentChatId(chatId ?? null);
+    }, []);
+
+    const saveToHistory = useCallback(async (historyMessages: Message[] = messages) => {
+        const normalizedMessages = historyMessages.map(normalizeMessage).filter((message) => (
+            Boolean(message.text.trim()) || Boolean(message.imageUri) || Boolean(message.file)
+        ));
+
+        if (!normalizedMessages.some((message) => message.isUser)) return;
+
+        const title = buildHistoryTitle(normalizedMessages);
+        let resolvedChatId = currentChatId;
+
+        if (user?.id) {
+            try {
+                const payloadMessages = serializeMessages(normalizedMessages);
+                if (resolvedChatId) {
+                    await whisperAPI.updateChatHistory(resolvedChatId, {
+                        title,
+                        messages: payloadMessages,
+                    });
+                } else {
+                    const response = await whisperAPI.createChatHistory(user.id, title, payloadMessages);
+                    if (response.success && response.id) {
+                        resolvedChatId = response.id;
+                        setCurrentChatId(response.id);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to sync chat history:', error);
+            }
+        }
+
+        const nextHistory: ChatHistory = {
+            id: resolvedChatId || `local-${Date.now()}`,
+            title,
+            messages: normalizedMessages,
+            createdAt: normalizeTimestamp(normalizedMessages[0]?.timestamp),
+        };
+
+        setChatHistories((previous) => {
+            const existing = previous.filter((history) => history.id !== nextHistory.id);
+            const deduped = dedupeHistories([nextHistory, ...existing]);
+            void persistLocalHistories(deduped);
+            return deduped;
+        });
+    }, [messages, currentChatId, persistLocalHistories, user?.id]);
+
+    const generateImage = useCallback(async (
+        prompt: string,
+        _useLocal: boolean = false,
+        modelId: string = DEFAULT_IMAGE_MODEL_ID
+    ) => {
+        const normalizedPrompt = prompt.trim();
+        if (!normalizedPrompt || isGeneratingImage) return;
 
         setIsGeneratingImage(true);
 
-        // Add user's image prompt to chat
         const userMessage: Message = {
-            id: Date.now().toString(),
-            text: `🎨 ${prompt}`,
+            id: `msg-${Date.now()}`,
+            text: `Create image: ${normalizedPrompt}`,
             isUser: true,
             timestamp: new Date(),
         };
-        setMessages(prev => [...prev, userMessage]);
+
+        setMessages((previous) => [...previous, userMessage]);
         animateMessage();
 
         try {
-            let imageUrl: string;
+            const response = await whisperAPI.generateImage({
+                prompt: normalizedPrompt,
+                negativePrompt: DEFAULT_IMAGE_NEGATIVE_PROMPT,
+                modelId,
+                width: 768,
+                height: 768,
+                numSteps: 18,
+                guidanceScale: 6.5,
+                isLocal: false,
+                ...getApiParams(),
+            });
 
-            if (useLocal) {
-                // Local generation - would need localGen passed in
-                throw new Error('Local generation requires downloading a model in Models tab');
-            } else {
-                const response = await whisperAPI.generateImage({
-                    prompt,
-                    negativePrompt: 'blurry, bad quality, distorted, ugly, low resolution, watermark, text, signature',
-                    modelId: 'dreamshaper-8',
-                    width: 512,
-                    height: 512,
-                    numSteps: 25,
-                    guidanceScale: 7.5,
-                    // Add token params
-                    ...getApiParams(),
-                });
-                imageUrl = response.image_url;
-            }
-
-            // Add AI response with image to chat
             const aiMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                text: `Here's your image for: "${prompt}"`,
-                imageUri: imageUrl,
+                id: `msg-${Date.now() + 1}`,
+                text: `Here is your image for: "${normalizedPrompt}"`,
+                imageUri: response.image_url,
                 isUser: false,
                 timestamp: new Date(),
             };
-            setMessages(prev => [...prev, aiMessage]);
+
+            const nextMessages = [...messages, userMessage, aiMessage];
+            setMessages(nextMessages);
             animateMessage();
+            await saveToHistory(nextMessages);
         } catch (error) {
             console.error('Image generation error:', error);
             const errorMessage: Message = {
-                id: (Date.now() + 1).toString(),
+                id: `msg-${Date.now() + 1}`,
                 text: `Sorry, I couldn't generate that image. ${error instanceof Error ? error.message : 'Please try again.'}`,
                 isUser: false,
                 timestamp: new Date(),
             };
-            setMessages(prev => [...prev, errorMessage]);
+            const nextMessages = [...messages, userMessage, errorMessage];
+            setMessages(nextMessages);
+            await saveToHistory(nextMessages);
         } finally {
             setIsGeneratingImage(false);
             setProgressStatus('');
-            // setCreateImageMode(false); // User request: keep it open? Or user removed it? I will respect user removal
         }
-    }, [isGeneratingImage, animateMessage]);
+    }, [animateMessage, getApiParams, isGeneratingImage, messages, saveToHistory]);
 
-    // Safe Haptic Helper
     const safeHaptic = useCallback(async (style: Haptics.ImpactFeedbackStyle) => {
         if (Platform.OS === 'web') return;
         try {
             await Haptics.impactAsync(style);
-        } catch (error) {
+        } catch {
             // Ignore unavailable haptics
         }
     }, []);
 
-    // History management
-    const saveToHistory = useCallback(async (historyMessages: Message[] = messages) => {
-        if (historyMessages.length < 2) return;
+    const sendMessage = useCallback(async (options: SendMessageOptions = {}) => {
+        const selectedFile = options.file ?? null;
+        const trimmedInput = inputText.trim();
 
-        const title = historyMessages[0]?.text.slice(0, 50) || 'Chat';
-
-        // 1. Sync with server if logged in
-        if (user?.id) {
-            try {
-                if (currentChatId) {
-                    await whisperAPI.updateChatHistory(currentChatId, {
-                        messages: historyMessages.map(m => ({
-                            role: m.isUser ? 'user' : 'assistant',
-                            content: m.text,
-                            timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp
-                        }))
-                    });
-                } else {
-                    const sanitizedMessages = historyMessages.map(m => ({
-                        role: m.isUser ? 'user' : 'assistant',
-                        content: m.text,
-                        timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp
-                    }));
-                    const { success, id } = await whisperAPI.createChatHistory(user.id, title, sanitizedMessages);
-                    if (success && id) {
-                        setCurrentChatId(id);
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to sync chat history:', e);
-            }
-        }
-
-        // 2. Save locally (fallback/cache)
-        const newHistory: ChatHistory = {
-            id: currentChatId || Date.now().toString(),
-            title,
-            messages: [...historyMessages],
-            createdAt: new Date(),
-        };
-
-        // Persist local storage using the same in-memory snapshot we expose to the UI.
-        setChatHistories(prev => {
-            const existingIndex = prev.findIndex(h => h.id === newHistory.id);
-            const updated = existingIndex >= 0
-                ? prev.map((history, index) => index === existingIndex ? newHistory : history)
-                : [newHistory, ...prev];
-            const sorted = updated.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-            void AsyncStorage.setItem('chatHistories', JSON.stringify(sorted));
-            return sorted;
-        });
-
-    }, [messages, user, currentChatId]);
-
-    // Send message (optionally with a file)
-    const sendMessage = useCallback(async (file?: { uri: string; name: string; type?: string; size?: number } | null) => {
-        // If in create image mode, generate image instead
         if (createImageMode) {
-            await generateImage(inputText, useModel === 'local');
+            await generateImage(trimmedInput, false, DEFAULT_IMAGE_MODEL_ID);
             setInputText('');
             return;
         }
 
-        if ((!inputText.trim() && !file) || isLoading) return;
+        if ((!trimmedInput && !selectedFile) || isLoading) return;
 
-        // Cloud mode consumes tokens. Self-hosted and local runtimes stay free.
-        const tokenCost = useModel === 'cloud' ? getTokenCost('smart_mode') : 0;
-
-        const hasTokens = tokenCost === 0 ? true : await checkTokens(tokenCost);
-        if (!hasTokens) {
-            // Show error and don't send
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                text: `Insufficient tokens. You need ${tokenCost} token(s) for cloud mode.`,
-                isUser: false,
-                timestamp: new Date(),
-            }]);
+        if (!selectedFile && shouldAutoGenerateImage(trimmedInput)) {
+            setInputText('');
+            await generateImage(extractImagePrompt(trimmedInput), false, DEFAULT_IMAGE_MODEL_ID);
             return;
         }
 
-        // Show low token warning
+        const tokenCost = useModel === 'cloud' ? getTokenCost('smart_mode') : 0;
+        const hasTokens = tokenCost === 0 ? true : await checkTokens(tokenCost);
+        if (!hasTokens) {
+            setMessages((previous) => [
+                ...previous,
+                {
+                    id: `msg-${Date.now()}`,
+                    text: `Insufficient tokens. You need ${tokenCost} token(s) for cloud mode.`,
+                    isUser: false,
+                    timestamp: new Date(),
+                },
+            ]);
+            return;
+        }
+
         if (tokenCost > 0 && tokenInfo?.isLow) {
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                text: `Low tokens. You have ${tokenInfo.tokensRemaining} tokens remaining.`,
-                isUser: false,
-                timestamp: new Date(),
-            }]);
+            setMessages((previous) => [
+                ...previous,
+                {
+                    id: `msg-${Date.now()}`,
+                    text: `Low tokens. You have ${tokenInfo.tokensRemaining} tokens remaining.`,
+                    isUser: false,
+                    timestamp: new Date(),
+                },
+            ]);
         }
 
         const userMessage: Message = {
-            id: Date.now().toString(),
-            text: inputText.trim() || (file ? `Analyzing: ${file.name}` : ''),
+            id: `msg-${Date.now()}`,
+            text: trimmedInput || (selectedFile ? `Analyze file: ${selectedFile.name}` : ''),
             isUser: true,
             timestamp: new Date(),
-            file: file ? { name: file.name, type: file.type, size: file.size } : undefined,
+            file: selectedFile ? { name: selectedFile.name, type: selectedFile.type, size: selectedFile.size } : undefined,
         };
 
-        setMessages(prev => [...prev, userMessage]);
+        setMessages((previous) => [...previous, userMessage]);
         setInputText('');
         setIsLoading(true);
-        safeHaptic(Haptics.ImpactFeedbackStyle.Light);
         animateMessage();
+        await safeHaptic(Haptics.ImpactFeedbackStyle.Light);
 
         try {
-            // Deduct tokens only for cloud mode.
             if (tokenCost > 0) {
                 await deductTokens(tokenCost);
             }
 
-            // Cloud mode prefers the provider-racing API first.
-            if (useModel === 'cloud' && user?.id) {
+            const baseSystemPrompt = getSystemPrompt();
+            const effectiveSystemPrompt = [baseSystemPrompt, options.systemPrompt]
+                .filter(Boolean)
+                .join('\n\n')
+                .trim();
+
+            const conversationContext = [options.context, buildConversationContext(messages)]
+                .filter(Boolean)
+                .join('\n\n')
+                .trim();
+
+            const history = messages
+                .filter((message) => !message.imageUri && message.text.trim())
+                .slice(-16)
+                .map((message) => ({
+                    role: (message.isUser ? 'user' : 'assistant') as 'user' | 'assistant',
+                    content: message.text,
+                }));
+
+            if (useModel === 'cloud' && user?.id && !selectedFile && !options.roleplayMode && !options.nsfwMode) {
                 try {
                     const response = await smartModeAPI.chat({
                         message: userMessage.text,
-                        conversation_history: messages.slice(-10).map(m => ({
-                            text: m.text,
-                            isUser: m.isUser
+                        conversation_history: history.map((message) => ({
+                            text: message.content,
+                            isUser: message.role === 'user',
                         })),
                         user_id: user.id,
-                        max_tokens: 500
+                        max_tokens: 400,
                     });
 
                     const aiMessage: Message = {
-                        id: (Date.now() + 1).toString(),
+                        id: `msg-${Date.now() + 1}`,
                         text: response.response,
                         isUser: false,
                         timestamp: new Date(),
                         metadata: {
                             model: response.model_used,
-                            responseTime: response.response_time
-                        }
+                            responseTime: response.response_time,
+                        },
                     };
 
                     const nextMessages = [...messages, userMessage, aiMessage];
                     setMessages(nextMessages);
                     animateMessage();
-                    void saveToHistory(nextMessages);
+                    await saveToHistory(nextMessages);
                     return;
                 } catch (smartError) {
                     console.error('Cloud mode failed over to direct runtime:', smartError);
                 }
             }
 
-            // Check for image generation command (/image or /imagine)
-            const isImageCommand = userMessage.text.toLowerCase().startsWith('/image ') ||
-                userMessage.text.toLowerCase().startsWith('/imagine ');
-            if (isImageCommand) {
-                const prompt = userMessage.text.toLowerCase().startsWith('/imagine ')
-                    ? userMessage.text.slice(9).trim()
-                    : userMessage.text.slice(7).trim();
+            let responseText = '';
 
-                const response = await whisperAPI.generateImage({
-                    prompt,
-                    negativePrompt: 'blurry, bad quality, distorted, ugly, low resolution, watermark, text, signature',
-                    width: 512,
-                    height: 512,
-                    numSteps: 25,
-                    guidanceScale: 7.5,
-                    modelId: 'dreamshaper-8',
-                    // Add token params
-                    ...getApiParams(),
-                });
-
-                const aiMessage: Message = {
-                    id: (Date.now() + 1).toString(),
-                    text: `Here is your image for: "${prompt}"`,
-                    imageUri: response.image_url,
-                    isUser: false,
-                    timestamp: new Date(),
-                };
-                const nextMessages = [...messages, userMessage, aiMessage];
-                setMessages(nextMessages);
-                animateMessage();
-                void saveToHistory(nextMessages);
-                return;
-            }
-
-            let responseText: string;
-
-            // If a file is attached, analyze it first
-            if (file) {
+            if (selectedFile) {
                 try {
-                    const question = inputText.trim() || 'Summarize this document and tell me what it contains.';
+                    const question = trimmedInput || 'Summarize this document and tell me what it contains.';
                     const response = await whisperAPI.analyzeFile(
-                        { uri: file.uri, name: file.name, type: file.type },
+                        { uri: selectedFile.uri, name: selectedFile.name, type: selectedFile.type },
                         question
                     );
                     responseText = response.answer || 'I could not analyze this file. Please try again.';
@@ -422,18 +510,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                     responseText = 'Sorry, I had trouble analyzing that file. Please make sure the file is readable and try again.';
                 }
             } else {
-                const systemPrompt = getSystemPrompt();
+                const streamSystemPrompt = [effectiveSystemPrompt, conversationContext]
+                    .filter(Boolean)
+                    .join('\n\n')
+                    .trim();
 
-                // Prepare history (last 10 messages, excluding current)
-                const history = messages.slice(-10).map(m => ({
-                    role: (m.isUser ? 'user' : 'assistant') as 'user' | 'assistant',
-                    content: m.text,
-                }));
-
-                // Use streaming for better UX
                 const abortController = new AbortController();
                 abortControllerRef.current = abortController;
-
                 setIsStreaming(true);
                 setStreamingMessage('');
                 setProgressStatus('Generating response...');
@@ -443,9 +526,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                         const response = await whisperAPI.chatSelfLearner({
                             message: userMessage.text,
                             history,
-                            systemPrompt,
-                            maxTokens: 384,
-                            temperature: 0.7,
+                            context: conversationContext,
+                            systemPrompt: effectiveSystemPrompt,
+                            maxTokens: 320,
+                            temperature: options.roleplayMode ? 0.85 : 0.7,
+                            nsfwMode: options.nsfwMode,
+                            roleplayMode: options.roleplayMode,
                             ...getApiParams(),
                         });
                         responseText = response.response;
@@ -461,11 +547,13 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                         const stream = LLMBackendService.stream({
                             messages: [
                                 ...history,
-                                { role: 'user' as const, content: userMessage.text }
+                                { role: 'user' as const, content: userMessage.text },
                             ],
-                            systemPrompt,
-                            temperature: 0.7,
-                            maxTokens: 512,
+                            systemPrompt: streamSystemPrompt,
+                            temperature: options.roleplayMode ? 0.85 : 0.7,
+                            maxTokens: 384,
+                            nsfwMode: options.nsfwMode,
+                            roleplayMode: options.roleplayMode,
                         }, abortController.signal);
 
                         let fullResponse = '';
@@ -473,29 +561,34 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                             fullResponse += chunk;
                             setStreamingMessage(fullResponse);
                         }
-
                         responseText = fullResponse;
                     }
                 } catch (streamError) {
                     if (streamError instanceof Error && streamError.name === 'AbortError') {
-                        // console.log('Stream aborted by user');
                         return;
                     }
-                    // Fallback to non-streaming on error
+
                     console.error('Streaming error, falling back:', streamError);
 
                     if (useModel === 'local') {
-                        responseText = 'Local model error. Please ensure a model is downloaded and selected in the Models tab.';
+                        responseText = streamError instanceof Error && streamError.message
+                            ? streamError.message
+                            : 'Local model error. Please ensure a model is downloaded and selected in the Models tab.';
                     } else if (useModel === 'self-learner') {
-                        responseText = 'Self-learner runtime is not ready yet. Train the built-in transformer from the server and try again.';
+                        responseText = streamError instanceof Error && streamError.message
+                            ? streamError.message
+                            : 'Self-learner runtime is not ready yet.';
                     } else {
                         const response: ChatResponse = await whisperAPI.chat({
                             message: userMessage.text,
                             useRAG: useRag,
-                            systemPrompt,
+                            context: conversationContext,
+                            systemPrompt: effectiveSystemPrompt,
                             history,
                             smartMode: useModel === 'cloud',
                             isLocal: useModel !== 'cloud',
+                            nsfwMode: options.nsfwMode,
+                            roleplayMode: options.roleplayMode,
                             ...getApiParams(),
                         });
                         responseText = response.response;
@@ -507,82 +600,114 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                     abortControllerRef.current = null;
                 }
             }
-            
+
             const aiMessage: Message = {
-                id: (Date.now() + 1).toString(),
+                id: `msg-${Date.now() + 1}`,
                 text: responseText,
                 isUser: false,
                 timestamp: new Date(),
             };
+
             const nextMessages = [...messages, userMessage, aiMessage];
             setMessages(nextMessages);
-            safeHaptic(Haptics.ImpactFeedbackStyle.Light);
             animateMessage();
-            void saveToHistory(nextMessages);
+            await safeHaptic(Haptics.ImpactFeedbackStyle.Light);
+            await saveToHistory(nextMessages);
         } catch (error) {
             console.error('Message send error:', error);
-            const errorMessage: Message = {
-                id: (Date.now() + 1).toString(),
-                text: "Sorry, I couldn't connect. Please check if the server is running.",
-                isUser: false,
-                timestamp: new Date(),
-            };
-            setMessages(prev => [...prev, errorMessage]);
+            setMessages((previous) => [
+                ...previous,
+                {
+                    id: `msg-${Date.now() + 1}`,
+                    text: error instanceof Error
+                        ? error.message
+                        : "Sorry, I couldn't connect. Please check if the server is running.",
+                    isUser: false,
+                    timestamp: new Date(),
+                },
+            ]);
         } finally {
             setIsLoading(false);
             setProgressStatus('');
         }
     }, [
+        animateMessage,
+        checkTokens,
+        createImageMode,
+        deductTokens,
+        generateImage,
+        getApiParams,
+        getSystemPrompt,
+        getTokenCost,
         inputText,
         isLoading,
+        messages,
+        safeHaptic,
+        saveToHistory,
+        tokenInfo?.isLow,
+        tokenInfo?.tokensRemaining,
         useModel,
         useRag,
-        animateMessage,
-        getSystemPrompt,
-        createImageMode,
-        generateImage,
-        messages,
-        checkTokens,
-        deductTokens,
-        getApiParams,
-        getTokenCost,
-        tokenInfo,
-        user,
-        saveToHistory,
+        user?.id,
     ]);
 
     const loadHistory = useCallback((history: ChatHistory) => {
-        setMessages(history.messages);
-        setCurrentChatId(history.id);
+        const normalized = normalizeHistory(history);
+        setMessages(normalized.messages);
+        setCurrentChatId(normalized.id);
     }, []);
 
+    const deleteHistory = useCallback(async (historyId: string) => {
+        try {
+            if (user?.id && !historyId.startsWith('local-')) {
+                await whisperAPI.deleteChatHistory(historyId);
+            }
+        } catch (error) {
+            console.error('Failed to delete remote history:', error);
+        } finally {
+            setChatHistories((previous) => {
+                const filtered = previous.filter((history) => history.id !== historyId);
+                void persistLocalHistories(filtered);
+                return filtered;
+            });
+
+            if (currentChatId === historyId) {
+                setMessages([]);
+                setCurrentChatId(null);
+            }
+        }
+    }, [currentChatId, persistLocalHistories, user?.id]);
+
     const startNewChat = useCallback(() => {
-        if (messages.length > 0) {
-            saveToHistory();
+        if (messages.some((message) => message.isUser)) {
+            void saveToHistory(messages);
         }
         setMessages([]);
         setInputText('');
         setCurrentChatId(null);
+        setStreamingMessage('');
+        setProgressStatus('');
     }, [messages, saveToHistory]);
 
     const stopGeneration = useCallback(() => {
-        if (abortControllerRef.current) {
-            abortControllerRef.current.abort();
-            abortControllerRef.current = null;
-            setIsStreaming(false);
-            setIsLoading(false);
+        if (!abortControllerRef.current) return;
 
-            // Save partial streamed message if exists
-            if (streamingMessage.trim()) {
-                const aiMessage: Message = {
-                    id: Date.now().toString(),
-                    text: streamingMessage + ' [stopped]',
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+        setIsStreaming(false);
+        setIsLoading(false);
+
+        if (streamingMessage.trim()) {
+            setMessages((previous) => [
+                ...previous,
+                {
+                    id: `msg-${Date.now()}`,
+                    text: `${streamingMessage} [stopped]`,
                     isUser: false,
                     timestamp: new Date(),
-                };
-                setMessages(prev => [...prev, aiMessage]);
-                setStreamingMessage('');
-            }
+                },
+            ]);
+            setStreamingMessage('');
         }
     }, [streamingMessage]);
 
@@ -611,6 +736,8 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         generateImage,
         saveToHistory,
         loadHistory,
+        deleteHistory,
+        hydrateMessages,
         startNewChat,
         fadeAnim,
     };

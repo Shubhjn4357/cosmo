@@ -10,6 +10,7 @@ import { borderRadius, fontSize, spacing, useTheme } from '@/constants/theme';
 import { useAIRuntime } from '@/hooks';
 import deviceWarnings, { type DeviceResources, type ModelCompatibility } from '@/services/deviceWarnings';
 import llmBackend from '@/services/llmBackend';
+import { whisperAPI } from '@/services/api';
 import { MODEL_MODE_DESCRIPTIONS, MODEL_MODE_LABELS, type ModelType } from '@/types';
 import { ensureModelsDirectoryExists, getModelsDirectory, getModelsDirectoryWithProtocol } from '@/utils/modelPaths';
 
@@ -23,6 +24,10 @@ interface LocalModel {
     isDownloaded: boolean;
     filePath?: string;
     minSizeBytes: number;
+    filename: string;
+    adult?: boolean;
+    recommended?: boolean;
+    roles?: string[];
 }
 
 interface ModelDeviceAdvice {
@@ -33,13 +38,6 @@ interface ModelDeviceAdvice {
 }
 
 const GB = 1024 * 1024 * 1024;
-const AVAILABLE_MODELS: LocalModel[] = [
-    { id: 'tinyllama-1.1b-q4', name: 'TinyLlama 1.1B (Q4)', size: '669 MB', minSizeBytes: 600 * 1024 * 1024, type: 'chat', description: 'Fastest model. Great for basic chat and quick responses.', downloadUrl: 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf', isDownloaded: false },
-    { id: 'tinyllama-1.1b-q2', name: 'TinyLlama 1.1B (Q2)', size: '450 MB', minSizeBytes: 400 * 1024 * 1024, type: 'chat', description: 'Ultra-compressed version. Very fast, minimal quality loss.', downloadUrl: 'https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q2_K.gguf', isDownloaded: false },
-    { id: 'stablelm-zephyr-3b-q4', name: 'StableLM Zephyr 3B (Q4)', size: '1.9 GB', minSizeBytes: Math.round(1.5 * GB), type: 'chat', description: 'Excellent quality for size. Fast and capable.', downloadUrl: 'https://huggingface.co/TheBloke/stablelm-zephyr-3b-GGUF/resolve/main/stablelm-zephyr-3b.Q4_K_M.gguf', isDownloaded: false },
-    { id: 'llama-3.2-1b-q4', name: 'Llama 3.2 1B (Q4)', size: '750 MB', minSizeBytes: 700 * 1024 * 1024, type: 'chat', description: "Meta's latest 1B model. Excellent quality for on-device.", downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf', isDownloaded: false },
-    { id: 'llama-3.2-1b-q2', name: 'Llama 3.2 1B (Q2)', size: '500 MB', minSizeBytes: 450 * 1024 * 1024, type: 'chat', description: 'Compressed Llama 3.2. Very fast with good quality.', downloadUrl: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q2_K.gguf', isDownloaded: false },
-];
 
 const MODE_ICONS: Record<ModelType, keyof typeof Ionicons.glyphMap> = {
     cloud: 'globe-outline',
@@ -56,7 +54,8 @@ export default function ModelsScreen() {
     const { theme } = useTheme();
     const toast = useToast();
     const { mode, setMode, cloudModel } = useAIRuntime();
-    const [models, setModels] = useState<LocalModel[]>(AVAILABLE_MODELS);
+    const [models, setModels] = useState<LocalModel[]>([]);
+    const [modelsLoading, setModelsLoading] = useState(true);
     const [deviceResources, setDeviceResources] = useState<DeviceResources | null>(null);
     const [compatibilityByModel, setCompatibilityByModel] = useState<Record<string, ModelCompatibility>>({});
     const [downloading, setDownloading] = useState<string | null>(null);
@@ -65,12 +64,18 @@ export default function ModelsScreen() {
     const [activeModelPath, setActiveModelPath] = useState<string | null>(null);
     const modelsPathWithProtocol = getModelsDirectoryWithProtocol();
     const modelsPath = getModelsDirectory();
+    const isModelStorageReady = Boolean(modelsPathWithProtocol && modelsPath);
 
     useEffect(() => {
-        void checkDownloadedModels();
+        if (!isModelStorageReady) {
+            toast.error('Storage Unavailable', 'Local model storage is not ready on this device.');
+            return;
+        }
+
+        void loadApprovedModels();
         refreshActiveModel();
         void refreshDeviceResources();
-    }, []);
+    }, [isModelStorageReady]);
 
     useEffect(() => {
         let cancelled = false;
@@ -102,7 +107,52 @@ export default function ModelsScreen() {
         setActiveModelPath(llmBackend.getCurrentBackendType() === 'local' ? currentPath : null);
     };
 
-    const checkDownloadedModels = async () => {
+    const formatSizeLabel = (sizeMb: number) => {
+        if (sizeMb >= 1024) {
+            return `${(sizeMb / 1024).toFixed(1)} GB`;
+        }
+        return `${sizeMb} MB`;
+    };
+
+    const mapServerModelToLocalModel = (model: any): LocalModel => ({
+        id: model.id,
+        name: model.name,
+        size: formatSizeLabel(model.size_mb || 0),
+        type: 'chat',
+        description: model.description,
+        downloadUrl: model.download_url,
+        isDownloaded: false,
+        filePath: undefined,
+        minSizeBytes: Math.max((model.size_mb || 0) * 1024 * 1024, 1024),
+        filename: model.filename || `${model.id}.gguf`,
+        adult: !!model.adult,
+        recommended: !!model.recommended,
+        roles: model.roles || [],
+    });
+
+    const loadApprovedModels = async () => {
+        setModelsLoading(true);
+        try {
+            const serverModels = await whisperAPI.getLLMModels();
+            const approvedLocalModels = serverModels
+                .filter((model) => model.provider === 'downloadable' && model.supports_local !== false && !!model.download_url)
+                .map(mapServerModelToLocalModel);
+            setModels(approvedLocalModels);
+            await checkDownloadedModels(approvedLocalModels);
+        } catch (error) {
+            console.error('Failed to load approved models:', error);
+            toast.error('Model List Failed', 'Could not load the approved model catalog from the server.');
+            setModels([]);
+        } finally {
+            setModelsLoading(false);
+        }
+    };
+
+    const checkDownloadedModels = async (sourceModels: LocalModel[] = models) => {
+        if (!isModelStorageReady) {
+            return;
+        }
+
         try {
             await ensureModelsDirectoryExists();
             const contents = await FileSystem.readDirectoryAsync(modelsPathWithProtocol);
@@ -111,8 +161,8 @@ export default function ModelsScreen() {
                 fileUri: `${modelsPathWithProtocol}${name}`,
                 configPath: `${modelsPath}${name}`,
             }));
-            const resolved = await Promise.all(AVAILABLE_MODELS.map(async (model) => {
-                const match = files.find((file) => file.name === `${model.id}.gguf`);
+            const resolved = await Promise.all(sourceModels.map(async (model) => {
+                const match = files.find((file) => file.name === model.filename || file.name === `${model.id}.gguf`);
                 if (!match) return { ...model, isDownloaded: false, filePath: undefined };
                 const info = await FileSystem.getInfoAsync(match.fileUri);
                 if (!info.exists || info.isDirectory || info.size < (model.minSizeBytes || 1024)) {
@@ -129,6 +179,11 @@ export default function ModelsScreen() {
     };
 
     const importModel = async () => {
+        if (!isModelStorageReady) {
+            toast.error('Storage Unavailable', 'Local model storage is not ready on this device.');
+            return;
+        }
+
         try {
             const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: false });
             if (result.canceled || !result.assets?.[0]) return;
@@ -153,12 +208,17 @@ export default function ModelsScreen() {
 
     const downloadModel = async (model: LocalModel) => {
         if (!model.downloadUrl) return;
+        if (!isModelStorageReady) {
+            toast.error('Storage Unavailable', 'Local model storage is not ready on this device.');
+            return;
+        }
+
         try {
             setDownloading(model.id);
             setDownloadProgress(0);
             await ensureModelsDirectoryExists();
             toast.info('Downloading', `Downloading ${model.name}...`);
-            const resumable = FileSystem.createDownloadResumable(model.downloadUrl, `${modelsPathWithProtocol}${model.id}.gguf`, {}, (progress) => {
+            const resumable = FileSystem.createDownloadResumable(model.downloadUrl, `${modelsPathWithProtocol}${model.filename}`, {}, (progress) => {
                 const total = progress.totalBytesExpectedToWrite || 1;
                 setDownloadProgress((progress.totalBytesWritten / total) * 100);
             });
@@ -167,12 +227,12 @@ export default function ModelsScreen() {
             const info = await FileSystem.getInfoAsync(result.uri);
             if (!info.exists || info.size < (model.minSizeBytes || 100)) throw new Error('Download incomplete or file corrupted');
             toast.success('Downloaded', `${model.name} is ready to use`);
-            await checkDownloadedModels();
+            await checkDownloadedModels(models);
         } catch (error) {
             console.error('Download error:', error);
             toast.error('Download Failed', 'Please check your connection and try again');
             try {
-                const fileUri = `${modelsPathWithProtocol}${model.id}.gguf`;
+                const fileUri = `${modelsPathWithProtocol}${model.filename}`;
                 const info = await FileSystem.getInfoAsync(fileUri);
                 if (info.exists) await FileSystem.deleteAsync(fileUri);
             } catch {}
@@ -183,6 +243,11 @@ export default function ModelsScreen() {
     };
 
     const deleteModel = async (model: LocalModel) => {
+        if (!isModelStorageReady) {
+            toast.error('Storage Unavailable', 'Local model storage is not ready on this device.');
+            return;
+        }
+
         Alert.alert('Delete Model', `Remove ${model.name} (${model.size})?`, [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -195,7 +260,7 @@ export default function ModelsScreen() {
                         await FileSystem.deleteAsync(fileUri);
                         if (activeModelPath === model.filePath) setActiveModelPath(null);
                         toast.success('Deleted', `${model.name} removed`);
-                        await checkDownloadedModels();
+                        await checkDownloadedModels(models);
                     } catch (error) {
                         console.error('Delete error:', error);
                         toast.error('Error', 'Failed to delete model');
@@ -249,12 +314,19 @@ export default function ModelsScreen() {
             <View style={[styles.card, { backgroundColor: isRunning ? theme.colors.surfaceLight : theme.colors.surface, borderColor: isRunning ? theme.colors.primary : theme.colors.surfaceBorder }]}>
                 <View style={styles.cardHeader}>
                     <View style={styles.modelInfo}>
-                        <Text style={[styles.modelName, { color: theme.colors.text }]}>{item.name}</Text>
+                        <Text style={[styles.modelName, { color: theme.colors.text }]}>
+                            {item.name}{item.adult ? ' 18+' : ''}
+                        </Text>
                         <Text style={[styles.modelSize, { color: theme.colors.textSecondary }]}>{item.size} | {item.type === 'chat' ? 'Chat' : 'Image'}</Text>
                     </View>
                     {item.isDownloaded && <View style={[styles.badge, { backgroundColor: `${theme.colors.success}20` }]}><Ionicons name="checkmark-circle" size={16} color={theme.colors.success} /><Text style={[styles.badgeText, { color: theme.colors.success }]}>Downloaded</Text></View>}
                 </View>
                 <Text style={[styles.description, { color: theme.colors.textSecondary }]}>{item.description}</Text>
+                {item.roles && item.roles.length > 0 && (
+                    <Text style={[styles.deviceMeta, { color: theme.colors.textMuted, marginBottom: spacing.sm }]}>
+                        Roles: {item.roles.join(', ')}
+                    </Text>
+                )}
                 {advice && tone && <View style={[styles.advice, { backgroundColor: tone.bg, borderColor: tone.border }]}><View style={styles.adviceHeader}><Ionicons name={tone.icon} size={16} color={tone.text} /><Text style={[styles.adviceLabel, { color: tone.text }]}>{advice.label}</Text></View><Text style={[styles.adviceText, { color: theme.colors.textSecondary }]}>{advice.detail}</Text>{advice.recommendation && <Text style={[styles.adviceMeta, { color: theme.colors.textMuted }]}>{advice.recommendation}</Text>}</View>}
                 {isDownloading && <View style={styles.progressContainer}><View style={[styles.progressBar, { backgroundColor: theme.colors.surfaceLight }]}><View style={[styles.progressFill, { backgroundColor: theme.colors.primary, width: `${downloadProgress}%` }]} /></View><Text style={[styles.progressText, { color: theme.colors.textMuted }]}>{downloadProgress.toFixed(0)}%</Text></View>}
                 <View style={styles.cardActions}>
@@ -302,6 +374,16 @@ export default function ModelsScreen() {
                 <Text style={[styles.title, { color: theme.colors.text }]}>Local Models</Text>
                 <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>Download models to use offline without cloud tokens.</Text>
             </View>
+            {!isModelStorageReady && (
+                <View style={styles.section}>
+                    <View style={[styles.deviceCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.error }]}>
+                        <Text style={[styles.deviceTitle, { color: theme.colors.text }]}>Model storage unavailable</Text>
+                        <Text style={[styles.deviceSummary, { color: theme.colors.textSecondary }]}>
+                            This build could not resolve a writable file-system directory for local models.
+                        </Text>
+                    </View>
+                </View>
+            )}
             {deviceResources && <View style={styles.section}><View style={[styles.deviceCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}><Text style={[styles.deviceTitle, { color: theme.colors.text }]}>Device Fit</Text><Text style={[styles.deviceSummary, { color: theme.colors.textSecondary }]}>{`${deviceResources.deviceType} profile | ${deviceResources.totalRam.toFixed(1)} GB RAM | target max ${deviceResources.maxModelSize.toFixed(1)} GB`}</Text><Text style={[styles.deviceMeta, { color: theme.colors.textMuted }]}>{`Available RAM ${deviceResources.availableRam.toFixed(1)} GB | thermal ${deviceResources.thermalState}`}</Text></View></View>}
             <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>AI Modes</Text>
@@ -319,8 +401,17 @@ export default function ModelsScreen() {
                     })}
                 </View>
             </View>
-            <TouchableOpacity style={[styles.importButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]} onPress={() => { void importModel(); }}><Ionicons name="cloud-upload-outline" size={20} color={theme.colors.primary} /><Text style={[styles.importText, { color: theme.colors.text }]}>Import Model from Storage</Text></TouchableOpacity>
-            <FlatList data={rankedModels} renderItem={renderModelCard} keyExtractor={(item) => item.id} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} />
+            <TouchableOpacity style={[styles.importButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }, !isModelStorageReady && styles.importButtonDisabled]} onPress={() => { void importModel(); }} disabled={!isModelStorageReady}><Ionicons name="cloud-upload-outline" size={20} color={theme.colors.primary} /><Text style={[styles.importText, { color: theme.colors.text }]}>Import Model from Storage</Text></TouchableOpacity>
+            {modelsLoading ? (
+                <View style={[styles.section, { alignItems: 'center' }]}>
+                    <ActivityIndicator color={theme.colors.primary} />
+                    <Text style={[styles.sectionSubtitle, { color: theme.colors.textSecondary }]}>
+                        Loading approved model catalog...
+                    </Text>
+                </View>
+            ) : (
+                <FlatList data={rankedModels} renderItem={renderModelCard} keyExtractor={(item) => item.id} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} />
+            )}
         </SafeAreaView>
     );
 }
@@ -338,6 +429,7 @@ const styles = StyleSheet.create({
     deviceSummary: { fontSize: fontSize.sm, lineHeight: 20 },
     deviceMeta: { fontSize: fontSize.xs },
     importButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: spacing.md, marginHorizontal: spacing.lg, marginBottom: spacing.md, borderRadius: borderRadius.lg, borderWidth: 1, borderStyle: 'dashed', gap: spacing.sm },
+    importButtonDisabled: { opacity: 0.5 },
     importText: { fontSize: fontSize.md, fontWeight: '500' },
     modeGrid: { gap: spacing.sm, marginTop: spacing.md },
     modeCard: { borderWidth: 1, borderRadius: borderRadius.lg, padding: spacing.md, gap: spacing.xs },

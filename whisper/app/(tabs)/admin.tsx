@@ -11,13 +11,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as DocumentPicker from 'expo-document-picker';
 import { useTheme } from '../../constants/theme';
 import { spacing, fontSize, borderRadius } from '../../constants/theme';
-import WhisperAPI from '../../services/api';
 import { useToast } from '@/components/Toast';
-import { UserManagement } from '@/components/Admin/UserManagement';
-import { SubscriptionManagement } from '@/components/Admin/SubscriptionManagement';
-import { ModelManagement } from '@/components/Admin/ModelManagement';
 
 interface Analytics {
     analytics: {
@@ -55,6 +52,16 @@ interface Analytics {
     };
 }
 
+interface DatasetRecord {
+    name: string;
+    path?: string;
+    size_bytes: number;
+    modified_at?: number;
+    rows?: number | null;
+}
+
+const DEFAULT_SERVER_URL = 'https://shubhjn-whisper-ai.hf.space';
+
 export default function AdminScreen() {
     const { theme } = useTheme();
     const toast = useToast();
@@ -65,8 +72,13 @@ export default function AdminScreen() {
     const [checkingAuth, setCheckingAuth] = useState(true);
     const [analytics, setAnalytics] = useState<Analytics | null>(null);
     const [refreshing, setRefreshing] = useState(false);
-    const [serverUrl, setServerUrl] = useState('');
+    const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
     const [generatorRunning, setGeneratorRunning] = useState(false);
+    const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
+    const [datasetDir, setDatasetDir] = useState('');
+    const [datasetsLoading, setDatasetsLoading] = useState(false);
+    const [datasetUploading, setDatasetUploading] = useState(false);
+    const [datasetSyncing, setDatasetSyncing] = useState<string | null>(null);
     const [services, setServices] = useState({
         horde: true,
         huggingface: false,
@@ -75,29 +87,45 @@ export default function AdminScreen() {
         vision: true,
     });
     const [showServices, setShowServices] = useState(false);
-    const [showModels, setShowModels] = useState(false);
-    const [showUsers, setShowUsers] = useState(false);
-    const [showSubscriptions, setShowSubscriptions] = useState(false);
-    const [adminToken, setAdminToken] = useState('admin-temp-token');
-
-
     useEffect(() => {
-        checkAuth();
-        loadServerUrl();
+        void initializeAdmin();
     }, []);
 
     useEffect(() => {
-        if (isLoggedIn) {
-            fetchAnalytics();
+        if (isLoggedIn && serverUrl) {
+            void loadDashboardData();
             fetchSettings();
-            const interval = setInterval(fetchAnalytics, 30000); // Refresh every 30s
+            const interval = setInterval(() => {
+                void loadDashboardData();
+            }, 30000);
             return () => clearInterval(interval);
         }
-    }, [isLoggedIn]);
+    }, [isLoggedIn, serverUrl]);
+
+    const readJson = async (response: Response) => {
+        try {
+            return await response.json();
+        } catch {
+            return {};
+        }
+    };
+
+    const initializeAdmin = async () => {
+        const url = await loadServerUrl();
+        setServerUrl(url);
+        await checkAuth(url);
+    };
+
+    const loadDashboardData = async () => {
+        await Promise.all([
+            fetchAnalytics(),
+            fetchDatasets(),
+        ]);
+    };
 
     const loadServerUrl = async () => {
         const url = await AsyncStorage.getItem('serverUrl');
-        setServerUrl(url || 'https://shubhjn-whisper-ai.hf.space');
+        return url || DEFAULT_SERVER_URL;
     };
 
     const saveServerUrl = async (url: string) => {
@@ -106,20 +134,21 @@ export default function AdminScreen() {
         toast.success('Saved', 'Server URL updated');
     };
 
-    const checkAuth = async () => {
+    const checkAuth = async (baseUrl: string) => {
         try {
             const token = await AsyncStorage.getItem('adminToken');
             if (token) {
-                // Verify token is still valid
-                const response = await fetch(`${serverUrl}/api/auth/verify`, {
+                const response = await fetch(`${baseUrl}/api/auth/verify`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (response.ok) {
                     setIsLoggedIn(true);
+                } else {
+                    await AsyncStorage.removeItem('adminToken');
                 }
             }
         } catch (e) {
-            // Token invalid or expired
+            await AsyncStorage.removeItem('adminToken');
         }
         setCheckingAuth(false);
     };
@@ -157,6 +186,8 @@ export default function AdminScreen() {
         await AsyncStorage.removeItem('adminToken');
         setIsLoggedIn(false);
         setAnalytics(null);
+        setDatasets([]);
+        setDatasetDir('');
     };
 
     const fetchAnalytics = async () => {
@@ -175,9 +206,42 @@ export default function AdminScreen() {
         }
     };
 
+    const fetchDatasets = async (showLoader = false) => {
+        if (!serverUrl) {
+            return;
+        }
+
+        if (showLoader) {
+            setDatasetsLoading(true);
+        }
+
+        try {
+            const token = await AsyncStorage.getItem('adminToken');
+            const response = await fetch(`${serverUrl}/api/datasets`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const data = await readJson(response);
+
+            if (response.ok) {
+                setDatasets(data.datasets || []);
+                setDatasetDir(data.dataset_dir || '');
+            } else if (showLoader) {
+                toast.error('Dataset Error', data.detail || data.error || 'Could not load datasets');
+            }
+        } catch (e) {
+            if (showLoader) {
+                toast.error('Dataset Error', 'Could not connect to dataset service');
+            }
+        } finally {
+            if (showLoader) {
+                setDatasetsLoading(false);
+            }
+        }
+    };
+
     const onRefresh = async () => {
         setRefreshing(true);
-        await fetchAnalytics();
+        await loadDashboardData();
         await fetchSettings();
         setRefreshing(false);
     };
@@ -190,6 +254,142 @@ export default function AdminScreen() {
         // } catch (e) {
         //     // console.log('Could not fetch settings');
         // }
+    };
+
+    const formatBytes = (bytes?: number) => {
+        if (!bytes || bytes <= 0) {
+            return '0 B';
+        }
+
+        const units = ['B', 'KB', 'MB', 'GB'];
+        const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const scaled = bytes / (1024 ** index);
+        const precision = scaled >= 10 || index === 0 ? 0 : 1;
+        return `${scaled.toFixed(precision)} ${units[index]}`;
+    };
+
+    const formatTimestamp = (timestamp?: number) => {
+        if (!timestamp) {
+            return 'Unknown';
+        }
+
+        try {
+            return new Date(timestamp * 1000).toLocaleString();
+        } catch {
+            return 'Unknown';
+        }
+    };
+
+    const uploadDatasets = async () => {
+        if (!serverUrl || datasetUploading) {
+            return;
+        }
+
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
+                multiple: true,
+                copyToCacheDirectory: true,
+                type: '*/*',
+            });
+
+            if (result.canceled || !result.assets?.length) {
+                return;
+            }
+
+            const token = await AsyncStorage.getItem('adminToken');
+            const uploadToastId = toast.loading('Uploading Datasets', `${result.assets.length} file(s) selected`);
+            const failures: string[] = [];
+            let uploaded = 0;
+
+            setDatasetUploading(true);
+
+            for (const [index, file] of result.assets.entries()) {
+                toast.update(uploadToastId, {
+                    message: `Uploading ${index + 1}/${result.assets.length}: ${file.name}`,
+                });
+
+                const formData = new FormData();
+                formData.append('file', {
+                    uri: file.uri,
+                    name: file.name || `dataset-${index + 1}`,
+                    type: file.mimeType || 'application/octet-stream',
+                } as any);
+
+                const response = await fetch(`${serverUrl}/api/datasets/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                    },
+                    body: formData,
+                });
+
+                const data = await readJson(response);
+                if (response.ok) {
+                    uploaded += 1;
+                } else {
+                    failures.push(`${file.name}: ${data.detail || data.error || 'Upload failed'}`);
+                }
+            }
+
+            await fetchDatasets();
+
+            if (failures.length === 0) {
+                toast.update(uploadToastId, {
+                    type: 'success',
+                    title: 'Datasets Uploaded',
+                    message: `${uploaded} file(s) added to the dataset store`,
+                    duration: 4000,
+                });
+            } else if (uploaded > 0) {
+                toast.update(uploadToastId, {
+                    type: 'warning',
+                    title: 'Partial Upload',
+                    message: `${uploaded} uploaded, ${failures.length} failed`,
+                    duration: 5000,
+                });
+                toast.warning('Upload Warning', failures[0]);
+            } else {
+                toast.update(uploadToastId, {
+                    type: 'error',
+                    title: 'Upload Failed',
+                    message: failures[0] || 'No files were uploaded',
+                    duration: 5000,
+                });
+            }
+        } catch (e) {
+            toast.error('Upload Failed', 'Could not upload selected dataset files');
+        } finally {
+            setDatasetUploading(false);
+        }
+    };
+
+    const syncDataset = async (datasetName: string) => {
+        if (!serverUrl || datasetSyncing === datasetName) {
+            return;
+        }
+
+        setDatasetSyncing(datasetName);
+        try {
+            const token = await AsyncStorage.getItem('adminToken');
+            const response = await fetch(`${serverUrl}/api/datasets/sync/${encodeURIComponent(datasetName)}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+            const data = await readJson(response);
+
+            if (response.ok) {
+                const repoLabel = data.repo_id ? ` to ${data.repo_id}` : '';
+                toast.success('Dataset Synced', `${datasetName} synced${repoLabel}`);
+            } else {
+                toast.error('Sync Failed', data.detail || data.error || 'Could not sync dataset');
+            }
+        } catch (e) {
+            toast.error('Sync Failed', 'Could not connect to the dataset sync service');
+        } finally {
+            setDatasetSyncing(null);
+        }
     };
 
 
@@ -425,6 +625,109 @@ export default function AdminScreen() {
                 </View>
             </View>
 
+            {/* Dataset Feed */}
+            <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+                <View style={styles.datasetSectionHeader}>
+                    <View style={styles.datasetSectionTitle}>
+                        <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 0 }]}>
+                            Dataset Feed
+                        </Text>
+                        <Text style={[styles.datasetSectionSubtitle, { color: theme.colors.textSecondary }]}>
+                            Upload training files and sync curated datasets from the app.
+                        </Text>
+                    </View>
+                    <View style={styles.datasetHeaderActions}>
+                        <TouchableOpacity
+                            style={[styles.smallActionButton, { backgroundColor: theme.colors.primary }]}
+                            onPress={uploadDatasets}
+                            disabled={datasetUploading}
+                        >
+                            {datasetUploading ? (
+                                <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                                <>
+                                    <Ionicons name="cloud-upload-outline" size={16} color="#fff" />
+                                    <Text style={styles.smallActionButtonText}>Upload</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.iconActionButton, { borderColor: theme.colors.surfaceBorder }]}
+                            onPress={() => fetchDatasets(true)}
+                            disabled={datasetsLoading || datasetUploading}
+                        >
+                            <Ionicons name="refresh" size={18} color={theme.colors.text} />
+                        </TouchableOpacity>
+                    </View>
+                </View>
+
+                {!!datasetDir && (
+                    <Text style={[styles.datasetDirectory, { color: theme.colors.textMuted }]}>
+                        Store: {datasetDir}
+                    </Text>
+                )}
+
+                {datasetsLoading && datasets.length === 0 ? (
+                    <View style={styles.datasetLoader}>
+                        <ActivityIndicator size="small" color={theme.colors.primary} />
+                    </View>
+                ) : null}
+
+                {!datasets.length && !datasetsLoading ? (
+                    <Text style={[styles.emptyStateText, { color: theme.colors.textSecondary }]}>
+                        No datasets uploaded yet.
+                    </Text>
+                ) : null}
+
+                {datasets.map((dataset) => (
+                    <View
+                        key={dataset.name}
+                        style={[
+                            styles.datasetItem,
+                            {
+                                backgroundColor: theme.colors.background,
+                                borderColor: theme.colors.surfaceBorder,
+                            },
+                        ]}
+                    >
+                        <View style={styles.datasetItemHeader}>
+                            <View style={styles.datasetCopy}>
+                                <Text style={[styles.datasetName, { color: theme.colors.text }]}>
+                                    {dataset.name}
+                                </Text>
+                                <Text style={[styles.datasetMeta, { color: theme.colors.textSecondary }]}>
+                                    Rows: {dataset.rows ?? 'n/a'} • Size: {formatBytes(dataset.size_bytes)}
+                                </Text>
+                                <Text style={[styles.datasetMeta, { color: theme.colors.textMuted }]}>
+                                    Updated: {formatTimestamp(dataset.modified_at)}
+                                </Text>
+                            </View>
+
+                            <TouchableOpacity
+                                style={[
+                                    styles.syncButton,
+                                    {
+                                        backgroundColor: theme.colors.primary,
+                                        opacity: datasetSyncing === dataset.name ? 0.75 : 1,
+                                    },
+                                ]}
+                                onPress={() => syncDataset(dataset.name)}
+                                disabled={datasetSyncing === dataset.name}
+                            >
+                                {datasetSyncing === dataset.name ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <>
+                                        <Ionicons name="cloud-done-outline" size={16} color="#fff" />
+                                        <Text style={styles.syncButtonText}>Sync</Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                ))}
+            </View>
+
             {/* Request Analytics */}
             <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
                 <Text style={[styles.cardTitle, { color: theme.colors.text }]}>Analytics</Text>
@@ -620,6 +923,99 @@ const styles = StyleSheet.create({
     serverUrlContainer: {
         width: '100%',
         marginTop: spacing.xl,
+    },
+    datasetSectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: spacing.md,
+        marginBottom: spacing.sm,
+    },
+    datasetSectionTitle: {
+        flex: 1,
+        gap: spacing.xs,
+    },
+    datasetSectionSubtitle: {
+        fontSize: fontSize.sm,
+        lineHeight: 18,
+    },
+    datasetHeaderActions: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+        alignItems: 'flex-start',
+    },
+    smallActionButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.xs,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.md,
+        minWidth: 92,
+    },
+    smallActionButtonText: {
+        color: '#fff',
+        fontSize: fontSize.sm,
+        fontWeight: '600',
+    },
+    iconActionButton: {
+        width: 40,
+        height: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderRadius: borderRadius.md,
+    },
+    datasetDirectory: {
+        fontSize: fontSize.xs,
+        marginBottom: spacing.sm,
+    },
+    datasetLoader: {
+        paddingVertical: spacing.md,
+        alignItems: 'center',
+    },
+    emptyStateText: {
+        fontSize: fontSize.sm,
+        paddingVertical: spacing.sm,
+    },
+    datasetItem: {
+        borderWidth: 1,
+        borderRadius: borderRadius.md,
+        padding: spacing.md,
+        marginTop: spacing.sm,
+    },
+    datasetItemHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: spacing.md,
+    },
+    datasetCopy: {
+        flex: 1,
+        gap: spacing.xs,
+    },
+    datasetName: {
+        fontSize: fontSize.md,
+        fontWeight: '600',
+    },
+    datasetMeta: {
+        fontSize: fontSize.xs,
+        lineHeight: 16,
+    },
+    syncButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.xs,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.md,
+        minWidth: 76,
+        alignSelf: 'center',
+    },
+    syncButtonText: {
+        color: '#fff',
+        fontSize: fontSize.sm,
+        fontWeight: '600',
     },
     label: {
         fontSize: fontSize.sm,

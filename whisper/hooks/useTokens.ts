@@ -3,9 +3,8 @@
  * Manages token balance, checks, and warnings
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useAuth } from './useAuth';
-import { profileAPI } from '@/services/profileAPI';
 
 export interface TokenInfo {
     tokensUsed: number;
@@ -16,77 +15,30 @@ export interface TokenInfo {
 }
 
 export function useTokens() {
-    const { user, profile, refreshProfile } = useAuth();
-    const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
-    const [isChecking, setIsChecking] = useState(false);
-
-    // Update token info from profile
-    useEffect(() => {
-        if (profile) {
-            const tokensUsed = profile.tokens_used || 0;
-            const tokensLimit = profile.tokens_limit || 20;
-            const tokensRemaining = Math.max(0, tokensLimit - tokensUsed);
-            const isLow = tokensRemaining / tokensLimit < 0.2;
-
-            setTokenInfo({
-                tokensUsed,
-                tokensLimit,
-                tokensRemaining,
-                isLow,
-                tier: profile.subscription_tier || 'free',
-            });
-        }
-    }, [profile]);
+    const { refreshProfile } = useAuth();
+    const [tokenInfo] = useState<TokenInfo | null>(null);
+    const [isChecking] = useState(false);
 
     /**
      * Check if user has enough tokens for an action
      */
     const checkTokens = useCallback(
-        async (requiredTokens: number): Promise<boolean> => {
-            if (!tokenInfo) return false;
-            return tokenInfo.tokensRemaining >= requiredTokens;
-        },
-        [tokenInfo]
+        async (_requiredTokens: number): Promise<boolean> => true,
+        []
     );
 
     /**
      * Use tokens for an action (calls backend)
      */
     const useTokens = useCallback(
-        async (amount: number): Promise<boolean> => {
-            if (!user?.id) return false;
-
-            setIsChecking(true);
-            try {
-                const success = await profileAPI.useTokens(user.id, amount);
-                if (success) {
-                    await refreshProfile();
-                }
-                return success;
-            } catch (error) {
-                console.error('Failed to use tokens:', error);
-                return false;
-            } finally {
-                setIsChecking(false);
-            }
-        },
-        [user, refreshProfile]
+        async (_amount: number): Promise<boolean> => true,
+        []
     );
 
     /**
      * Get token cost for an action type
      */
-    const getTokenCost = useCallback((action: string): number => {
-        const costs: Record<string, number> = {
-            chat: 1,
-            image: 5,
-            file_analysis: 2,
-            face_swap: 3,
-            upscale: 3,
-            smart_mode: 2,
-        };
-        return costs[action] || 1;
-    }, []);
+    const getTokenCost = useCallback((_action: string): number => 0, []);
 
     return {
         tokenInfo,

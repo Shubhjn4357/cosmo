@@ -11,7 +11,6 @@ export {
     authAPI,
     profileAPI,
     historyAPI,
-    subscriptionAPI,
     type UserProfile,
     type ChatHistory,
     type AuthSession,

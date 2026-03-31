@@ -28,62 +28,17 @@ class SmartChatResponse(BaseModel):
 async def smart_chat(request: SmartChatRequest) -> SmartChatResponse:
     """
     Smart Mode: Races multiple AI providers and returns best response
-    **Pro Feature Only** - Requires Pro subscription
     Providers: Gemini, HuggingFace, AI Horde, Local LLM
     """
     from services.smart_mode_service import SmartModeService
-    from services.token_service import check_and_use_tokens
-    from api.routes.profile import get_supabase
-    
     supabase = None
-
-    # PRO SUBSCRIPTION CHECK - Smart Mode is Pro-only
     if request.user_id:
         try:
+            from api.routes.profile import get_supabase
+
             supabase = get_supabase()
-            
-            # Check subscription tier
-            profile_result = supabase.table("profiles").select("subscription_tier").eq("id", request.user_id).execute()
-            
-            if not profile_result.data:
-                raise HTTPException(
-                    status_code=404,
-                    detail="User profile not found"
-                )
-            
-            subscription_tier = profile_result.data[0].get("subscription_tier", "free")
-            
-            if subscription_tier != "pro":
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "error": "Smart Mode is a Pro feature",
-                        "message": "Upgrade to Pro to access Smart Mode with multi-provider AI racing",
-                        "feature": "smart_mode",
-                        "required_tier": "pro",
-                        "current_tier": subscription_tier
-                    }
-                )
-            
-            # Check tokens for Pro users
-            token_result = await check_and_use_tokens(
-                supabase=supabase,
-                feature='smart_mode',
-                is_local=False,
-                is_smart=True,
-                user_id=request.user_id
-            )
-            
-            if not token_result['success']:
-                raise HTTPException(
-                    status_code=429,
-                    detail=token_result.get('message', 'Insufficient tokens')
-                )
-        except HTTPException:
-            raise
         except Exception as e:
-            # If checks fail, log but continue (graceful degradation)
-            print(f"Subscription/token check failed: {e}")
+            print(f"Profile lookup unavailable: {e}")
     
     # Initialize Smart Mode with all available keys
     gemini_key = os.getenv('GEMINI_API_KEY')

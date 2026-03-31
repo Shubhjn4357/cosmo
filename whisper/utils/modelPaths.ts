@@ -6,25 +6,26 @@
 
 import * as FileSystem from 'expo-file-system/legacy';
 
+function getBaseDirectory(): string | null {
+    return FileSystem.documentDirectory || FileSystem.cacheDirectory || null;
+}
+
+function stripFileProtocol(path: string): string {
+    return path.startsWith('file://') ? path.replace('file://', '') : path;
+}
+
 /**
  * Get the runtime models directory path
  * This is the SINGLE SOURCE OF TRUTH for model storage
  * Returns a clean path without file:// prefix
  */
 export function getModelsDirectory(): string {
-    // Use cacheDirectory for temporary/downloaded files
-    // This resolves to the correct path at runtime for each platform
-    let baseDir = FileSystem.cacheDirectory;
+    const baseDir = getBaseDirectory();
     if (!baseDir) {
-        throw new Error('FileSystem.cacheDirectory is not available');
+        return '';
     }
 
-    // Strip file:// prefix if present for consistency
-    if (baseDir.startsWith('file://')) {
-        baseDir = baseDir.replace('file://', '');
-    }
-
-    return `${baseDir}models/`;
+    return `${stripFileProtocol(baseDir)}models/`;
 }
 
 /**
@@ -32,9 +33,9 @@ export function getModelsDirectory(): string {
  * FileSystem methods require the file:// prefix
  */
 export function getModelsDirectoryWithProtocol(): string {
-    const baseDir = FileSystem.cacheDirectory;
+    const baseDir = getBaseDirectory();
     if (!baseDir) {
-        throw new Error('FileSystem.cacheDirectory is not available');
+        return '';
     }
     return `${baseDir}models/`;
 }
@@ -46,13 +47,14 @@ export function getModelsDirectoryWithProtocol(): string {
  * @param withProtocol - If true, returns path with file:// for FileSystem operations
  */
 export function getModelFilePath(modelId: string, withProtocol: boolean = false): string {
+    const baseDir = getBaseDirectory();
+    if (!baseDir) {
+        return '';
+    }
+
     if (withProtocol) {
-        // Return with file:// for FileSystem operations
-        const baseDir = FileSystem.cacheDirectory;
-        if (!baseDir) throw new Error('FileSystem.cacheDirectory is not available');
         return `${baseDir}models/${modelId}.gguf`;
     } else {
-        // Return sanitized path for config/display
         const modelsDir = getModelsDirectory();
         return `${modelsDir}${modelId}.gguf`;
     }
@@ -63,13 +65,11 @@ export function getModelFilePath(modelId: string, withProtocol: boolean = false)
  * Creates it if necessary
  */
 export async function ensureModelsDirectoryExists(): Promise<void> {
-    // Get the base directory WITH file:// for FileSystem operations
-    let baseDirWithProtocol = FileSystem.cacheDirectory;
+    const baseDirWithProtocol = getBaseDirectory();
     if (!baseDirWithProtocol) {
-        throw new Error('FileSystem.cacheDirectory is not available');
+        return;
     }
 
-    // FileSystem operations need the file:// protocol
     const modelsDirWithProtocol = `${baseDirWithProtocol}models/`;
 
     try {
@@ -89,7 +89,7 @@ export async function ensureModelsDirectoryExists(): Promise<void> {
  * List all downloaded model files
  */
 export async function listDownloadedModels(): Promise<string[]> {
-    const baseDir = FileSystem.cacheDirectory;
+    const baseDir = getBaseDirectory();
     if (!baseDir) return [];
     const modelsDirWithProtocol = `${baseDir}models/`;
 
@@ -108,6 +108,7 @@ export async function listDownloadedModels(): Promise<string[]> {
  */
 export async function isModelDownloaded(modelId: string): Promise<boolean> {
     const modelPath = getModelFilePath(modelId, true); // Use file:// version
+    if (!modelPath) return false;
     const info = await FileSystem.getInfoAsync(modelPath);
     return info.exists && !info.isDirectory;
 }
@@ -122,6 +123,9 @@ export async function getModelInfo(modelId: string): Promise<{
 }> {
     const modelPathWithProtocol = getModelFilePath(modelId, true);
     const modelPathSanitized = getModelFilePath(modelId, false);
+    if (!modelPathWithProtocol || !modelPathSanitized) {
+        return { exists: false };
+    }
     const info = await FileSystem.getInfoAsync(modelPathWithProtocol);
 
     if (info.exists && !info.isDirectory) {
@@ -140,5 +144,6 @@ export async function getModelInfo(modelId: string): Promise<{
  */
 export async function deleteModel(modelId: string): Promise<void> {
     const modelPath = getModelFilePath(modelId, true); // Use file:// version
+    if (!modelPath) return;
     await FileSystem.deleteAsync(modelPath);
 }

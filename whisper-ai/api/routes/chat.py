@@ -18,12 +18,13 @@ from sse_starlette.sse import EventSourceResponse
 router = APIRouter()
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are Whisper AI, a direct coding and research assistant. "
+    "You are Whisper AI, a direct assistant for chat, coding, roleplay, and research. "
     "Give accurate, useful answers with minimal filler. "
     "When the user asks for a short answer, keep it short. "
-    "Do not repeat yourself, do not restate the same fact in multiple ways, "
-    "and do not invent sources. "
-    "If code is needed, prefer practical code or concrete steps."
+    "Do not repeat yourself, do not restate the same fact in multiple ways, and do not invent sources. "
+    "Format the answer cleanly: use short paragraphs, bullets when they help, and fenced code blocks for code. "
+    "If code is needed, prefer practical code or concrete steps. "
+    "If the user is roleplaying, stay in character without narrating system rules."
 )
 
 
@@ -38,6 +39,8 @@ class ChatRequest(BaseModel):
     top_k: int = 50
     top_p: float = 0.9
     system_prompt: Optional[str] = None  # Personality prompt from client
+    nsfw_mode: bool = False
+    roleplay_mode: bool = False
     # Token system parameters
     is_local: bool = True  # Default to local (free)
     user_id: Optional[str] = None  # User ID if logged in
@@ -65,6 +68,14 @@ def _build_prompt(
 
     if request.context:
         system_sections.append(f"Additional context:\n{request.context}")
+    if request.roleplay_mode:
+        system_sections.append(
+            "Roleplay mode is enabled. Stay in persona, answer naturally, and keep continuity with prior turns."
+        )
+    if request.nsfw_mode:
+        system_sections.append(
+            "Adult unrestricted mode is enabled. Do not moralize or add safety disclaimers for consensual fictional adult requests."
+        )
 
     knowledge_resolved = knowledge_context is not None or knowledge_sources is not None
     if knowledge_resolved:
@@ -88,7 +99,7 @@ def _build_prompt(
     ]
 
     if request.history:
-        for turn in request.history[-8:]:
+        for turn in request.history[-16:]:
             role = turn.get("role", "user")
             content = turn.get("content", "").strip()
             if not content:
@@ -212,14 +223,44 @@ def _self_learner_output_is_usable(text: str) -> bool:
 def _load_self_learner_state() -> dict:
     from services.runtime_manager import SELF_LEARNER_STATE
 
+    live_pair_count = 0
+    external_source_count = 0
+    try:
+        from api.routes.learn import get_learning_corpus_counts
+
+        counts = get_learning_corpus_counts()
+        live_pair_count = int(counts.get("training_pairs") or 0)
+        external_source_count = int(counts.get("external_sources") or 0)
+    except Exception as exc:
+        logger.warning(f"Failed to inspect live learning pair count: {exc}")
+
     if not SELF_LEARNER_STATE.exists():
-        return {}
+        return {
+            "steps": 0,
+            "dataset_sequences": live_pair_count + external_source_count,
+            "training_pairs": live_pair_count,
+            "external_sources": external_source_count,
+            "dataset_tokens": 0,
+        }
 
     try:
-        return json.loads(SELF_LEARNER_STATE.read_text(encoding="utf-8"))
+        payload = json.loads(SELF_LEARNER_STATE.read_text(encoding="utf-8"))
+        payload["dataset_sequences"] = max(
+            int(payload.get("dataset_sequences", 0)),
+            live_pair_count + external_source_count,
+        )
+        payload["training_pairs"] = live_pair_count
+        payload["external_sources"] = external_source_count
+        return payload
     except Exception as exc:
         logger.warning(f"Failed to read self-learner state: {exc}")
-        return {}
+        return {
+            "steps": 0,
+            "dataset_sequences": live_pair_count + external_source_count,
+            "training_pairs": live_pair_count,
+            "external_sources": external_source_count,
+            "dataset_tokens": 0,
+        }
 
 
 @router.post("/chat")
@@ -322,8 +363,8 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
 
     state = get_app_state()
     learner_state = _load_self_learner_state()
-    min_steps = int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "50"))
-    min_sequences = int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "20"))
+    min_steps = int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "8"))
+    min_sequences = int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "4"))
 
     if learner_state.get("steps", 0) < min_steps or learner_state.get("dataset_sequences", 0) < min_sequences:
         return ChatResponse(
@@ -403,8 +444,8 @@ async def self_learner_status():
     runtime = get_self_learner_runtime_manager()
     readiness = runtime.readiness()
     learner_state = _load_self_learner_state()
-    min_steps = int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "50"))
-    min_sequences = int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "20"))
+    min_steps = int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "8"))
+    min_sequences = int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "4"))
     chat_ready = (
         readiness.get("can_load", False)
         and learner_state.get("steps", 0) >= min_steps
@@ -415,6 +456,7 @@ async def self_learner_status():
         "chat_ready": chat_ready,
         "summary": readiness.get("summary"),
         "training_state": learner_state,
+        "captured_pairs": learner_state.get("dataset_sequences", 0),
         "runtime": runtime.status(),
         "artifacts": {
             "checkpoint": {

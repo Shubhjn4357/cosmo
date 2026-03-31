@@ -4,21 +4,66 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Whisper AI Admin</title>
-  <link rel="stylesheet" href="/ui-assets/app.css?v=20260330a">
+  <link rel="stylesheet" href="/ui-assets/app.css?v=20260331a">
 </head>
 <body>
   <div class="shell">
-    <h1>Whisper AI Admin</h1>
-    <p class="meta">Operational dashboard for runtime, datasets, research, and health.</p>
-
-    <div class="panel" style="margin-bottom: 20px;">
-      <h2>Admin Login</h2>
-      <div class="row">
-        <div><input id="adminUsername" placeholder="Admin email or username"></div>
-        <div><input id="adminPassword" type="password" placeholder="Admin password"></div>
-        <div><button id="adminLoginButton">Login</button></div>
+    <div class="page-header">
+      <div>
+        <h1>Whisper AI Admin</h1>
+        <p class="meta">Operational dashboard for runtime, datasets, research, and health.</p>
       </div>
-      <div id="adminAuthStatus" class="meta"></div>
+      <div id="adminAuthBadge" class="pill">Checking admin access...</div>
+    </div>
+
+    <div class="panel panel-accent admin-auth-panel" style="margin-bottom: 20px;">
+      <div class="toolbar">
+        <div>
+          <h2>Admin Access</h2>
+          <p class="meta">Use the server admin username or admin email configured in the backend.</p>
+        </div>
+        <div class="toolbar-actions">
+          <button id="adminLogoutButton" type="button" class="secondary">Logout</button>
+        </div>
+      </div>
+
+      <div class="auth-grid" style="margin-top: 16px;">
+        <form id="adminLoginForm" class="auth-card">
+          <div class="field-group">
+            <label for="adminUsername">Admin email or username</label>
+            <input id="adminUsername" autocomplete="username" placeholder="admin@example.com or admin">
+          </div>
+          <div class="field-group">
+            <label for="adminPassword">Admin password</label>
+            <input id="adminPassword" type="password" autocomplete="current-password" placeholder="Enter admin password">
+          </div>
+          <div class="auth-actions">
+            <button id="adminLoginButton" type="submit">Login</button>
+          </div>
+          <div id="adminAuthStatus" class="auth-feedback status-warn">Checking login state...</div>
+        </form>
+
+        <div class="auth-card auth-card-info">
+          <h3>Server Login Status</h3>
+          <p id="adminLoginHint" class="meta">
+            The server is checking whether an admin account is configured.
+          </p>
+          <div class="auth-list">
+            <div class="auth-list-item">
+              <strong>Unlocks</strong>
+              <span class="meta">Runtime control, datasets, research, and system operations.</span>
+            </div>
+            <div class="auth-list-item">
+              <strong>Accepted identifiers</strong>
+              <span class="meta">Configured admin username or configured admin email.</span>
+            </div>
+            <div class="auth-list-item">
+              <strong>Session handling</strong>
+              <span class="meta">Only admin JWT sessions are accepted here. User sessions are rejected.</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="panel panel-accent" style="margin-bottom: 20px;">
@@ -96,6 +141,56 @@
         </div>
         <pre id="researchPolicyOutput" class="message assistant"></pre>
         <div class="row" style="margin-top: 12px;">
+          <div><label><input id="autonomyEnabled" type="checkbox"> Autonomous learning enabled</label></div>
+          <div><input id="autonomyIntervalMinutes" type="number" value="60" min="1" max="1440" placeholder="Interval minutes"></div>
+          <div><input id="autonomyChunkChars" type="number" value="1200" min="200" max="8000" placeholder="Chunk chars"></div>
+          <div><input id="autonomyMaxChunks" type="number" value="2" min="1" max="12" placeholder="Chunks per doc"></div>
+          <div><label><input id="autonomyAutoSyncHf" type="checkbox" checked> Auto sync HF</label></div>
+          <div><button id="saveAutonomySettingsButton" class="secondary">Save Autonomous Settings</button></div>
+          <div><button id="runAutonomyNowButton" class="secondary">Run Next Source Now</button></div>
+          <div><button id="startAutonomyButton" class="secondary">Start Loop</button></div>
+          <div><button id="stopAutonomyButton" class="secondary">Stop Loop</button></div>
+        </div>
+        <input id="autonomySourceId" type="hidden">
+        <div id="autonomySourceFormMode" class="meta" style="margin-top: 12px;">Create a new autonomous source.</div>
+        <div class="row" style="margin-top: 12px;">
+          <div><input id="autonomySourceLabel" placeholder="Source label"></div>
+          <div><input id="autonomySourceTopic" placeholder="Autonomous topic"></div>
+          <div><input id="autonomySourceStartUrl" placeholder="Optional start URL"></div>
+          <div><input id="autonomySourceTags" placeholder="Tags, comma-separated"></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div>
+            <select id="autonomySourceProvider">
+              <option value="auto">Auto</option>
+              <option value="cloudflare">Cloudflare</option>
+              <option value="legacy">Legacy</option>
+            </select>
+          </div>
+          <div><input id="autonomySourcePages" type="number" value="3" min="1" max="20" placeholder="Pages"></div>
+          <div><input id="autonomySourceMaxSites" type="number" value="1" min="1" max="20" placeholder="Sites"></div>
+          <div><input id="autonomySourceDepth" type="number" value="1" min="0" max="5" placeholder="Depth"></div>
+          <div><label><input id="autonomySourceEnabled" type="checkbox" checked> Source enabled</label></div>
+          <div><button id="addAutonomySourceButton" class="secondary">Save Autonomous Source</button></div>
+          <div><button id="cancelAutonomySourceEditButton" class="secondary">Reset Form</button></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div><input id="autonomySourceSource" value="all" placeholder="Crawler source mode"></div>
+          <div><input id="autonomySourceFormats" value="markdown" placeholder="Formats, comma-separated"></div>
+          <div><input id="autonomySourceIncludePatterns" placeholder="Include patterns, comma-separated"></div>
+          <div><input id="autonomySourceExcludePatterns" placeholder="Exclude patterns, comma-separated"></div>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <div><input id="autonomySourceModifiedSince" type="number" min="0" placeholder="Modified since (epoch seconds)"></div>
+          <div><input id="autonomySourceMaxAge" type="number" min="0" placeholder="Max age (seconds)"></div>
+          <div><label><input id="autonomySourceRender" type="checkbox"> Render JS</label></div>
+          <div><label><input id="autonomySourceRefreshExisting" type="checkbox"> Refresh existing</label></div>
+          <div><label><input id="autonomySourceExternalLinks" type="checkbox"> External links</label></div>
+          <div><label><input id="autonomySourceSubdomains" type="checkbox"> Subdomains</label></div>
+        </div>
+        <pre id="researchAutonomyOutput" class="message assistant"></pre>
+        <div id="researchAutonomyGrid" class="grid" style="margin-top: 16px;"></div>
+        <div class="row" style="margin-top: 12px;">
           <div><button id="exportResearchButton" class="secondary">Export Research Dataset</button></div>
           <div><button id="validateCloudflareButton" class="secondary">Validate Cloudflare</button></div>
           <div><button id="deleteResearchDocsButton" class="secondary">Delete Matching Documents</button></div>
@@ -106,6 +201,10 @@
         </div>
         <pre id="researchDatasetOutput" class="message assistant"></pre>
         <div id="researchDocumentGrid" class="grid" style="margin-top: 16px;"></div>
+        <div class="row" style="margin-top: 16px;">
+          <div id="researchHistoryScope" class="meta">Recent research runs.</div>
+          <div><button id="clearResearchHistoryScopeButton" class="secondary">Show All Runs</button></div>
+        </div>
         <div id="researchHistoryGrid" class="grid" style="margin-top: 16px;"></div>
       </div>
     </div>
@@ -158,6 +257,6 @@
     </div>
   </div>
 
-  <script src="/ui-assets/admin.js?v=20260330a"></script>
+  <script src="/ui-assets/admin.js?v=20260331a"></script>
 </body>
 </html>

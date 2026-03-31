@@ -8,16 +8,15 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Any, List, Optional
+from typing import Any, Optional
 import os
 from loguru import logger
 
 from .auth import verify_admin_token
 from services.google_auth import google_auth_status
 from .profile import _sanitize_profile, get_supabase
-from api.routes.payment import get_active_plans, payment_gateway_status, validate_payment_gateway
 from services.gguf_bootstrap import get_gguf_bootstrap_status, start_gguf_runtime_bootstrap
-from services.admin_state import get_model_enabled, set_model_enabled, upsert_payment_plan
+from services.admin_state import get_model_enabled, set_model_enabled
 from services.model_manager import get_profile, get_profiles, queue_profile_download, runtime_profiles_payload, validate_profile
 from services.runtime_manager import RuntimeConfig
 from services.system_jobs import LOGS_DIR, refresh_job_state, start_training_job, stop_training_job
@@ -32,45 +31,15 @@ router = APIRouter()
 SMART_PROVIDER_IDS = {"gemini", "huggingface", "horde", "local"}
 
 
-def _plan_features(plan_id: str, plan: dict) -> list[str]:
-    if isinstance(plan.get("features"), list):
-        return plan["features"]
-    if plan.get("type") == "subscription":
-        return [f"{plan.get('tokens', 0)} tokens per cycle", "Premium features"]
-    return [f"{plan.get('tokens', 0)} token add-on"]
-
-
-def _count_profiles_by_tier(supabase) -> dict[str, int]:
-    counts = {"free": 0, "pro": 0}
-    if not supabase:
-        return counts
-
-    for tier in counts:
-        try:
-            result = (
-                supabase.table("profiles")
-                .select("id", count="exact")
-                .eq("subscription_tier", tier)
-                .execute()
-            )
-            counts[tier] = result.count or 0
-        except Exception:
-            counts[tier] = 0
-    return counts
-
-
-def _estimate_revenue_paise(supabase) -> int:
+def _count_total_profiles(supabase) -> int:
     if not supabase:
         return 0
 
-    total = 0
-    for table in ("subscriptions", "token_purchases"):
-        try:
-            result = supabase.table(table).select("amount").execute()
-            total += sum(int(row.get("amount") or 0) for row in (result.data or []))
-        except Exception:
-            continue
-    return total
+    try:
+        result = supabase.table("profiles").select("id", count="exact").execute()
+        return result.count or 0
+    except Exception:
+        return 0
 
 
 def _format_currency_from_paise(amount_paise: int, currency: str = "INR") -> str:
@@ -121,6 +90,7 @@ def _collect_dataset_payload() -> dict[str, Any]:
 
 
 def _self_learner_summary() -> dict[str, Any]:
+    from api.routes.learn import get_learning_corpus_counts
     from services.runtime_manager import (
         SELF_LEARNER_CHECKPOINT,
         SELF_LEARNER_INT8_CHECKPOINT,
@@ -132,17 +102,23 @@ def _self_learner_summary() -> dict[str, Any]:
     runtime = get_self_learner_runtime_manager()
     readiness = runtime.readiness()
     training_state = _safe_json_file(SELF_LEARNER_STATE)
+    corpus_counts = get_learning_corpus_counts()
     min_steps = max(1, int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "50")))
     min_sequences = max(1, int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "20")))
     steps = int(training_state.get("steps") or 0)
-    sequences = int(training_state.get("dataset_sequences") or 0)
+    sequences = max(int(training_state.get("dataset_sequences") or 0), int(corpus_counts.get("total_sequences") or 0))
     chat_ready = readiness.get("can_load", False) and steps >= min_steps and sequences >= min_sequences
 
     return {
         "ready": readiness.get("can_load", False),
         "chat_ready": chat_ready,
         "summary": readiness.get("summary"),
-        "training_state": training_state,
+        "training_state": {
+            **training_state,
+            "dataset_sequences": sequences,
+            "training_pairs": corpus_counts.get("training_pairs"),
+            "external_sources": corpus_counts.get("external_sources"),
+        },
         "thresholds": {
             "min_steps": min_steps,
             "min_sequences": min_sequences,
@@ -269,8 +245,6 @@ def _readiness_report(app_state) -> dict:
     cloudflare_status = CRAWLER.status()
     google_status = google_auth_status()
     turso_url = os.getenv("TURSO_DATABASE_URL", "").strip()
-    payment_status = payment_gateway_status()
-
     runtime_profiles_summary = {
         "selected_profile": selected_profile,
         "ready_profiles": [profile["id"] for profile in runtime_profiles["profiles"] if profile.get("ready")],
@@ -321,7 +295,6 @@ def _readiness_report(app_state) -> dict:
             "quota": cloudflare_status.get("quota"),
         },
         "google_auth": google_status,
-        "payments": payment_status,
         "image_generation": {
             "hf_token_configured": bool(get_hf_token()),
             "replicate_configured": bool(os.getenv("REPLICATE_API_TOKEN", "").strip()),
@@ -387,22 +360,6 @@ def _readiness_report(app_state) -> dict:
                 "message": "Google auth is not configured; set GOOGLE_CLIENT_ID",
             }
         )
-    if not sections["payments"]["configured"]:
-        blockers.append(
-            {
-                "id": "payments",
-                "severity": "warning",
-                "message": "Payment gateway is not configured; set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET",
-            }
-        )
-    elif sections["payments"].get("last_valid") is False:
-        blockers.append(
-            {
-                "id": "payments_invalid",
-                "severity": "warning",
-                "message": sections["payments"].get("last_message") or "Payment gateway validation failed",
-            }
-        )
     if not sections["runtime"]["profiles"]["airllm_snapshot_downloaded"]:
         blockers.append(
             {
@@ -441,6 +398,7 @@ def _control_center_payload(app_state) -> dict[str, Any]:
     from api.routes.research import (
         RESEARCH_STATS,
         SOURCE_POLICY,
+        get_background_research_status,
         list_research_documents,
         list_research_runs,
         summarize_research_documents,
@@ -487,12 +445,14 @@ def _control_center_payload(app_state) -> dict[str, Any]:
         "research": dict(RESEARCH_STATS),
         "research_history": {
             "runs": list_research_runs(limit=6),
+            "summary": summarize_research_runs(),
         },
         "research_documents": {
             "documents": list_research_documents(limit=6, include_text=False),
             "summary": summarize_research_documents(),
         },
         "research_policy": SOURCE_POLICY.status(),
+        "research_autonomy": get_background_research_status(),
         "self_learner": self_learner,
         "system": {
             "logs_dir": str(LOGS_DIR),
@@ -524,17 +484,6 @@ class RuntimeProfileValidationRequest(BaseModel):
     profile_id: str
     test_load: bool = False
     refresh_imports: bool = True
-
-
-class SubscriptionPlanRequest(BaseModel):
-    plan_id: Optional[str] = None
-    name: str = ""
-    price: float = 0
-    currency: str = "INR"
-    features: List[str] = []
-    tokens: int = 0
-    plan_type: str = "subscription"
-    active: bool = True
 
 
 @router.get("/runtime-status")
@@ -599,11 +548,6 @@ async def get_admin_readiness(payload: dict = Depends(verify_admin_token)):
 @router.post("/database/validate")
 async def validate_database(payload: dict = Depends(verify_admin_token)):
     return validate_database_connection()
-
-
-@router.post("/payments/validate")
-async def validate_payments(payload: dict = Depends(verify_admin_token)):
-    return await validate_payment_gateway()
 
 
 @router.get("/runtime-profiles")
@@ -792,30 +736,6 @@ async def get_users(
         return {"success": False, "error": str(e)}
 
 
-@router.put("/users/{user_id}/subscription")
-async def update_user_subscription(
-    user_id: str,
-    tier: str,
-    payload: dict = Depends(verify_admin_token)
-):
-    """Update user subscription tier"""
-    supabase = get_supabase()
-    if not supabase:
-        return {"success": False, "error": "Database not available"}
-    
-    try:
-        tokens_limit = 1000 if tier == "pro" else 20
-        
-        supabase.table("profiles").update({
-            "subscription_tier": tier,
-            "tokens_limit": tokens_limit
-        }).eq("id", user_id).execute()
-        
-        return {"success": True, "message": f"User upgraded to {tier}"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 @router.post("/users/{user_id}/ban")
 async def ban_user(
     user_id: str,
@@ -835,101 +755,6 @@ async def ban_user(
         return {"success": True, "message": f"User {'banned' if banned else 'unbanned'}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
-
-
-# ============================================================================
-# SUBSCRIPTIONS MANAGEMENT
-# ============================================================================
-
-@router.get("/subscriptions")
-async def get_subscriptions(payload: dict = Depends(verify_admin_token)):
-    """Get all subscription plans"""
-    supabase = get_supabase()
-    tier_counts = _count_profiles_by_tier(supabase)
-    plans = []
-
-    for plan_id, plan in get_active_plans().items():
-        currency = plan.get("currency", "INR")
-        subscriber_count = tier_counts.get("pro", 0) if plan.get("type") == "subscription" else 0
-        plans.append(
-            {
-                "id": plan_id,
-                "name": plan.get("name", plan_id),
-                "price": round((plan.get("amount", 0) or 0) / 100, 2),
-                "currency": currency,
-                "tokens": plan.get("tokens", 0),
-                "type": plan.get("type", "subscription"),
-                "features": _plan_features(plan_id, plan),
-                "active": bool(plan.get("active", True)),
-                "subscriber_count": subscriber_count,
-            }
-        )
-
-    return {"success": True, "plans": plans}
-
-
-@router.post("/subscriptions/create")
-async def create_subscription(
-    request: SubscriptionPlanRequest,
-    payload: dict = Depends(verify_admin_token),
-):
-    """Create new subscription plan"""
-    raw_name = (request.name or "").strip()
-    if not raw_name:
-        raise HTTPException(status_code=400, detail="Plan name is required")
-
-    plan_id = request.plan_id or raw_name.lower().replace(" ", "_")
-    plan = {
-        "name": raw_name,
-        "amount": max(0, int(round(request.price * 100))),
-        "currency": request.currency or "INR",
-        "tokens": max(0, request.tokens),
-        "type": request.plan_type or "subscription",
-        "features": request.features,
-        "active": request.active,
-    }
-    upsert_payment_plan(plan_id, plan, get_active_plans())
-    return {
-        "success": True,
-        "message": f"Plan '{plan_id}' created successfully",
-        "plan_id": plan_id,
-        "plan": plan,
-    }
-
-
-@router.post("/subscriptions/{plan_id}/update")
-async def update_subscription(
-    plan_id: str,
-    request: SubscriptionPlanRequest,
-    payload: dict = Depends(verify_admin_token),
-):
-    """Update subscription plan"""
-    plans = get_active_plans()
-    if plan_id not in plans:
-        raise HTTPException(status_code=404, detail=f"Unknown plan '{plan_id}'")
-
-    updates = {}
-    if request.name:
-        updates["name"] = request.name
-    if request.price is not None:
-        updates["amount"] = max(0, int(round(request.price * 100)))
-    if request.currency:
-        updates["currency"] = request.currency
-    if request.features:
-        updates["features"] = request.features
-    if request.tokens:
-        updates["tokens"] = max(0, request.tokens)
-    if request.plan_type:
-        updates["type"] = request.plan_type
-    updates["active"] = request.active
-
-    merged = upsert_payment_plan(plan_id, updates, plans)[plan_id]
-    return {
-        "success": True,
-        "message": f"Plan '{plan_id}' updated successfully",
-        "plan": merged,
-    }
-
 
 # ============================================================================
 # MODELS MANAGEMENT
@@ -1071,9 +896,7 @@ async def get_analytics(payload: dict = Depends(verify_admin_token)):
     supabase = get_supabase()
     request_stats = request_analytics.get_stats()
     daily = request_analytics.get_daily_series(days=7)
-    tier_counts = _count_profiles_by_tier(supabase)
-    total_users = sum(tier_counts.values())
-    revenue_paise = _estimate_revenue_paise(supabase)
+    total_users = _count_total_profiles(supabase)
 
     feature_rows = [
         {"name": "Chat", "usage": daily["totals"]["chat_requests"], "color": "#6366f1"},
@@ -1098,9 +921,7 @@ async def get_analytics(payload: dict = Depends(verify_admin_token)):
         },
         "features": feature_rows,
         "total_users": total_users,
-        "revenue": _format_currency_from_paise(revenue_paise),
         "request_totals": request_stats,
-        "subscription_counts": tier_counts,
     }
 
 

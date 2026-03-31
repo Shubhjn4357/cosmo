@@ -9,8 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOME=/home/user \
     PYTHONUSERBASE=/data/whisper/runtime/python-user-base \
     PATH=/data/whisper/runtime/python-user-base/bin:/home/user/.local/bin:$PATH \
-    HF_HOME=/data/.huggingface \
-    TRANSFORMERS_CACHE=/data/.cache/huggingface \
+    HF_HOME=/data/.cache/huggingface \
     HUGGINGFACE_HUB_CACHE=/data/.cache/huggingface/hub \
     WHISPER_DATA_ROOT=/data/whisper \
     WHISPER_MODELS_DIR=/data/whisper/models \
@@ -46,7 +45,7 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 
 COPY --chown=user:user . .
 
-RUN mkdir -p /data/whisper /data/whisper/models /data/whisper/uploads /data/.cache/huggingface /data/.huggingface && \
+RUN mkdir -p /data/whisper /data/whisper/models /data/whisper/uploads /data/.cache/huggingface && \
     chown -R user:user /data /app
 
 USER user

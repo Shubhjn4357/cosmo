@@ -26,7 +26,6 @@ except ImportError:
 MIGRATION_PATH = Path(__file__).resolve().parents[1] / "drizzle" / "0000_whisper_initial.sql"
 AUTO_ID_TABLES = {
     "chat_history",
-    "subscriptions",
     "token_purchases",
     "token_usage",
     "generated_images",
@@ -187,10 +186,6 @@ class TursoAuthAdapter:
                 "email": email,
                 "password_hash": hashlib.sha256(password.encode()).hexdigest(),
                 "display_name": display_name,
-                "subscription_tier": "free",
-                "tokens_used": 0,
-                "tokens_limit": 20,
-                "last_token_refresh": now,
                 "last_active": now,
                 "created_at": now,
                 "updated_at": now,
@@ -267,10 +262,6 @@ class TursoAuthAdapter:
                     "password_hash": None,
                     "display_name": display_name,
                     "avatar_url": avatar_url,
-                    "subscription_tier": "free",
-                    "tokens_used": 0,
-                    "tokens_limit": 20,
-                    "last_token_refresh": now,
                     "last_active": now,
                     "created_at": now,
                     "updated_at": now,
@@ -604,7 +595,7 @@ def validate_database_connection() -> dict[str, Any]:
                 "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
             ).fetchall()
         ]
-        required_tables = {"profiles", "chat_history", "subscriptions", "token_usage", "generated_images"}
+        required_tables = {"profiles", "chat_history", "token_usage", "generated_images"}
         missing_tables = sorted(required_tables - set(tables))
 
         profile_count = connection.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]

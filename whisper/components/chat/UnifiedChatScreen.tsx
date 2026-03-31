@@ -3,7 +3,7 @@
  * Combines all features from index.tsx for consistent use across the app
  */
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
     View,
     Text,
@@ -13,9 +13,8 @@ import {
     KeyboardAvoidingView,
     Platform,
     Image,
-    Alert,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -25,7 +24,7 @@ import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 import { Message } from '@/types';
 
 // Hooks
-import { useChat, useFilePicker, useNetworkStatus, useAuth, useSmartMode, useSwipeToReload, useUnifiedTokens, useVoiceInput } from '@/hooks';
+import { useChat, useFilePicker, useNetworkStatus, useAuth, useSwipeToReload, useVoiceInput } from '@/hooks';
 
 // Components
 import { MessageBubble } from './MessageBubble';
@@ -38,13 +37,11 @@ import { InteractiveButton } from '@/components/InteractiveButton';
 import { getAvatarSource } from '@/assets/stock/avatars';
 import { useToast } from '@/components/Toast';
 import { CharacterSelector } from '@/components/CharacterSelector';
-import llmBackend from '@/services/llmBackend';
 import { generateVisionFromText } from '@/services/visionGeneration';
-import { SubscriptionDrawer } from '@/components/Drawer/SubscriptionDrawer';
 import { DataFeedDrawer } from '@/components/Drawer/DataFeedDrawer';
-import { SupportPopup } from '@/components/SupportPopup';
-import { UpgradeDrawer } from '@/components/UpgradeDrawer';
 import { notificationService } from '@/services/notificationService';
+import { characterService } from '@/services/characterService';
+import { ChatHistoryDrawer } from '@/components/chat/ChatHistoryDrawer';
 
 export interface UnifiedChatScreenProps {
     mode?: 'chat' | 'roleplay';
@@ -57,6 +54,56 @@ export interface UnifiedChatScreenProps {
     onMenu?: () => void;
     initialMessages?: any[];
     onMessageSent?: (message: any) => void;
+}
+
+function normalizeSeedMessages(messages?: any[]): Message[] {
+    return (messages || []).map((message, index) => ({
+        id: String(message?.id ?? `seed-${Date.now()}-${index}`),
+        text: String(message?.text ?? message?.content ?? ''),
+        imageUri: message?.imageUri ?? message?.image_url,
+        isUser: Boolean(message?.isUser ?? message?.role === 'user'),
+        timestamp: message?.timestamp ? new Date(message.timestamp) : new Date(),
+    }));
+}
+
+function buildCharacterPrompt(character: any, systemPrompt?: string) {
+    if (!character && !systemPrompt) return systemPrompt || '';
+
+    const promptParts = [
+        systemPrompt,
+        character?.systemPrompt,
+        character?.personality ? `Personality: ${character.personality}` : '',
+        character?.description ? `Character details: ${character.description}` : '',
+        character?.tags?.length ? `Traits: ${character.tags.join(', ')}` : '',
+        character?.name ? `You are ${character.name}. Stay consistent, conversational, and in character.` : '',
+    ].filter(Boolean);
+
+    return promptParts.join('\n\n').trim();
+}
+
+function resolveCharacterGreeting(character: any) {
+    return character?.greeting?.trim?.() || '';
+}
+
+function isAdultCharacter(character: any) {
+    return Boolean(character?.nsfw || character?.isNSFW);
+}
+
+function resolveCharacterAvatar(character: any, fallbackAvatar?: string) {
+    if (character?.avatar) {
+        if (typeof character.avatar === 'string' && character.avatar.startsWith('local://')) {
+            return characterService.getAvatarSource(character as any);
+        }
+        if (typeof character.avatar === 'string' && character.avatar.startsWith('http')) {
+            return { uri: character.avatar };
+        }
+    }
+
+    if (fallbackAvatar) {
+        return { uri: fallbackAvatar };
+    }
+
+    return null;
 }
 
 export function UnifiedChatScreen({
@@ -74,7 +121,6 @@ export function UnifiedChatScreen({
     const { theme } = useTheme();
     const router = useRouter();
     const { profile, isAuthenticated } = useAuth();
-    const { tokenInfo, checkTokens, getTokenCost, isGuest } = useUnifiedTokens();
     const { isRecording, isTranscribing, startRecording, stopRecording, transcribe, cancelRecording } = useVoiceInput();
     const toast = useToast();
 
@@ -95,14 +141,18 @@ export function UnifiedChatScreen({
         progressStatus,
         chatHistories,
         useModel,
+        useRag,
         createImageMode,
         isGeneratingImage,
         setInputText,
         cycleModel,
         setCreateImageMode,
+        setUseRag,
         sendMessage,
         stopGeneration,
         loadHistory,
+        deleteHistory,
+        hydrateMessages,
         startNewChat,
     } = useChat();
 
@@ -119,35 +169,58 @@ export function UnifiedChatScreen({
     } = useFilePicker();
 
     const { isConnected, isServerReachable, isChecking } = useNetworkStatus();
-    const [useRag, setUseRag] = useState(false);
     const [enterToSend, setEnterToSend] = useState(true);
     const [showSidebar, setShowSidebar] = useState(false);
     const [showBottomSheet, setShowBottomSheet] = useState(false);
+    const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
     const [showCharacterSelector, setShowCharacterSelector] = useState(false);
+    const [nsfwMode, setNsfwMode] = useState(false);
 
     // Character state
     const [selectedCharacter, setSelectedCharacter] = useState<any | null>(activeCharacterProp);
-    const [characterMessages, setCharacterMessages] = useState<any[]>(initialMessages || []);
-    const [characterLoading, setCharacterLoading] = useState(false);
 
-    const [showSubscriptionDrawer, setShowSubscriptionDrawer] = useState(false);
     const [showDataFeedDrawer, setShowDataFeedDrawer] = useState(false);
-    const [showSupportPopup, setShowSupportPopup] = useState(false);
-    const [showUpgradeDrawer, setShowUpgradeDrawer] = useState(false);
-    const [upgradeFeature, setUpgradeFeature] = useState('');
+    const seededConversationKeyRef = useRef<string | null>(null);
 
     // Sync props with state
     useEffect(() => {
         if (activeCharacterProp) {
             setSelectedCharacter(activeCharacterProp);
         }
-    }, [characterId, characterName]); // Re-run if props change
+    }, [activeCharacterProp, characterId, characterName]); // Re-run if props change
 
     useEffect(() => {
-        if (initialMessages) {
-            setCharacterMessages(initialMessages);
+        if (selectedCharacter && isAdultCharacter(selectedCharacter)) {
+            setNsfwMode(true);
         }
-    }, [initialMessages]);
+    }, [selectedCharacter]);
+
+    useEffect(() => {
+        if (messages.length > 0) {
+            return;
+        }
+
+        const selectedKey = selectedCharacter?.id || (mode === 'roleplay' ? 'roleplay-default' : 'chat-default');
+        const initialSeed = normalizeSeedMessages(initialMessages);
+        if (initialSeed.length > 0 && seededConversationKeyRef.current !== `${selectedKey}:initial`) {
+            hydrateMessages(initialSeed);
+            seededConversationKeyRef.current = `${selectedKey}:initial`;
+            return;
+        }
+
+        const greeting = resolveCharacterGreeting(selectedCharacter);
+        if (selectedCharacter && greeting && seededConversationKeyRef.current !== `${selectedKey}:greeting`) {
+            hydrateMessages([
+                {
+                    id: `greeting-${selectedKey}`,
+                    text: greeting,
+                    isUser: false,
+                    timestamp: new Date(),
+                },
+            ]);
+            seededConversationKeyRef.current = `${selectedKey}:greeting`;
+        }
+    }, [hydrateMessages, initialMessages, messages.length, mode, selectedCharacter]);
 
     // Swipe to reload
     const { refreshing, onRefresh } = useSwipeToReload(async () => {
@@ -165,11 +238,6 @@ export function UnifiedChatScreen({
         if (mode === 'chat') {
             (async () => {
                 await notificationService.requestPermissions();
-                const isPro = profile?.subscription_tier === 'pro';
-                const isFirstLaunch = await notificationService.isFirstLaunch();
-                if (!isPro && isFirstLaunch) {
-                    setTimeout(() => setShowSupportPopup(true), 3000);
-                }
             })();
         }
     }, [profile, mode]);
@@ -185,14 +253,26 @@ export function UnifiedChatScreen({
         }
     }, []);
 
+    const characterPrompt = useMemo(
+        () => buildCharacterPrompt(selectedCharacter, systemPrompt),
+        [selectedCharacter, systemPrompt]
+    );
+
+    const characterAvatarSource = useMemo(
+        () => resolveCharacterAvatar(selectedCharacter, characterAvatar),
+        [selectedCharacter, characterAvatar]
+    );
+
+    const isRoleplayActive = Boolean(selectedCharacter) || mode === 'roleplay';
+
     // Render message
     const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => (
         <MessageBubble
             message={item}
-            isNew={index === (selectedCharacter ? characterMessages : messages).length - 1}
+            isNew={index === messages.length - 1}
             onGenerateVision={handleGenerateVision}
         />
-    ), [messages.length, characterMessages.length, selectedCharacter, handleGenerateVision]);
+    ), [messages.length, handleGenerateVision]);
 
     const bottomSheetOptions = [
         { icon: 'sparkles', label: 'Create image', color: '#8B5CF6', onPress: () => setCreateImageMode(true) },
@@ -200,8 +280,6 @@ export function UnifiedChatScreen({
         { icon: 'images', label: 'Gallery', color: '#3B82F6', onPress: () => pickFromGallery() },
         { icon: 'document', label: 'Upload file', color: '#F59E0B', onPress: () => pickFile(['*/*']) },
     ];
-
-    const isPro = profile?.subscription_tier === 'pro';
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -223,9 +301,9 @@ export function UnifiedChatScreen({
                             </InteractiveButton>
                         )}
 
-                        {selectedCharacter && mode === 'roleplay' ? (
+                        {selectedCharacter ? (
                             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                {characterAvatar && <Image source={{ uri: characterAvatar }} style={{ width: 30, height: 30, borderRadius: 15 }} />}
+                                {characterAvatarSource && <Image source={characterAvatarSource} style={{ width: 30, height: 30, borderRadius: 15 }} />}
                                 <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
                                     {characterName || selectedCharacter.name}
                                 </Text>
@@ -236,25 +314,6 @@ export function UnifiedChatScreen({
                     </View>
 
                     <View style={styles.headerRight}>
-                        {/* Token Counter */}
-                        {tokenInfo && (
-                            <TouchableOpacity
-                                onPress={() => {
-                                    if (isGuest) setShowUpgradeDrawer(true);
-                                    else router.push('/subscription');
-                                }}
-                                style={[styles.tokenBadge, {
-                                    backgroundColor: tokenInfo.isLow ? theme.colors.error + '20' : theme.colors.primary + '20',
-                                    borderColor: tokenInfo.isLow ? theme.colors.error : theme.colors.primary,
-                                }]}
-                            >
-                                <Ionicons name="flash" size={14} color={tokenInfo.isLow ? theme.colors.error : theme.colors.primary} />
-                                <Text style={[styles.tokenText, { color: tokenInfo.isLow ? theme.colors.error : theme.colors.primary }]}>
-                                    {tokenInfo.tokensRemaining}
-                                </Text>
-                            </TouchableOpacity>
-                        )}
-
                         {onMenu && (
                             <TouchableOpacity onPress={onMenu} style={styles.headerButton}>
                                 <Ionicons name="ellipsis-vertical" size={20} color={theme.colors.text} />
@@ -276,13 +335,40 @@ export function UnifiedChatScreen({
                                     <Ionicons name={useRag ? "globe" : "globe-outline"} size={20} color={useRag ? theme.colors.primary : theme.colors.textMuted} />
                                 </InteractiveButton>
 
+                                <InteractiveButton
+                                    onPress={() => setShowHistoryDrawer(true)}
+                                    style={styles.headerButton}
+                                >
+                                    <Ionicons name="time-outline" size={20} color={theme.colors.textMuted} />
+                                </InteractiveButton>
+
                                 {/* Character Selector */}
                                 <InteractiveButton onPress={() => setShowCharacterSelector(true)} style={styles.headerButton}>
                                     <Ionicons name="person-outline" size={20} color={theme.colors.textMuted} />
                                 </InteractiveButton>
 
+                                <InteractiveButton
+                                    onPress={() => setNsfwMode((previous) => !previous)}
+                                    style={[styles.headerButton, {
+                                        backgroundColor: nsfwMode ? theme.colors.error + '18' : 'transparent',
+                                        borderRadius: borderRadius.full,
+                                        borderWidth: 1,
+                                        borderColor: nsfwMode ? theme.colors.error : theme.colors.textMuted + '40',
+                                    }]}
+                                >
+                                    <Text style={{ color: nsfwMode ? theme.colors.error : theme.colors.textMuted, fontSize: 12, fontWeight: '700' }}>
+                                        18+
+                                    </Text>
+                                </InteractiveButton>
+
                                 {/* New Chat */}
-                                <InteractiveButton onPress={startNewChat} style={styles.headerButton}>
+                                <InteractiveButton
+                                    onPress={() => {
+                                        seededConversationKeyRef.current = null;
+                                        startNewChat();
+                                    }}
+                                    style={styles.headerButton}
+                                >
                                     <Ionicons name="add-circle-outline" size={24} color={theme.colors.primary} />
                                 </InteractiveButton>
 
@@ -354,7 +440,7 @@ export function UnifiedChatScreen({
                     {/* Messages */}
                     <FlatList
                         ref={flatListRef}
-                        data={selectedCharacter ? characterMessages : messages}
+                        data={messages}
                         renderItem={renderMessage}
                         keyExtractor={item => item.id}
                         contentContainerStyle={[styles.messageList, { paddingBottom: 100 }]}
@@ -365,7 +451,7 @@ export function UnifiedChatScreen({
                         refreshing={refreshing}
                         onRefresh={onRefresh}
                         ListFooterComponent={
-                            (isLoading || isGeneratingImage || characterLoading || isStreaming) ? (
+                            (isLoading || isGeneratingImage || isStreaming) ? (
                                 <View style={{ marginBottom: spacing.md }}>
                                     {progressStatus && <Text style={{ color: theme.colors.textMuted, fontSize: 12, marginLeft: spacing.sm }}>{progressStatus}</Text>}
                                     <SkeletonBubble />
@@ -376,7 +462,7 @@ export function UnifiedChatScreen({
 
                     <ChatInput
                         inputText={inputText}
-                        isLoading={isLoading || isGeneratingImage || characterLoading}
+                        isLoading={isLoading || isGeneratingImage}
                         isStreaming={isStreaming}
                         onStopGeneration={stopGeneration}
                         useModel={useModel}
@@ -399,73 +485,19 @@ export function UnifiedChatScreen({
                                     toast.info('Recording', 'Tap mic again to stop');
                                 }
                             } catch (error: any) {
-                                toast.error('Voice Error', error.message || 'Failed');
-                                await cancelRecording();
-                            }
-                        }}
-                        onSend={async () => {
-                            const cost = getTokenCost('chat');
-                            const hasTokens = await checkTokens(cost);
-                            if (!hasTokens) {
-                                setUpgradeFeature('Out of tokens!');
-                                setShowUpgradeDrawer(true);
-                                return;
-                            }
-
-                            if (selectedCharacter && inputText.trim() && !selectedFile) {
-                                const currentInput = inputText;
-                                setInputText('');
-                                setCharacterLoading(true);
-
-                                try {
-                                    // Set backend based on selection
-                                    if (useModel === 'local') {
-                                        await llmBackend.setCurrentBackend('local');
-                                    } else if (useModel === 'self-learner') {
-                                        await llmBackend.setCurrentBackend('self_learner');
-                                    } else if (useModel === 'cloud') {
-                                        await llmBackend.setCurrentBackend('gemini');
-                                    } else {
-                                        await llmBackend.setCurrentBackend('Whisper_server');
+                                        toast.error('Voice Error', error.message || 'Failed');
+                                        await cancelRecording();
                                     }
-
-                                    const characterPrompt = `You are ${selectedCharacter.name}. ${selectedCharacter.description || ''}\\n\\nStay in character.`;
-                                    const history = characterMessages.slice(-10).map((m: any) => ({
-                                        role: (m.isUser ? 'user' : 'assistant') as 'user' | 'assistant',
-                                        content: m.text
-                                    }));
-
-                                    const response = await llmBackend.completionWithFallback({
-                                        messages: [...history, { role: 'user', content: currentInput }],
+                                }}
+                                onSend={async () => {
+                                    await sendMessage({
+                                        file: selectedFile,
                                         systemPrompt: characterPrompt,
-                                        temperature: 0.85,
-                                        maxTokens: 512,
+                                        roleplayMode: isRoleplayActive,
+                                        nsfwMode: nsfwMode || isAdultCharacter(selectedCharacter),
                                     });
-
-                                    const timestamp = Date.now();
-                                    const userMsg = { id: `msg-${timestamp}`, text: currentInput, isUser: true, timestamp: new Date() };
-                                    const aiMsg = { id: `msg-${timestamp + 1}`, text: response.content, isUser: false, timestamp: new Date(), character: selectedCharacter };
-
-                                    setCharacterMessages(prev => [
-                                        ...prev,
-                                        userMsg,
-                                        aiMsg
-                                    ]);
-
-                                    if (onMessageSent) {
-                                        onMessageSent(userMsg);
-                                        onMessageSent(aiMsg);
-                                    }
-                                } catch (error) {
-                                    toast.error('Error', 'Failed to get response');
-                                } finally {
-                                    setCharacterLoading(false);
-                                }
-                            } else {
-                                sendMessage(selectedFile);
-                                setSelectedFile(null);
-                            }
-                        }}
+                                    setSelectedFile(null);
+                                }}
                         onModelSwitch={() => {
                             void cycleModel();
                         }}
@@ -493,37 +525,48 @@ export function UnifiedChatScreen({
                 histories={chatHistories}
                 onSelectHistory={(h) => { loadHistory(h); setShowSidebar(false); }}
                 onNewChat={() => { startNewChat(); setShowSidebar(false); }}
+                onDeleteHistory={(historyId) => {
+                    void deleteHistory(historyId);
+                }}
+            />
+
+            <ChatHistoryDrawer
+                visible={showHistoryDrawer}
+                onClose={() => setShowHistoryDrawer(false)}
+                histories={chatHistories}
+                onSelectHistory={(history) => {
+                    loadHistory(history);
+                    setShowHistoryDrawer(false);
+                }}
+                onDeleteHistory={(historyId) => {
+                    void deleteHistory(historyId);
+                }}
+                onNewChat={() => {
+                    seededConversationKeyRef.current = null;
+                    startNewChat();
+                    setShowHistoryDrawer(false);
+                }}
             />
 
             <CharacterSelector
                 visible={showCharacterSelector}
                 onClose={() => setShowCharacterSelector(false)}
-                onSelect={(character) => setSelectedCharacter(character)}
+                onSelect={(character) => {
+                    if (character?.id !== selectedCharacter?.id) {
+                        seededConversationKeyRef.current = null;
+                        startNewChat();
+                    }
+                    setSelectedCharacter(character);
+                    if (character && isAdultCharacter(character)) {
+                        setNsfwMode(true);
+                    }
+                }}
                 selectedCharacter={selectedCharacter}
-            />
-
-            <SubscriptionDrawer
-                visible={showSubscriptionDrawer}
-                onClose={() => setShowSubscriptionDrawer(false)}
-                onSubscribe={() => setShowSubscriptionDrawer(false)}
             />
 
             <DataFeedDrawer
                 visible={showDataFeedDrawer}
                 onClose={() => setShowDataFeedDrawer(false)}
-            />
-
-            <SupportPopup
-                visible={showSupportPopup}
-                onClose={() => setShowSupportPopup(false)}
-                onUpgrade={() => { setShowSupportPopup(false); setShowSubscriptionDrawer(true); }}
-            />
-
-            <UpgradeDrawer
-                visible={showUpgradeDrawer}
-                onClose={() => setShowUpgradeDrawer(false)}
-                onUpgrade={() => { setShowUpgradeDrawer(false); setShowSubscriptionDrawer(true); }}
-                feature={upgradeFeature}
             />
         </View>
     );
@@ -539,8 +582,6 @@ const styles = StyleSheet.create({
     headerTitle: { fontSize: fontSize.xl, fontWeight: '700' },
     avatarButton: { marginLeft: spacing.xs },
     avatar: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-    tokenBadge: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.full, borderWidth: 1, gap: 4 },
-    tokenText: { fontSize: 12, fontWeight: '700' },
     welcomeContainer: { paddingHorizontal: spacing.lg, paddingTop: spacing.xl, paddingBottom: spacing.md, flex: 1 },
     greeting: { fontSize: 18, fontWeight: '400', marginBottom: spacing.xs },
     promoText: { fontSize: 26, fontWeight: '500', lineHeight: 34, marginBottom: spacing.xl },

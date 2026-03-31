@@ -11,13 +11,10 @@ import {
     StyleSheet,
     ScrollView,
     Animated,
-    Dimensions,
-    Platform,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useTheme, spacing, borderRadius, fontSize, isTablet, isLargeScreen } from '@/constants/theme';
+import { useTheme, spacing, borderRadius, fontSize, isTablet } from '@/constants/theme';
 import { useAuth } from '@/hooks';
 import { historyAPI, ChatHistory } from '@/services/profileAPI';
 
@@ -47,16 +44,16 @@ export default function Sidebar({
 
     useEffect(() => {
         Animated.spring(slideAnim, {
-            toValue: isOpen ? 0 : - SIDEBAR_WIDTH,
+            toValue: isOpen ? 0 : -SIDEBAR_WIDTH,
             useNativeDriver: true,
             damping: 20,
             stiffness: 200,
         }).start();
-    }, [isOpen]);
+    }, [isOpen, slideAnim]);
 
     useEffect(() => {
         if (user && isOpen) {
-            loadHistory();
+            void loadHistory();
         }
     }, [user, isOpen]);
 
@@ -89,7 +86,6 @@ export default function Sidebar({
         return date.toLocaleDateString();
     };
 
-    // Group history by date
     const groupedHistory = history.reduce((acc, chat) => {
         const date = formatDate(chat.updated_at);
         if (!acc[date]) acc[date] = [];
@@ -97,15 +93,10 @@ export default function Sidebar({
         return acc;
     }, {} as Record<string, ChatHistory[]>);
 
-    // For non-tablet, render as overlay
     if (!isTablet) {
         if (!isOpen) return null;
         return (
-            <TouchableOpacity
-                style={styles.overlay}
-                activeOpacity={1}
-                onPress={onClose}
-            >
+            <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
                 <Animated.View
                     style={[
                         styles.sidebarMobile,
@@ -127,7 +118,6 @@ export default function Sidebar({
                             onNewChat={onNewChat}
                             onSelectChat={onSelectChat}
                             onLogout={handleLogout}
-                            router={router}
                         />
                     </TouchableOpacity>
                 </Animated.View>
@@ -135,7 +125,6 @@ export default function Sidebar({
         );
     }
 
-    // For tablet/desktop, render as fixed sidebar
     return (
         <View
             style={[
@@ -156,16 +145,13 @@ export default function Sidebar({
                 onNewChat={onNewChat}
                 onSelectChat={onSelectChat}
                 onLogout={handleLogout}
-                router={router}
             />
         </View>
     );
 }
 
-// Sidebar content component
 function SidebarContent({
     theme,
-    isDark,
     profile,
     history,
     isLoading,
@@ -173,11 +159,9 @@ function SidebarContent({
     onNewChat,
     onSelectChat,
     onLogout,
-    router,
 }: any) {
     return (
         <>
-            {/* Header */}
             <View style={styles.header}>
                 <View style={styles.logoRow}>
                     <View style={[styles.logoCircle, { backgroundColor: theme.colors.primary + '20' }]}>
@@ -194,25 +178,18 @@ function SidebarContent({
                 </TouchableOpacity>
             </View>
 
-            {/* History */}
             <ScrollView style={styles.historyContainer} showsVerticalScrollIndicator={false}>
                 {isLoading ? (
-                    <Text style={[styles.loadingText, { color: theme.colors.textMuted }]}>
-                        Loading...
-                    </Text>
+                    <Text style={[styles.loadingText, { color: theme.colors.textMuted }]}>Loading...</Text>
                 ) : Object.keys(history).length === 0 ? (
                     <View style={styles.emptyState}>
                         <Ionicons name="chatbubbles-outline" size={32} color={theme.colors.textMuted} />
-                        <Text style={[styles.emptyText, { color: theme.colors.textMuted }]}>
-                            No chat history
-                        </Text>
+                        <Text style={[styles.emptyText, { color: theme.colors.textMuted }]}>No chat history</Text>
                     </View>
                 ) : (
                     Object.entries(history).map(([date, chats]) => (
                         <View key={date} style={styles.historyGroup}>
-                            <Text style={[styles.historyDate, { color: theme.colors.textMuted }]}>
-                                {date}
-                            </Text>
+                            <Text style={[styles.historyDate, { color: theme.colors.textMuted }]}>{date}</Text>
                             {(chats as ChatHistory[]).map((chat) => (
                                 <TouchableOpacity
                                     key={chat.id}
@@ -245,40 +222,7 @@ function SidebarContent({
                 )}
             </ScrollView>
 
-            {/* Footer */}
             <View style={[styles.footer, { borderTopColor: theme.colors.sidebarBorder }]}>
-                {/* Token Status */}
-                {profile && (
-                    <TouchableOpacity
-                        style={[styles.tokenCard, { backgroundColor: theme.colors.surfaceLight }]}
-                        onPress={() => router.push('/subscription')}
-                    >
-                        <View style={styles.tokenRow}>
-                            <Ionicons name="flash" size={16} color={theme.colors.primary} />
-                            <Text style={[styles.tokenText, { color: theme.colors.text }]}>
-                                {profile.tokens_used}/{profile.tokens_limit} tokens
-                            </Text>
-                        </View>
-                        <View style={[styles.tokenBar, { backgroundColor: theme.colors.surfaceBorder }]}>
-                            <View
-                                style={[
-                                    styles.tokenFill,
-                                    {
-                                        backgroundColor: theme.colors.primary,
-                                        width: `${(profile.tokens_used / profile.tokens_limit) * 100}%`,
-                                    },
-                                ]}
-                            />
-                        </View>
-                        {profile.subscription_tier === 'free' && (
-                            <Text style={[styles.upgradeHint, { color: theme.colors.primary }]}>
-                                Upgrade to Pro →
-                            </Text>
-                        )}
-                    </TouchableOpacity>
-                )}
-
-                {/* Profile & Logout */}
                 <View style={styles.userRow}>
                     <View style={styles.userInfo}>
                         <View style={[styles.avatar, { backgroundColor: theme.colors.primary }]}>
@@ -290,9 +234,7 @@ function SidebarContent({
                             <Text style={[styles.userName, { color: theme.colors.text }]} numberOfLines={1}>
                                 {profile?.display_name || 'User'}
                             </Text>
-                            <Text style={[styles.userTier, { color: theme.colors.textMuted }]}>
-                                {profile?.subscription_tier === 'pro' ? 'Pro' : 'Free'} Plan
-                            </Text>
+                            <Text style={[styles.userTier, { color: theme.colors.textMuted }]}>Signed in</Text>
                         </View>
                     </View>
                     <TouchableOpacity onPress={onLogout} style={styles.logoutBtn}>
@@ -401,34 +343,6 @@ const styles = StyleSheet.create({
     footer: {
         padding: spacing.md,
         borderTopWidth: 1,
-        gap: spacing.md,
-    },
-    tokenCard: {
-        padding: spacing.sm,
-        borderRadius: borderRadius.md,
-        gap: spacing.xs,
-    },
-    tokenRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.xs,
-    },
-    tokenText: {
-        fontSize: fontSize.xs,
-        fontWeight: '500',
-    },
-    tokenBar: {
-        height: 4,
-        borderRadius: 2,
-        overflow: 'hidden',
-    },
-    tokenFill: {
-        height: '100%',
-    },
-    upgradeHint: {
-        fontSize: fontSize.xs,
-        fontWeight: '600',
-        marginTop: 2,
     },
     userRow: {
         flexDirection: 'row',

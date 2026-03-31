@@ -266,23 +266,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const hasTokensAvailable = async (): Promise<boolean> => {
-        if (!profile) return false;
-        return profile.tokens_used < profile.tokens_limit;
+        return true;
     };
 
-    const useTokens = async (amount: number): Promise<boolean> => {
-        if (!user?.id) return false;
-
-        try {
-            const success = await profileAPI.useTokens(user.id, amount);
-            if (success) {
-                await refreshProfile();
-            }
-            return success;
-        } catch (error) {
-            console.error('Error using tokens:', error);
-            return false;
-        }
+    const useTokens = async (_amount: number): Promise<boolean> => {
+        return true;
     };
 
     return (

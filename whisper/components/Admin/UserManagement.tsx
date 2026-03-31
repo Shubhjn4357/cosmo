@@ -11,7 +11,6 @@ interface User {
     id: string;
     email: string;
     display_name: string;
-    subscription_tier: 'free' | 'pro';
     created_at: string;
     banned: boolean;
 }
@@ -46,26 +45,6 @@ export function UserManagement({ serverUrl, adminToken }: UserManagementProps) {
             console.error('Failed to fetch users:', e);
         }
         setLoading(false);
-    };
-
-    const upgradeUser = async (userId: string, tier: 'free' | 'pro') => {
-        try {
-            const response = await fetch(`${serverUrl}/api/admin/users/${userId}/subscription`, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${adminToken}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ tier })
-            });
-            const data = await response.json();
-            if (data.success) {
-                fetchUsers();
-                setSelectedUser(null);
-            }
-        } catch (e) {
-            console.error('Failed to upgrade user:', e);
-        }
     };
 
     const banUser = async (userId: string, banned: boolean) => {
@@ -122,13 +101,6 @@ export function UserManagement({ serverUrl, adminToken }: UserManagementProps) {
                             </Text>
                         </View>
                         <View style={styles.userBadges}>
-                            <View style={[styles.badge, {
-                                backgroundColor: item.subscription_tier === 'pro' ? '#FFD700' : '#CCCCCC'
-                            }]}>
-                                <Text style={styles.badgeText}>
-                                    {item.subscription_tier.toUpperCase()}
-                                </Text>
-                            </View>
                             {item.banned && (
                                 <View style={[styles.badge, { backgroundColor: '#EF4444' }]}>
                                     <Text style={styles.badgeText}>BANNED</Text>
@@ -155,19 +127,9 @@ export function UserManagement({ serverUrl, adminToken }: UserManagementProps) {
                                 <Text style={[styles.detailText, { color: theme.colors.text }]}>
                                     Email: {selectedUser.email}
                                 </Text>
-                                <Text style={[styles.detailText, { color: theme.colors.text }]}>
-                                    Tier: {selectedUser.subscription_tier}
-                                </Text>
 
                                 {/* Actions */}
                                 <View style={styles.actions}>
-                                    <TouchableOpacity
-                                        style={[styles.actionBtn, { backgroundColor: '#FFD700' }]}
-                                        onPress={() => upgradeUser(selectedUser.id, 'pro')}
-                                    >
-                                        <Text style={styles.actionBtnText}>Upgrade to Pro</Text>
-                                    </TouchableOpacity>
-
                                     <TouchableOpacity
                                         style={[styles.actionBtn, { backgroundColor: '#EF4444' }]}
                                         onPress={() => banUser(selectedUser.id, !selectedUser.banned)}

@@ -3,7 +3,7 @@
  * New user registration with email/password or Native Google
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     View,
     Text,
@@ -20,24 +20,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
+import { ensureGoogleSigninConfigured, performNativeGoogleSignin } from '@/services/googleSignin';
 import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 import { useToast } from '@/components/Toast';
-import {
-    GoogleSignin,
-    statusCodes,
-    isSuccessResponse,
-    isErrorWithCode,
-} from '@react-native-google-signin/google-signin';
-
-// Configure Google Sign-In (same config as login)
-if (Platform.OS !== 'web') {
-    GoogleSignin.configure({
-        webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-        iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-        offlineAccess: true,
-        scopes: ['profile', 'email'],
-    });
-}
 
 export default function SignupScreen() {
     const { theme } = useTheme();
@@ -51,6 +36,28 @@ export default function SignupScreen() {
     const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+    const [isGoogleAvailable, setIsGoogleAvailable] = useState(false);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const prepareGoogleSignin = async () => {
+            if (Platform.OS === 'web') {
+                return;
+            }
+
+            const available = await ensureGoogleSigninConfigured();
+            if (mounted) {
+                setIsGoogleAvailable(available);
+            }
+        };
+
+        void prepareGoogleSignin();
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
 
     const validateForm = () => {
         if (!email.trim() || !password.trim()) {
@@ -89,28 +96,49 @@ export default function SignupScreen() {
         }
         setIsGoogleLoading(true);
         try {
-            await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-            const response = await GoogleSignin.signIn();
+            const result = await performNativeGoogleSignin();
 
-            if (isSuccessResponse(response)) {
-                const { idToken } = response.data;
-                if (idToken) {
-                    const result = await signInWithGoogle(idToken);
-                    if (result.success) {
-                        router.replace('/(tabs)');
-                    } else {
-                        toast.error('Error', result.error || 'Failed to sign up with Google');
-                    }
-                } else {
+            if (!result.success) {
+                switch (result.reason) {
+                    case 'sign_in_cancelled':
+                        return;
+                    case 'in_progress':
+                        toast.info('Please wait', 'Sign-in is in progress');
+                        return;
+                    case 'play_services_unavailable':
+                        toast.error('Error', 'Google Play Services not available');
+                        return;
+                    case 'module_unavailable':
+                    case 'configure_failed':
+                    case 'missing_client_id':
+                        toast.error(
+                            'Unavailable',
+                            'Google Sign-In is unavailable in this build. Use email sign-up instead.'
+                        );
+                        setIsGoogleAvailable(false);
+                        return;
+                    default:
+                        console.error('Google sign-up error:', result.error);
+                        toast.error('Error', 'Google sign-up failed');
+                        return;
+                }
+            }
+
+            if (result.idToken) {
+                const authResult = await signInWithGoogle(result.idToken);
+                if (authResult.success) {
                     router.replace('/(tabs)');
+                } else {
+                    toast.error('Error', authResult.error || 'Failed to sign up with Google');
                 }
+                return;
             }
-        } catch (error) {
-            if (isErrorWithCode(error)) {
-                if (error.code !== statusCodes.SIGN_IN_CANCELLED) {
-                    toast.error('Error', 'Google sign-up failed');
-                }
-            }
+
+            toast.success(
+                'Success',
+                `Welcome, ${result.user?.name || result.user?.email || 'there'}!`
+            );
+            router.replace('/(tabs)');
         } finally {
             setIsGoogleLoading(false);
         }
@@ -279,7 +307,7 @@ export default function SignupScreen() {
                             <TouchableOpacity
                                 style={[styles.googleBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}
                                 onPress={handleGoogleSignup}
-                                disabled={isGoogleLoading}
+                                disabled={isGoogleLoading || !isGoogleAvailable}
                             >
                                 {isGoogleLoading ? (
                                     <ActivityIndicator color={theme.colors.text} />
@@ -287,7 +315,7 @@ export default function SignupScreen() {
                                     <>
                                         <Ionicons name="logo-google" size={20} color="#DB4437" />
                                         <Text style={[styles.googleBtnText, { color: theme.colors.text }]}>
-                                            Sign up with Google
+                                            {isGoogleAvailable ? 'Sign up with Google' : 'Google Sign-In Unavailable'}
                                         </Text>
                                     </>
                                 )}

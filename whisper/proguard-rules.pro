@@ -13,3 +13,7 @@
 # Keep React Native Reanimated
 -keep class com.swmansion.reanimated.** { *; }
 -keep class com.facebook.react.turbomodule.** { *; }
+
+# Keep Google Sign-In native classes in release builds
+-dontwarn com.reactnativegooglesignin.**
+-keep class com.reactnativegooglesignin.** { *; }

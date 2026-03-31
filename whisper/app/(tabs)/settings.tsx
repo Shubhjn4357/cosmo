@@ -475,21 +475,6 @@ export default function SettingsScreen() {
                         <View style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
                             <TouchableOpacity
                                 style={styles.actionRow}
-                                onPress={() => router.push('/payment' as any)}
-                            >
-                                <View style={[styles.iconContainer, { backgroundColor: theme.colors.warning + '20' }]}>
-                                    <Ionicons name="card" size={20} color={theme.colors.warning} />
-                                </View>
-                                <Text style={[styles.actionLabel, { color: theme.colors.text }]}>
-                                    Upgrade to Pro
-                                </Text>
-                                <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-                            </TouchableOpacity>
-
-                            <View style={[styles.divider, { backgroundColor: theme.colors.surfaceBorder }]} />
-
-                            <TouchableOpacity
-                                style={styles.actionRow}
                                 onPress={() => router.push('/faceswap' as any)}
                             >
                                 <View style={[styles.iconContainer, { backgroundColor: theme.colors.primary + '20' }]}>
@@ -594,26 +579,6 @@ export default function SettingsScreen() {
                                     </Text>
                                     <Text style={[styles.settingHint, { color: theme.colors.textMuted }]}>
                                         Edit your profile settings
-                                    </Text>
-                                </View>
-                                <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />
-                            </TouchableOpacity>
-
-                            <View style={[styles.divider, { backgroundColor: theme.colors.surfaceBorder }]} />
-
-                            <TouchableOpacity
-                                style={styles.settingRow}
-                                onPress={() => router.push('/subscription')}
-                            >
-                                <View style={[styles.iconContainer, { backgroundColor: theme.colors.warning + '20' }]}>
-                                    <Ionicons name="diamond-outline" size={20} color={theme.colors.warning} />
-                                </View>
-                                <View style={styles.settingInfo}>
-                                    <Text style={[styles.settingLabel, { color: theme.colors.text }]}>
-                                        Subscription
-                                    </Text>
-                                    <Text style={[styles.settingHint, { color: theme.colors.textMuted }]}>
-                                        Manage your plan
                                     </Text>
                                 </View>
                                 <Ionicons name="chevron-forward" size={18} color={theme.colors.textMuted} />

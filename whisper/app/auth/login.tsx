@@ -21,24 +21,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/hooks/useAuth';
 import { whisperAPI } from '@/services/api';
+import { ensureGoogleSigninConfigured, performNativeGoogleSignin } from '@/services/googleSignin';
 import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 import { useToast } from '@/components/Toast';
-import {
-    GoogleSignin,
-    statusCodes,
-    isSuccessResponse,
-    isErrorWithCode,
-} from '@react-native-google-signin/google-signin';
-
-// Configure Google Sign-In on module load
-if (Platform.OS !== 'web') {
-    GoogleSignin.configure({
-        webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
-        iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID,
-        offlineAccess: true,
-        scopes: ['profile', 'email'],
-    });
-}
 
 export default function LoginScreen() {
     const { theme } = useTheme();
@@ -50,6 +35,28 @@ export default function LoginScreen() {
     const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+    const [isGoogleAvailable, setIsGoogleAvailable] = useState(false);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const prepareGoogleSignin = async () => {
+            if (Platform.OS === 'web') {
+                return;
+            }
+
+            const available = await ensureGoogleSigninConfigured();
+            if (mounted) {
+                setIsGoogleAvailable(available);
+            }
+        };
+
+        void prepareGoogleSignin();
+
+        return () => {
+            mounted = false;
+        };
+    }, []);
 
     const handleLogin = async () => {
         if (!email.trim() || !password.trim()) {
@@ -76,54 +83,49 @@ export default function LoginScreen() {
         }
         setIsGoogleLoading(true);
         try {
-            // Check if Google Play Services are available (Android)
-            await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-            
-            // Perform native sign-in
-            const response = await GoogleSignin.signIn();
-            
-            if (isSuccessResponse(response)) {
-                // Get the ID token for backend verification
-                const { idToken } = response.data;
-                
-                if (idToken) {
-                    // Send to our backend via Supabase
-                    const result = await signInWithGoogle(idToken);
-                    if (result.success) {
-                        router.replace('/(tabs)');
-                    } else {
-                        toast.error('Error', result.error || 'Failed to sign in with Google');
-                    }
-                } else {
-                    // If no idToken, use user info directly
-                    const userInfo = response.data.user;
-                    // console.log('Google user info:', userInfo);
-                    toast.success('Success', `Welcome, ${userInfo.name}!`);
-                    router.replace('/(tabs)');
-                }
-            }
-        } catch (error) {
-            if (isErrorWithCode(error)) {
-                switch (error.code) {
-                    case statusCodes.SIGN_IN_CANCELLED:
-                        // User cancelled the sign-in flow
-                        console.log('Sign-in cancelled');
-                        break;
-                    case statusCodes.IN_PROGRESS:
-                        // Sign-in already in progress
+            const result = await performNativeGoogleSignin();
+
+            if (!result.success) {
+                switch (result.reason) {
+                    case 'sign_in_cancelled':
+                        return;
+                    case 'in_progress':
                         toast.info('Please wait', 'Sign-in is in progress');
-                        break;
-                    case statusCodes.PLAY_SERVICES_NOT_AVAILABLE:
+                        return;
+                    case 'play_services_unavailable':
                         toast.error('Error', 'Google Play Services not available');
-                        break;
+                        return;
+                    case 'module_unavailable':
+                    case 'configure_failed':
+                    case 'missing_client_id':
+                        toast.error(
+                            'Unavailable',
+                            'Google Sign-In is unavailable in this build. Use email sign-in instead.'
+                        );
+                        setIsGoogleAvailable(false);
+                        return;
                     default:
-                        console.error('Google sign-in error:', error);
+                        console.error('Google sign-in error:', result.error);
                         toast.error('Error', 'Google sign-in failed');
+                        return;
                 }
-            } else {
-                console.error('Unknown error:', error);
-                toast.error('Error', 'An unexpected error occurred');
             }
+
+            if (result.idToken) {
+                const authResult = await signInWithGoogle(result.idToken);
+                if (authResult.success) {
+                    router.replace('/(tabs)');
+                } else {
+                    toast.error('Error', authResult.error || 'Failed to sign in with Google');
+                }
+                return;
+            }
+
+            toast.success(
+                'Success',
+                `Welcome, ${result.user?.name || result.user?.email || 'there'}!`
+            );
+            router.replace('/(tabs)');
         } finally {
             setIsGoogleLoading(false);
         }
@@ -239,7 +241,7 @@ export default function LoginScreen() {
                             <TouchableOpacity
                                 style={[styles.googleButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}
                                 onPress={handleGoogleLogin}
-                                disabled={isGoogleLoading}
+                                disabled={isGoogleLoading || !isGoogleAvailable}
                             >
                                 {isGoogleLoading ? (
                                     <ActivityIndicator color={theme.colors.text} />
@@ -247,7 +249,7 @@ export default function LoginScreen() {
                                     <>
                                         <Ionicons name="logo-google" size={20} color="#DB4437" />
                                         <Text style={[styles.googleButtonText, { color: theme.colors.text }]}>
-                                            Continue with Google
+                                            {isGoogleAvailable ? 'Continue with Google' : 'Google Sign-In Unavailable'}
                                         </Text>
                                     </>
                                 )}
