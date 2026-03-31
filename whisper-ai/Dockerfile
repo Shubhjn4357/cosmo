@@ -7,13 +7,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH \
+    PYTHONUSERBASE=/data/whisper/runtime/python-user-base \
+    PATH=/data/whisper/runtime/python-user-base/bin:/home/user/.local/bin:$PATH \
     HF_HOME=/data/.huggingface \
     TRANSFORMERS_CACHE=/data/.cache/huggingface \
     HUGGINGFACE_HUB_CACHE=/data/.cache/huggingface/hub \
     WHISPER_DATA_ROOT=/data/whisper \
     WHISPER_MODELS_DIR=/data/whisper/models \
     WHISPER_UPLOADS_DIR=/data/whisper/uploads \
+    WHISPER_BOOTSTRAP_GGUF_RUNTIME=true \
     PORT=7860 \
     HOST=0.0.0.0
 

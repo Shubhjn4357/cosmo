@@ -16,6 +16,7 @@ from .auth import verify_admin_token
 from services.google_auth import google_auth_status
 from .profile import _sanitize_profile, get_supabase
 from api.routes.payment import get_active_plans, payment_gateway_status, validate_payment_gateway
+from services.gguf_bootstrap import get_gguf_bootstrap_status, start_gguf_runtime_bootstrap
 from services.admin_state import get_model_enabled, set_model_enabled, upsert_payment_plan
 from services.model_manager import get_profile, get_profiles, queue_profile_download, runtime_profiles_payload, validate_profile
 from services.runtime_manager import RuntimeConfig
@@ -469,6 +470,7 @@ def _control_center_payload(app_state) -> dict[str, Any]:
     runtime_profiles = runtime_profiles_payload(selected_profile)
     readiness = _readiness_report(app_state)
     self_learner = _self_learner_summary()
+    gguf_bootstrap = get_gguf_bootstrap_status()
 
     return {
         "generated_at": time.time(),
@@ -478,6 +480,7 @@ def _control_center_payload(app_state) -> dict[str, Any]:
         "jobs": jobs,
         "logs": _job_logs_snapshot(jobs),
         "runtime_profiles": runtime_profiles,
+        "gguf_bootstrap": gguf_bootstrap,
         "readiness": readiness,
         "hf_sync": hf_sync_status(),
         "datasets": _collect_dataset_payload(),
@@ -565,6 +568,7 @@ async def get_runtime_status():
         "runtime": runtime,
         "knowledge": knowledge,
         "research": dict(RESEARCH_STATS),
+        "gguf_bootstrap": get_gguf_bootstrap_status(),
         "uptime_seconds": int(time.time() - app_state.start_time),
         "flags": {
             "is_training": app_state.is_training,
@@ -699,6 +703,14 @@ async def download_runtime_profile(profile_id: str, payload: dict = Depends(veri
     }
 
 
+@router.post("/runtime/bootstrap/gguf")
+async def bootstrap_gguf_runtime(payload: dict = Depends(verify_admin_token)):
+    return {
+        "status": "started",
+        "bootstrap": start_gguf_runtime_bootstrap(),
+    }
+
+
 @router.post("/runtime/validate")
 async def validate_runtime_profile(
     request: RuntimeProfileValidationRequest,
@@ -736,6 +748,11 @@ async def get_runtime_download_jobs(payload: dict = Depends(verify_admin_token))
     if app_state.chat_runtime is not None:
         selected_profile = app_state.chat_runtime.get_selected_profile()
     return runtime_profiles_payload(selected_profile)
+
+
+@router.get("/runtime/bootstrap-status")
+async def get_runtime_bootstrap_status(payload: dict = Depends(verify_admin_token)):
+    return get_gguf_bootstrap_status()
 
 
 # ============================================================================

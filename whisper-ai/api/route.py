@@ -135,6 +135,7 @@ def _background_feature_enabled(env_name: str, default: bool = True) -> bool:
 
 async def _startup(app: FastAPI):
     from api.routes.profile import get_supabase
+    from services.gguf_bootstrap import start_gguf_runtime_bootstrap
     from services.hf_keepalive import get_keepalive, keepalive_enabled
 
     startup_start = time.time()
@@ -209,6 +210,16 @@ async def _startup(app: FastAPI):
             run_verification(app)
         except Exception as exc:
             logger.warning(f"Startup verification skipped: {exc}")
+
+        try:
+            bootstrap_status = start_gguf_runtime_bootstrap()
+            logger.info(
+                "GGUF bootstrap status: {} ({})",
+                bootstrap_status.get("status"),
+                bootstrap_status.get("stage"),
+            )
+        except Exception as exc:
+            logger.warning(f"GGUF runtime bootstrap skipped: {exc}")
 
     logger.info(f"Server started in {time.time() - startup_start:.2f}s")
 

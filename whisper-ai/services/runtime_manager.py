@@ -193,10 +193,16 @@ def _resolve_llama_cli_path() -> Optional[Path]:
 
     candidates.extend(
         [
+            Path(".tools/llama-bin/llama-completion"),
+            Path(".tools/llama-bin/llama-cli"),
             Path(".tools/llama-bin/llama-completion.exe"),
             Path(".tools/llama-bin/llama-cli.exe"),
+            Path(".tools/llama-completion"),
+            Path(".tools/llama-cli"),
             Path(".tools/llama-completion.exe"),
             Path(".tools/llama-cli.exe"),
+            MODELS_DIR / "llama-bin" / "llama-completion",
+            MODELS_DIR / "llama-bin" / "llama-cli",
             MODELS_DIR / "llama-bin" / "llama-completion.exe",
             MODELS_DIR / "llama-bin" / "llama-cli.exe",
         ]

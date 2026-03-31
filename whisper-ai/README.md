@@ -76,6 +76,9 @@ Relevant env vars:
 - `WHISPER_AUTO_COLLECTION_ENABLED=true|false`
 - `WHISPER_AUTO_RESEARCH_ENABLED=true|false`
 - `WHISPER_AUTO_TRAINING_ENABLED=true|false`
+- `WHISPER_BOOTSTRAP_GGUF_RUNTIME=true|false`
+- `WHISPER_BOOTSTRAP_GGUF_DOWNLOAD=true|false`
+- `WHISPER_BOOTSTRAP_GGUF_INSTALL=true|false`
 
 `low-power` caps thread counts more aggressively and disables background
 collection, research, and auto-training unless you explicitly re-enable them.
@@ -86,6 +89,7 @@ The Docker image sets:
 - `WHISPER_DB_PATH=/data/whisper/db/whisper.db`
 - `WHISPER_MODELS_DIR=/data/whisper/models`
 - `WHISPER_UPLOADS_DIR=/data/whisper/uploads`
+- `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`
 
 If persistent storage is attached, local downloads and generated files can live there.
 
@@ -406,8 +410,10 @@ Admin endpoints:
 - `POST /api/admin/runtime-profiles/select`
 - `POST /api/admin/runtime/validate`
 - `POST /api/admin/runtime/download/{profile_id}`
+- `POST /api/admin/runtime/bootstrap/gguf`
 - `POST /api/admin/runtime/reload`
 - `POST /api/admin/runtime/unload`
+- `GET /api/admin/runtime/bootstrap-status`
 
 `GET /api/admin/control-center` returns the aggregated payload used by the
 admin AI control page: runtime state, readiness, self-learner status, dataset
@@ -436,5 +442,7 @@ validation outcome instead of key presence alone.
 
 - On free HF CPU, `auto` is the practical default. It will use GGUF when a local artifact is ready and otherwise fall back to the fast transformers coder profile.
 - The Docker Space build now defaults `INSTALL_GGUF_RUNTIME=false` so the optional `llama-cpp-python` backend is not compiled on every deploy.
+- The Docker runtime sets `WHISPER_BOOTSTRAP_GGUF_RUNTIME=true`, so once the API is up it can download the GGUF asset and build `llama-cpp-python` in the background instead of blocking the image build.
+- Background GGUF installs use `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`, so attached persistent storage can keep the compiled runtime between restarts.
 - Large fully local multimodal operation still needs stronger hardware.
-- If you want GGUF inference in the Space, set `INSTALL_GGUF_RUNTIME=true` during Docker build and expect a much slower image build.
+- If you still want GGUF compiled during the Docker build itself, set `INSTALL_GGUF_RUNTIME=true` and expect a much slower image build.
