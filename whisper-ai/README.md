@@ -435,5 +435,6 @@ validation outcome instead of key presence alone.
 ## Notes
 
 - On free HF CPU, `auto` is the practical default. It will use GGUF when a local artifact is ready and otherwise fall back to the fast transformers coder profile.
+- The Docker Space build now defaults `INSTALL_GGUF_RUNTIME=false` so the optional `llama-cpp-python` backend is not compiled on every deploy.
 - Large fully local multimodal operation still needs stronger hardware.
-- If you want GGUF inference in the Space, keep `INSTALL_GGUF_RUNTIME=true` during Docker build.
+- If you want GGUF inference in the Space, set `INSTALL_GGUF_RUNTIME=true` during Docker build and expect a much slower image build.
