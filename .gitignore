@@ -1,0 +1,45 @@
+# Workspace temp and generated outputs
+.playwright-cli/
+.playwright-cli-*
+output/
+.tmp-hfcheck*/
+data/
+models/
+uploads/
+
+# Logs and runtime artifacts
+*.log
+*.out
+*.err
+*.pid
+*.tmp
+*.temp
+
+# Python cache and virtualenvs
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+.venv/
+venv/
+env/
+
+# Node / Expo / React Native artifacts
+**/node_modules/
+whisper/.expo/
+whisper/.expo-shared/
+whisper/dist/
+whisper/web-build/
+whisper/android/.gradle/
+whisper/android/app/build/
+whisper/ios/build/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.zed/

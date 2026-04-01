@@ -281,11 +281,11 @@ def test_admin_model_toggles_affect_public_behavior(server, admin_headers):
     assert models.status_code == 200
     model_ids = {model["id"] for model in models.json()["models"]}
     assert "runtime.fast-coder" in model_ids
-    assert "image.dreamshaper-8" in model_ids
+    assert "image.cyberrealistic-v9" in model_ids
     assert "smart.local" in model_ids
 
     disable_image = requests.post(
-        f"{server.base_url}/api/admin/models/image.dreamshaper-8/toggle",
+        f"{server.base_url}/api/admin/models/image.cyberrealistic-v9/toggle",
         headers=admin_headers,
         params={"enabled": "false"},
         timeout=60,
@@ -296,15 +296,15 @@ def test_admin_model_toggles_affect_public_behavior(server, admin_headers):
     image_models = requests.get(f"{server.base_url}/api/image/models", timeout=60)
     assert image_models.status_code == 200
     image_ids = {model["id"] for model in image_models.json()["models"]}
-    assert "dreamshaper-8" not in image_ids
+    assert "cyberrealistic-v9" not in image_ids
 
     disabled_image = requests.post(
         f"{server.base_url}/api/image/generate",
         json={
             "prompt": "disabled model test",
-            "model_id": "dreamshaper-8",
+            "model_id": "cyberrealistic-v9",
             "session_id": "pytest-disabled-image",
-            "is_local": False,
+            "is_local": True,
         },
         timeout=60,
     )
@@ -409,9 +409,9 @@ def test_admin_analytics_tracks_real_requests(server, admin_headers):
         f"{server.base_url}/api/image/generate",
         json={
             "prompt": "analytics image probe",
-            "model_id": "flux-schnell",
+            "model_id": "cyberrealistic-v9",
             "session_id": "pytest-analytics-image",
-            "is_local": False,
+            "is_local": True,
             "width": 256,
             "height": 256,
         },

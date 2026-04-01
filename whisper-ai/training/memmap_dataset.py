@@ -149,7 +149,10 @@ class MemmapDataset(Dataset):
         
         # Update metadata
         self.metadata["total_tokens"] = total_needed
-        self.metadata["num_sequences"] = total_needed // self.config.max_seq_len
+        if total_needed <= 1:
+            self.metadata["num_sequences"] = 0
+        else:
+            self.metadata["num_sequences"] = max(0, (total_needed - 1) // self.config.max_seq_len)
         self._save_metadata()
         
         # Flush to disk
@@ -164,13 +167,20 @@ class MemmapDataset(Dataset):
         """
         if self.tokenizer is None:
             raise ValueError("Tokenizer required to add text")
-        
+
         tokens = self.tokenizer.encode(text, add_special_tokens=False)
+        eos_id = getattr(self.tokenizer, "eos_id", None)
+        if eos_id is not None:
+            tokens = [*tokens, eos_id]
         self.add_tokens(tokens)
     
     def __len__(self) -> int:
         """Return number of complete sequences."""
-        return self.metadata["num_sequences"]
+        total_tokens = int(self.metadata.get("total_tokens", 0))
+        seq_len = int(self.config.max_seq_len)
+        if total_tokens <= 1 or seq_len <= 0:
+            return 0
+        return max(0, (total_tokens - 1) // seq_len)
     
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -185,6 +195,9 @@ class MemmapDataset(Dataset):
         seq_len = self.config.max_seq_len
         start = idx * seq_len
         end = start + seq_len + 1  # +1 for labels offset
+        total_tokens = int(self.metadata.get("total_tokens", 0))
+        if end > total_tokens:
+            raise IndexError(f"Sequence {idx} exceeds available token window")
         
         # Get tokens
         tokens = self.data[start:end].copy()
@@ -233,7 +246,8 @@ class StreamingMemmapDataset(IterableDataset):
         )
         
         seq_len = self.config.max_seq_len
-        num_seqs = self.metadata["total_tokens"] // (seq_len + 1)
+        total_tokens = int(self.metadata.get("total_tokens", 0))
+        num_seqs = max(0, (total_tokens - 1) // seq_len)
         
         for idx in range(num_seqs):
             start = idx * seq_len

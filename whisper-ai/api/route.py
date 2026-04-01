@@ -27,6 +27,7 @@ apply_process_tuning()
 
 from api.routes import (
     admin,
+    agent,
     analytics,
     auth,
     characters,
@@ -133,7 +134,7 @@ def _background_feature_enabled(env_name: str, default: bool = True) -> bool:
 
 
 async def _startup(app: FastAPI):
-    from api.routes.profile import get_supabase
+    from api.routes.profile import get_db_client
     from services.catalog_bootstrap import start_catalog_bootstrap
     from services.gguf_bootstrap import start_gguf_runtime_bootstrap
     from services.hf_keepalive import get_keepalive, keepalive_enabled
@@ -143,7 +144,7 @@ async def _startup(app: FastAPI):
     logger.info("Whisper AI starting")
 
     try:
-        get_supabase()
+        get_db_client()
         logger.info("Application database ready")
     except Exception as exc:
         logger.warning(f"Database initialization skipped: {exc}")
@@ -304,6 +305,7 @@ app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
+app.include_router(agent.router, prefix="/api", tags=["Agent"])
 app.include_router(image.router, prefix="/api", tags=["Image"])
 app.include_router(files.router, prefix="/api", tags=["Files"])
 app.include_router(knowledge.router, prefix="/api", tags=["Knowledge"])

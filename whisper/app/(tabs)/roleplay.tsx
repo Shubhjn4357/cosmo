@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { UnifiedChatScreen } from '@/components/chat/UnifiedChatScreen';
 import { borderRadius, fontSize, spacing, useTheme } from '@/constants/theme';
+import { useAppPreferences } from '@/hooks';
 import { characterService, type RoleplayCharacter } from '@/services/characterService';
 
 function resolveAvatarSource(character: RoleplayCharacter) {
@@ -23,16 +24,16 @@ function resolveAvatarSource(character: RoleplayCharacter) {
 
 export default function RoleplayScreen() {
     const { theme } = useTheme();
+    const { nsfwEnabled, setNsfwEnabled } = useAppPreferences();
     const [characters, setCharacters] = useState<RoleplayCharacter[]>([]);
     const [loading, setLoading] = useState(true);
-    const [showAdult, setShowAdult] = useState(true);
     const [query, setQuery] = useState('');
     const [selectedCharacter, setSelectedCharacter] = useState<RoleplayCharacter | null>(null);
 
     const loadCharacters = useCallback(async () => {
         setLoading(true);
         try {
-            const nextCharacters = await characterService.getCharacters(showAdult);
+            const nextCharacters = await characterService.getCharacters(nsfwEnabled);
             setCharacters(nextCharacters);
         } catch (error) {
             console.error('Failed to load roleplay characters:', error);
@@ -40,7 +41,7 @@ export default function RoleplayScreen() {
         } finally {
             setLoading(false);
         }
-    }, [showAdult]);
+    }, [nsfwEnabled]);
 
     useEffect(() => {
         void loadCharacters();
@@ -85,13 +86,15 @@ export default function RoleplayScreen() {
                         style={[
                             styles.adultToggle,
                             {
-                                backgroundColor: showAdult ? theme.colors.error + '18' : theme.colors.surface,
-                                borderColor: showAdult ? theme.colors.error : theme.colors.surfaceBorder,
+                                backgroundColor: nsfwEnabled ? theme.colors.error + '18' : theme.colors.surface,
+                                borderColor: nsfwEnabled ? theme.colors.error : theme.colors.surfaceBorder,
                             },
                         ]}
-                        onPress={() => setShowAdult((previous) => !previous)}
+                        onPress={() => {
+                            void setNsfwEnabled(!nsfwEnabled);
+                        }}
                     >
-                        <Text style={[styles.adultToggleText, { color: showAdult ? theme.colors.error : theme.colors.textMuted }]}>
+                        <Text style={[styles.adultToggleText, { color: nsfwEnabled ? theme.colors.error : theme.colors.textMuted }]}>
                             18+
                         </Text>
                     </TouchableOpacity>

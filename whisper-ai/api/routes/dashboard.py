@@ -7,14 +7,14 @@ from fastapi import APIRouter, Depends
 from datetime import datetime, timedelta
 from loguru import logger
 from .auth import verify_admin_token
-from .profile import get_supabase
+from .profile import get_db_client
 
 # Create router
 dashboard_router = APIRouter()
 @dashboard_router.get("/stats")
 async def get_dashboard_stats(payload: dict = Depends(verify_admin_token)):
     """Get dashboard statistics"""
-    supabase = get_supabase()
+    db_client = get_db_client()
     
     stats = {
         "total_users": 0,
@@ -24,32 +24,32 @@ async def get_dashboard_stats(payload: dict = Depends(verify_admin_token)):
         "active_users_24h": 0
     }
     
-    if not supabase:
+    if not db_client:
         logger.warning("Database not available, returning zero stats")
         return {"success": True, "stats": stats}
     
     try:
         # Total users
-        users_result = supabase.table("profiles").select("*", count="exact").execute()
+        users_result = db_client.table("profiles").select("*", count="exact").execute()
         stats["total_users"] = users_result.count or 0
         
         # Active users in last 24h
         yesterday = (datetime.now() - timedelta(days=1)).isoformat()
-        active_result = supabase.table("profiles").select(
+        active_result = db_client.table("profiles").select(
             "*", count="exact"
         ).gte("last_active", yesterday).execute()
         stats["active_users_24h"] = active_result.count or 0
         
         # Total chats (if chats table exists)
         try:
-            chats_result = supabase.table("chats").select("*", count="exact").execute()
+            chats_result = db_client.table("chats").select("*", count="exact").execute()
             stats["total_chats"] = chats_result.count or 0
         except:
             logger.debug("Chats table not available")
         
         # Total images (if images table exists)
         try:
-            images_result = supabase.table("generated_images").select("*", count="exact").execute()
+            images_result = db_client.table("generated_images").select("*", count="exact").execute()
             stats["total_images"] = images_result.count or 0
         except:
             logger.debug("Images table not available")

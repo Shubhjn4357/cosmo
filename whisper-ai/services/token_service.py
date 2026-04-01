@@ -172,7 +172,7 @@ class TokenService:
         Args:
             db_client: Database client for user data
         """
-        self.supabase = db_client
+        self.db_client = db_client
         self.guest_manager = GuestTokenManager()
     
     async def check_and_use_tokens(
@@ -261,11 +261,11 @@ class TokenService:
             feature: Feature name
             is_local: Was local model
         """
-        if not self.supabase:
+        if not self.db_client:
             return
         
         try:
-            self.supabase.table("token_usage").insert({
+            self.db_client.table("token_usage").insert({
                 'user_id': user_id,
                 'feature': feature,
                 'tokens_used': tokens,
@@ -288,18 +288,20 @@ class TokenService:
 
 # Example usage convenience function
 async def check_and_use_tokens(
-    supabase,
+    *,
+    db_client=None,
     feature: str,
     is_local: bool = False,
     is_smart: bool = False,
     user_id: Optional[str] = None,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    supabase=None,
 ) -> Dict[str, Any]:
     """
     Convenience function for checking and using tokens
     
     Args:
-        supabase: Database client
+        db_client: Database client
         feature: Feature name
         is_local: Using local model
         is_smart: Using Smart Mode
@@ -309,7 +311,7 @@ async def check_and_use_tokens(
     Returns:
         Result dict
     """
-    service = TokenService(supabase)
+    service = TokenService(db_client or supabase)
     return await service.check_and_use_tokens(
         feature=feature,
         is_local=is_local,

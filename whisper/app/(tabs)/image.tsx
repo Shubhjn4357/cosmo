@@ -23,7 +23,7 @@ import { useToast } from '@/components/Toast';
 import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 import { whisperAPI, ImageModel, ImageResponse } from '@/services/api';
 
-const DEFAULT_MODEL_ID = 'flux-schnell';
+const DEFAULT_MODEL_ID = 'cyberrealistic-v9';
 
 export default function ImageScreenWrapper() {
     return (
@@ -65,7 +65,12 @@ function ImageScreen() {
         setModelsLoading(true);
         try {
             const models = await whisperAPI.getImageModels({ includeAdult: true, includeEdit: false });
-            const promptModels = models.filter((model) => model.supports_text_prompt !== false);
+            const promptModels = models.filter((model) => (
+                model.downloadable
+                && model.supports_server !== false
+                && model.supports_text_prompt !== false
+                && /\.(safetensors|ckpt)$/i.test(model.filename || '')
+            ));
             setServerModels(promptModels);
 
             const activeIds = new Set(promptModels.map((model) => model.id));
@@ -115,7 +120,7 @@ function ImageScreen() {
                 height: advancedParams.height,
                 numSteps: advancedParams.steps,
                 guidanceScale: advancedParams.cfgScale,
-                isLocal: false,
+                isLocal: true,
             });
             setGeneratedImage(response);
         } catch (err) {
@@ -146,7 +151,7 @@ function ImageScreen() {
                     <View>
                         <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Create</Text>
                         <Text style={[styles.headerSubtitle, { color: theme.colors.textSecondary }]}>
-                            Approved server image generation
+                            Downloaded models running on your server
                         </Text>
                     </View>
                 </View>
@@ -161,9 +166,9 @@ function ImageScreen() {
                 >
                     <View style={[styles.modelSelector, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
                         <View style={[styles.modeIndicator, { backgroundColor: `${theme.colors.primary}20` }]}>
-                            <Ionicons name="cloud-outline" size={16} color={theme.colors.primary} />
+                            <Ionicons name="hardware-chip-outline" size={16} color={theme.colors.primary} />
                             <Text style={[styles.modeText, { color: theme.colors.primary }]}>
-                                Server-first image routing
+                                Local server image runtime
                             </Text>
                         </View>
 

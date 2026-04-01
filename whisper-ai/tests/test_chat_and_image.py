@@ -27,8 +27,8 @@ def test_image_catalog_and_generation(server):
     assert models.status_code == 200
     payload = models.json()
     model_ids = {model["id"] for model in payload["models"]}
-    assert "flux-schnell" in model_ids
-    assert "flux-schnell-q4" not in model_ids
+    assert "cyberrealistic-v9" in model_ids
+    assert "flux-schnell" not in model_ids
 
     image = requests.post(
         f"{server.base_url}/api/image/generate",
@@ -38,7 +38,7 @@ def test_image_catalog_and_generation(server):
             "width": 256,
             "height": 256,
             "session_id": "pytest-image-session",
-            "is_local": False,
+            "is_local": True,
         },
         timeout=60,
     )

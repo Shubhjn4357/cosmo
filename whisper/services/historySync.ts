@@ -1,6 +1,6 @@
 /**
  * Whisper App - History Sync Service
- * Real-time sync of chat history with Supabase
+ * Offline-first sync of chat history with the Whisper server history API.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';

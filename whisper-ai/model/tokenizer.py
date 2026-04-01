@@ -1,15 +1,25 @@
 """
-Whisper AI - BPE Tokenizer
-Efficient byte-pair encoding tokenizer with training and serialization support.
+Whisper AI - Tokenizer utilities.
+
+Supports the legacy in-repo byte-BPE format for backwards compatibility and a
+modern ByteLevel BPE tokenizer powered by `tokenizers` for whitespace-safe
+training and decoding.
 """
 
+from __future__ import annotations
+
+import importlib.util
 import json
-import os
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from dataclasses import dataclass
-from collections import Counter
 import re
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+
+TOKENIZER_FORMAT_VERSION = 2
+TOKENIZER_BACKEND_LEGACY = "legacy_byte_bpe"
+TOKENIZER_BACKEND_BYTELEVEL = "tokenizers_bytelevel_bpe"
 
 
 @dataclass
@@ -17,6 +27,7 @@ class TokenizerConfig:
     """Tokenizer configuration."""
     vocab_size: int = 16384
     min_frequency: int = 2
+    backend: str = TOKENIZER_BACKEND_BYTELEVEL
     special_tokens: List[str] = None
     
     def __post_init__(self):
@@ -55,6 +66,41 @@ class WhisperTokenizer:
         self.eos_id = self.token_to_id.get("<EOS>", 3)
         
         self._byte_vocab_initialized = False
+        self._backend_type = TOKENIZER_BACKEND_LEGACY
+        self._fast_tokenizer = None
+
+        if self.config.backend == TOKENIZER_BACKEND_BYTELEVEL:
+            self._maybe_init_fast_backend()
+
+    def _tokenizers_available(self) -> bool:
+        return importlib.util.find_spec("tokenizers") is not None
+
+    def _maybe_init_fast_backend(self):
+        if not self._tokenizers_available():
+            return
+        if self._fast_tokenizer is not None:
+            return
+
+        from tokenizers import Tokenizer, decoders, models, pre_tokenizers
+
+        tokenizer = Tokenizer(models.BPE(unk_token="<UNK>"))
+        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        tokenizer.decoder = decoders.ByteLevel()
+        self._fast_tokenizer = tokenizer
+        self._backend_type = TOKENIZER_BACKEND_BYTELEVEL
+
+    def _sync_vocab_from_fast_backend(self):
+        if self._fast_tokenizer is None:
+            return
+
+        vocab = self._fast_tokenizer.get_vocab()
+        self.token_to_id = dict(vocab)
+        self.id_to_token = {token_id: token for token, token_id in vocab.items()}
+
+        self.pad_id = self.token_to_id.get("<PAD>", 0)
+        self.unk_id = self.token_to_id.get("<UNK>", 1)
+        self.bos_id = self.token_to_id.get("<BOS>", 2)
+        self.eos_id = self.token_to_id.get("<EOS>", 3)
     
     def _init_byte_vocab(self):
         """Initialize byte-level vocabulary."""
@@ -90,6 +136,11 @@ class WhisperTokenizer:
             texts: List of training texts
             verbose: Whether to print progress
         """
+        if self.config.backend == TOKENIZER_BACKEND_BYTELEVEL and self._tokenizers_available():
+            self._train_bytelevel_tokenizer(texts, verbose=verbose)
+            return
+
+        self._backend_type = TOKENIZER_BACKEND_LEGACY
         self._init_byte_vocab()
         
         if verbose:
@@ -154,6 +205,29 @@ class WhisperTokenizer:
         
         if verbose:
             print(f"Tokenizer trained. Vocabulary size: {len(self.token_to_id)}")
+
+    def _train_bytelevel_tokenizer(self, texts: List[str], *, verbose: bool = True):
+        from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
+
+        self._maybe_init_fast_backend()
+
+        tokenizer = Tokenizer(models.BPE(unk_token="<UNK>"))
+        tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        tokenizer.decoder = decoders.ByteLevel()
+        trainer = trainers.BpeTrainer(
+            vocab_size=self.config.vocab_size,
+            min_frequency=self.config.min_frequency,
+            special_tokens=self.config.special_tokens,
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+            show_progress=verbose,
+        )
+        tokenizer.train_from_iterator((text for text in texts if text), trainer=trainer)
+        self._fast_tokenizer = tokenizer
+        self._backend_type = TOKENIZER_BACKEND_BYTELEVEL
+        self._sync_vocab_from_fast_backend()
+
+        if verbose:
+            print(f"Tokenizer trained. Vocabulary size: {len(self.token_to_id)}")
     
     def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:
         """
@@ -166,6 +240,13 @@ class WhisperTokenizer:
         Returns:
             List of token IDs
         """
+        if self._fast_tokenizer is not None and self._backend_type == TOKENIZER_BACKEND_BYTELEVEL:
+            encoded = self._fast_tokenizer.encode(text)
+            ids = list(encoded.ids)
+            if add_special_tokens:
+                ids = [self.bos_id] + ids + [self.eos_id]
+            return ids
+
         if not self._byte_vocab_initialized:
             self._init_byte_vocab()
         
@@ -205,12 +286,20 @@ class WhisperTokenizer:
             Decoded text
         """
         special_ids = set(range(len(self.config.special_tokens)))
-        
+
+        if self._fast_tokenizer is not None and self._backend_type == TOKENIZER_BACKEND_BYTELEVEL:
+            filtered_ids = [
+                token_id
+                for token_id in ids
+                if not (skip_special_tokens and token_id in special_ids)
+            ]
+            return self._fast_tokenizer.decode(filtered_ids, skip_special_tokens=False)
+
         tokens = []
-        for id in ids:
-            if skip_special_tokens and id in special_ids:
+        for token_id in ids:
+            if skip_special_tokens and token_id in special_ids:
                 continue
-            token = self.id_to_token.get(id, "")
+            token = self.id_to_token.get(token_id, "")
             tokens.append(token)
         
         # Convert from Latin-1 bytes back to UTF-8
@@ -251,22 +340,32 @@ class WhisperTokenizer:
     def vocab_size(self) -> int:
         """Get vocabulary size."""
         return len(self.token_to_id)
+
+    def is_modern_backend(self) -> bool:
+        return self._backend_type == TOKENIZER_BACKEND_BYTELEVEL
     
     def save(self, path: str):
         """Save tokenizer to file."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         data = {
+            "format_version": TOKENIZER_FORMAT_VERSION,
+            "backend": self._backend_type,
             "config": {
                 "vocab_size": self.config.vocab_size,
                 "min_frequency": self.config.min_frequency,
-                "special_tokens": self.config.special_tokens
+                "backend": self.config.backend,
+                "special_tokens": self.config.special_tokens,
             },
-            "vocab": self.token_to_id,
-            "merges": [[p[0], p[1]] for p in self.merges]
         }
-        
+
+        if self._fast_tokenizer is not None and self._backend_type == TOKENIZER_BACKEND_BYTELEVEL:
+            data["tokenizer_json"] = json.loads(self._fast_tokenizer.to_str())
+        else:
+            data["vocab"] = self.token_to_id
+            data["merges"] = [[p[0], p[1]] for p in self.merges]
+
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     
@@ -275,44 +374,42 @@ class WhisperTokenizer:
         """Load tokenizer from file."""
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
-        config = TokenizerConfig(**data["config"])
+
+        config = TokenizerConfig(**data.get("config", {}))
         tokenizer = cls(config)
+
+        if data.get("backend") == TOKENIZER_BACKEND_BYTELEVEL and "tokenizer_json" in data and tokenizer._tokenizers_available():
+            from tokenizers import Tokenizer
+
+            tokenizer._fast_tokenizer = Tokenizer.from_str(json.dumps(data["tokenizer_json"], ensure_ascii=False))
+            tokenizer._backend_type = TOKENIZER_BACKEND_BYTELEVEL
+            tokenizer._sync_vocab_from_fast_backend()
+            tokenizer._byte_vocab_initialized = False
+            return tokenizer
+
+        tokenizer._backend_type = TOKENIZER_BACKEND_LEGACY
         tokenizer.token_to_id = data["vocab"]
         tokenizer.id_to_token = {v: k for k, v in data["vocab"].items()}
-        tokenizer.merges = [tuple(m) for m in data["merges"]]
+        tokenizer.merges = [tuple(m) for m in data.get("merges", [])]
         tokenizer._byte_vocab_initialized = True
-        
+
         return tokenizer
 
 
 def create_pretrained_tokenizer() -> WhisperTokenizer:
     """
-    Create a tokenizer with a reasonable pretrained vocabulary.
-    This uses a basic English-focused vocabulary for quick start.
+    Create a whitespace-safe tokenizer bootstrapped on a small built-in corpus.
     """
-    config = TokenizerConfig(vocab_size=16384)
+    config = TokenizerConfig(vocab_size=4096, min_frequency=1, backend=TOKENIZER_BACKEND_BYTELEVEL)
     tokenizer = WhisperTokenizer(config)
-    tokenizer._init_byte_vocab()
-    
-    # Add common English word pieces
-    common_pieces = [
-        "the", "ing", "tion", "and", "ent", "ion", "ter", "for",
-        "ation", "ere", "her", "ment", "per", "all", "pro", "are",
-        "ess", "not", "ver", "eve", "con", "com", "you", "was",
-        "have", "this", "from", "with", "they", "will", "would",
-        "there", "their", "what", "about", "which", "when", "make",
-        "like", "time", "just", "know", "take", "people", "into",
-        "year", "your", "good", "some", "could", "them", "than",
-        "look", "only", "come", "over", "such", "think", "also",
-        "back", "after", "work", "first", "well", "even", "want",
-        "because", "these", "give", "most", "hand", "where",
+    bootstrap_corpus = [
+        "Sure! Here's a simple Python code example that prints a greeting.",
+        "User:\nHow do I reverse a list in Python?\n\nAssistant:\nUse list.reverse() for in-place mutation or list[::-1] to create a copy.",
+        "User:\nWrite a portfolio bio.\n\nAssistant:\nFrontend developer focused on React, TypeScript, performance, and clean UX.",
+        "Python uses indentation and whitespace to define code blocks.",
+        "Machine learning models predict the next token in a sequence of text.",
+        "Whitespace matters. Preserve spaces, newlines, and punctuation in generated text.",
+        "def greet(name):\n    return f\"Hello, {name}!\"",
     ]
-    
-    for piece in common_pieces:
-        if piece not in tokenizer.token_to_id:
-            idx = len(tokenizer.token_to_id)
-            tokenizer.token_to_id[piece] = idx
-            tokenizer.id_to_token[idx] = piece
-    
+    tokenizer.train(bootstrap_corpus, verbose=False)
     return tokenizer

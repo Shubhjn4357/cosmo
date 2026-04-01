@@ -1,9 +1,9 @@
 /**
  * Whisper App - Redesigned Sidebar Navigation
- * Full navigation sidebar with tabs at top, chat history at bottom
+ * Full navigation sidebar with tabs and quick account controls.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
 import {
     View,
     Text,
@@ -11,8 +11,6 @@ import {
     StyleSheet,
     Animated,
     Dimensions,
-    TextInput,
-    ScrollView,
     Modal,
     TouchableWithoutFeedback,
     PanResponder,
@@ -23,7 +21,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 import { ChatHistory } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SIDEBAR_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 320);
@@ -51,18 +48,13 @@ interface SidebarProps {
 export function GeminiSidebar({
     visible,
     onClose,
-    histories,
-    onSelectHistory,
     onNewChat,
-    onDeleteHistory,
 }: SidebarProps) {
     const { theme, isDark, toggleTheme } = useTheme();
     const { signOut, isAuthenticated, user } = useAuth();
     const router = useRouter();
     const pathname = usePathname();
     const insets = useSafeAreaInsets();
-    const [searchQuery, setSearchQuery] = useState('');
-    const [showHistory, setShowHistory] = useState(true);
     const slideAnim = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current;
     const overlayOpacity = useRef(new Animated.Value(0)).current;
 
@@ -120,13 +112,6 @@ export function GeminiSidebar({
             },
         })
     ).current;
-
-    const filteredHistories = histories.filter((h) =>
-        h.title.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-
-    // Group by date
-    const groupedHistories = groupByDate(filteredHistories);
 
     const handleNavigation = (route: string) => {
         onClose();
@@ -290,128 +275,10 @@ export function GeminiSidebar({
 
                     {/* Divider */}
                     <View style={[styles.divider, { backgroundColor: theme.colors.surfaceBorder }]} />
-
-                    {/* Chat History Section - At Bottom */}
-                    <View style={styles.historySection}>
-                        <TouchableOpacity
-                            style={styles.historySectionHeader}
-                            onPress={() => setShowHistory(!showHistory)}
-                        >
-                            <Text style={[styles.sectionLabel, { color: theme.colors.textMuted }]}>
-                                CHAT HISTORY
-                            </Text>
-                            <Ionicons
-                                name={showHistory ? 'chevron-down' : 'chevron-forward'}
-                                size={16}
-                                color={theme.colors.textMuted}
-                            />
-                        </TouchableOpacity>
-
-                        {showHistory && (
-                            <>
-                                {/* Search */}
-                                <View style={[styles.searchContainer, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
-                                    <Ionicons name="search" size={16} color={theme.colors.textMuted} />
-                                    <TextInput
-                                        value={searchQuery}
-                                        onChangeText={setSearchQuery}
-                                        placeholder="Search chats..."
-                                        placeholderTextColor={theme.colors.textMuted}
-                                        style={[styles.searchInput, { color: theme.colors.text }]}
-                                    />
-                                    {searchQuery.length > 0 && (
-                                        <TouchableOpacity onPress={() => setSearchQuery('')}>
-                                            <Ionicons name="close-circle" size={16} color={theme.colors.textMuted} />
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-
-                                {/* History List */}
-                                <ScrollView
-                                    style={styles.historyList}
-                                    showsVerticalScrollIndicator={false}
-                                    contentContainerStyle={styles.historyListContent}
-                                >
-                                    {Object.entries(groupedHistories).map(([group, chats]) => (
-                                        <View key={group}>
-                                            {chats.length > 0 && (
-                                                <>
-                                                    <Text style={[styles.groupTitle, { color: theme.colors.textMuted }]}>
-                                                        {group}
-                                                    </Text>
-                                                    {chats.map((chat) => (
-                                                        <TouchableOpacity
-                                                            key={chat.id}
-                                                            style={[styles.historyItem, { backgroundColor: 'transparent' }]}
-                                                            onPress={() => {
-                                                                onSelectHistory(chat);
-                                                                onClose();
-                                                            }}
-                                                            onLongPress={() => {
-                                                                if (onDeleteHistory) {
-                                                                    onDeleteHistory(chat.id);
-                                                                }
-                                                            }}
-                                                        >
-                                                            <Ionicons name="chatbubble-outline" size={14} color={theme.colors.textMuted} />
-                                                            <Text
-                                                                style={[styles.historyTitle, { color: theme.colors.text }]}
-                                                                numberOfLines={1}
-                                                            >
-                                                                {chat.title}
-                                                            </Text>
-                                                        </TouchableOpacity>
-                                                    ))}
-                                                </>
-                                            )}
-                                        </View>
-                                    ))}
-
-                                    {filteredHistories.length === 0 && (
-                                        <View style={styles.emptyState}>
-                                            <Ionicons name="chatbubbles-outline" size={32} color={theme.colors.textMuted} />
-                                            <Text style={[styles.emptyText, { color: theme.colors.textMuted }]}>
-                                                {searchQuery ? 'No chats found' : 'No chat history'}
-                                            </Text>
-                                        </View>
-                                    )}
-                                </ScrollView>
-                            </>
-                        )}
-                    </View>
                 </Animated.View>
             </View>
         </Modal>
     );
-}
-
-function groupByDate(histories: ChatHistory[]): Record<string, ChatHistory[]> {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const yesterday = new Date(today.getTime() - 86400000);
-    const weekAgo = new Date(today.getTime() - 7 * 86400000);
-
-    const groups: Record<string, ChatHistory[]> = {
-        'Today': [],
-        'Yesterday': [],
-        'This Week': [],
-        'Older': [],
-    };
-
-    histories.forEach((history) => {
-        const date = new Date(history.createdAt);
-        if (date >= today) {
-            groups['Today'].push(history);
-        } else if (date >= yesterday) {
-            groups['Yesterday'].push(history);
-        } else if (date >= weekAgo) {
-            groups['This Week'].push(history);
-        } else {
-            groups['Older'].push(history);
-        }
-    });
-
-    return groups;
 }
 
 const styles = StyleSheet.create({
@@ -509,66 +376,6 @@ const styles = StyleSheet.create({
         height: 1,
         marginHorizontal: spacing.md,
         marginVertical: spacing.md,
-    },
-    historySection: {
-        flex: 1,
-        paddingHorizontal: spacing.md,
-    },
-    historySectionHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingVertical: spacing.xs,
-    },
-    searchContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: spacing.sm,
-        paddingVertical: spacing.xs + 2,
-        borderRadius: borderRadius.md,
-        borderWidth: 1,
-        marginBottom: spacing.sm,
-        gap: spacing.xs,
-    },
-    searchInput: {
-        flex: 1,
-        fontSize: fontSize.sm,
-        paddingVertical: 0,
-    },
-    historyList: {
-        flex: 1,
-    },
-    historyListContent: {
-        paddingBottom: spacing.md,
-    },
-    groupTitle: {
-        fontSize: 10,
-        fontWeight: '600',
-        letterSpacing: 0.5,
-        marginTop: spacing.sm,
-        marginBottom: spacing.xs,
-        textTransform: 'uppercase',
-    },
-    historyItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-        paddingVertical: spacing.xs + 2,
-        paddingHorizontal: spacing.sm,
-        borderRadius: borderRadius.sm,
-    },
-    historyTitle: {
-        flex: 1,
-        fontSize: fontSize.sm,
-    },
-    emptyState: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: spacing.xl,
-        gap: spacing.sm,
-    },
-    emptyText: {
-        fontSize: fontSize.sm,
     },
     settingsRow: {
         flexDirection: 'row',

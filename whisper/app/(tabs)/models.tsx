@@ -68,8 +68,7 @@ export default function ModelsScreen() {
 
     useEffect(() => {
         if (!isModelStorageReady) {
-            toast.error('Storage Unavailable', 'Local model storage is not ready on this device.');
-            return;
+            toast.error('Storage Unavailable', 'Downloads are disabled until local model storage is ready on this device.');
         }
 
         void loadApprovedModels();
@@ -331,7 +330,15 @@ export default function ModelsScreen() {
                 {isDownloading && <View style={styles.progressContainer}><View style={[styles.progressBar, { backgroundColor: theme.colors.surfaceLight }]}><View style={[styles.progressFill, { backgroundColor: theme.colors.primary, width: `${downloadProgress}%` }]} /></View><Text style={[styles.progressText, { color: theme.colors.textMuted }]}>{downloadProgress.toFixed(0)}%</Text></View>}
                 <View style={styles.cardActions}>
                     {!item.isDownloaded ? (
-                        <TouchableOpacity style={[styles.button, { backgroundColor: theme.colors.primary }]} onPress={() => { void downloadModel(item); }} disabled={isDownloading}>
+                        <TouchableOpacity
+                            style={[
+                                styles.button,
+                                { backgroundColor: theme.colors.primary },
+                                !isModelStorageReady && styles.buttonDisabled,
+                            ]}
+                            onPress={() => { void downloadModel(item); }}
+                            disabled={isDownloading || !isModelStorageReady}
+                        >
                             {isDownloading ? <ActivityIndicator color="#fff" size="small" /> : <><Ionicons name="download-outline" size={18} color="#fff" /><Text style={styles.buttonText}>Download</Text></>}
                         </TouchableOpacity>
                     ) : (
@@ -410,7 +417,26 @@ export default function ModelsScreen() {
                     </Text>
                 </View>
             ) : (
-                <FlatList data={rankedModels} renderItem={renderModelCard} keyExtractor={(item) => item.id} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} />
+                <FlatList
+                    data={rankedModels}
+                    renderItem={renderModelCard}
+                    keyExtractor={(item) => item.id}
+                    style={styles.listView}
+                    contentContainerStyle={[
+                        styles.list,
+                        rankedModels.length === 0 && styles.listEmpty,
+                    ]}
+                    showsVerticalScrollIndicator={true}
+                    ListEmptyComponent={(
+                        <View style={[styles.emptyState, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
+                            <Ionicons name="cube-outline" size={32} color={theme.colors.textMuted} />
+                            <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>No downloadable models loaded</Text>
+                            <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                                The server catalog did not return any downloadable local chat models. Check your server connection or approved model API.
+                            </Text>
+                        </View>
+                    )}
+                />
             )}
         </SafeAreaView>
     );
@@ -437,7 +463,9 @@ const styles = StyleSheet.create({
     modeLabel: { fontSize: fontSize.md, fontWeight: '700' },
     modeDescription: { fontSize: fontSize.sm, lineHeight: 20 },
     modeMeta: { fontSize: fontSize.xs, fontWeight: '600', marginTop: spacing.xs },
+    listView: { flex: 1 },
     list: { padding: spacing.lg, gap: spacing.md },
+    listEmpty: { flexGrow: 1 },
     card: { padding: spacing.md, borderRadius: borderRadius.lg, borderWidth: 1 },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.sm },
     modelInfo: { flex: 1 },
@@ -457,8 +485,19 @@ const styles = StyleSheet.create({
     progressText: { fontSize: fontSize.xs, textAlign: 'right' },
     cardActions: { flexDirection: 'row', gap: spacing.sm },
     button: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: spacing.sm, borderRadius: borderRadius.md, gap: spacing.xs },
+    buttonDisabled: { opacity: 0.55 },
     buttonOutline: { backgroundColor: 'transparent', borderWidth: 1 },
     buttonText: { color: '#fff', fontSize: fontSize.sm, fontWeight: '600' },
     buttonTextOutline: { fontSize: fontSize.sm, fontWeight: '600' },
     iconButton: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: borderRadius.md },
+    emptyState: {
+        borderWidth: 1,
+        borderRadius: borderRadius.lg,
+        padding: spacing.xl,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.sm,
+    },
+    emptyTitle: { fontSize: fontSize.lg, fontWeight: '700' },
+    emptyText: { fontSize: fontSize.sm, lineHeight: 20, textAlign: 'center' },
 });

@@ -186,12 +186,12 @@ async def roleplay_chat(request: RoleplayChatRequest):
     
     Uses HuggingFace Inference API for generation.
     """
-    from api.routes.profile import get_supabase
+    from api.routes.profile import get_db_client
     from services.token_service import check_and_use_tokens
     
     # CHECK TOKENS
     token_result = await check_and_use_tokens(
-        supabase=get_supabase() if request.user_id else None,
+        db_client=get_db_client() if request.user_id else None,
         feature='roleplay',
         is_local=request.is_local,
         is_smart=False,

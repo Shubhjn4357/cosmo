@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
+import { useAppPreferences } from '@/hooks';
 import { characterService, RoleplayCharacter } from '@/services/characterService';
 
 interface CharacterSelectorProps {
@@ -32,20 +33,20 @@ export function CharacterSelector({
   selectedCharacter,
 }: CharacterSelectorProps) {
   const { theme } = useTheme();
+  const { nsfwEnabled, setNsfwEnabled } = useAppPreferences();
   const [characters, setCharacters] = useState<RoleplayCharacter[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showNSFW, setShowNSFW] = useState(true); // NSFW filter state
 
   useEffect(() => {
     if (visible) {
-      loadCharacters();
+      void loadCharacters();
     }
   }, [visible]);
 
   const loadCharacters = async () => {
     setLoading(true);
     try {
-      const chars = await characterService.getCharacters(showNSFW);
+      const chars = await characterService.getCharacters(nsfwEnabled);
       setCharacters(chars);
     } catch (error) {
       console.error('Load characters failed:', error);
@@ -57,9 +58,9 @@ export function CharacterSelector({
   // Reload when NSFW filter changes
   useEffect(() => {
     if (visible) {
-      loadCharacters();
+      void loadCharacters();
     }
-  }, [showNSFW, visible]);
+  }, [nsfwEnabled, visible]);
 
   const renderCharacter = ({ item }: { item: RoleplayCharacter }) => {
     const isSelected = selectedCharacter?.id === item.id;
@@ -143,20 +144,22 @@ export function CharacterSelector({
                 style={[
                   styles.filterButton,
                   {
-                    backgroundColor: showNSFW
+                    backgroundColor: nsfwEnabled
                       ? theme.colors.error + '20'
                       : theme.colors.surface,
-                    borderColor: showNSFW
+                    borderColor: nsfwEnabled
                       ? theme.colors.error
                       : theme.colors.surfaceBorder,
                   },
                 ]}
-                onPress={() => setShowNSFW(!showNSFW)}
+                onPress={() => {
+                  void setNsfwEnabled(!nsfwEnabled);
+                }}
               >
                 <Text
                   style={[
                     styles.filterText,
-                    { color: showNSFW ? theme.colors.error : theme.colors.textMuted },
+                    { color: nsfwEnabled ? theme.colors.error : theme.colors.textMuted },
                   ]}
                 >
                   18+

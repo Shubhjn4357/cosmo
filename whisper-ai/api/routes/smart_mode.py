@@ -31,12 +31,12 @@ async def smart_chat(request: SmartChatRequest) -> SmartChatResponse:
     Providers: Gemini, HuggingFace, AI Horde, Local LLM
     """
     from services.smart_mode_service import SmartModeService
-    supabase = None
+    db_client = None
     if request.user_id:
         try:
-            from api.routes.profile import get_supabase
+            from api.routes.profile import get_db_client
 
-            supabase = get_supabase()
+            db_client = get_db_client()
         except Exception as e:
             print(f"Profile lookup unavailable: {e}")
     
@@ -50,7 +50,7 @@ async def smart_chat(request: SmartChatRequest) -> SmartChatResponse:
     if request.user_id:
         try:
             from utils.encryption import decrypt_api_key
-            profile_result = supabase.table("profiles").select("hf_api_key").eq("id", request.user_id).execute()
+            profile_result = db_client.table("profiles").select("hf_api_key").eq("id", request.user_id).execute()
             if profile_result.data and profile_result.data[0].get("hf_api_key"):
                 encrypted_key = profile_result.data[0]["hf_api_key"]
                 user_hf_key = decrypt_api_key(encrypted_key)

@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from .auth import verify_admin_token
 from services import hf_dataset_sync
@@ -30,6 +31,12 @@ MANAGED_DATASETS = [
 ]
 
 
+class CuratedImportRequest(BaseModel):
+    spec_ids: Optional[List[str]] = None
+    max_rows: Optional[int] = None
+    auto_sync: bool = False
+
+
 def _resolve_dataset(dataset_name: str) -> Path | None:
     safe_name = Path(dataset_name).name
 
@@ -40,6 +47,16 @@ def _resolve_dataset(dataset_name: str) -> Path | None:
     candidate = DATASETS_DIR / safe_name
     if candidate.exists():
         return candidate
+
+    try:
+        from services.curated_training_import import list_local_curated_files
+
+        for item in list_local_curated_files():
+            path = Path(item["path"])
+            if path.exists() and path.name == safe_name:
+                return path
+    except Exception:
+        return None
 
     return None
 
@@ -60,8 +77,7 @@ def _dataset_info(path: Path) -> dict:
     return info
 
 
-@router.get("")
-async def list_datasets(payload: dict = Depends(verify_admin_token)):
+def list_dataset_entries() -> list[dict]:
     datasets: List[dict] = []
     seen: set[str] = set()
 
@@ -75,10 +91,71 @@ async def list_datasets(payload: dict = Depends(verify_admin_token)):
             datasets.append(_dataset_info(path))
             seen.add(path.name)
 
+    try:
+        from services.curated_training_import import list_local_curated_files
+
+        for item in list_local_curated_files():
+            path = Path(item["path"])
+            if not path.exists() or path.name in seen:
+                continue
+            info = _dataset_info(path)
+            info["kind"] = item.get("kind") or "curated"
+            datasets.append(info)
+            seen.add(path.name)
+    except Exception:
+        pass
+
+    return datasets
+
+
+@router.get("")
+async def list_datasets(payload: dict = Depends(verify_admin_token)):
+    datasets = list_dataset_entries()
+
     return {
         "datasets": datasets,
         "count": len(datasets),
         "dataset_dir": str(DATASETS_DIR),
+    }
+
+
+@router.get("/curated/catalog")
+async def curated_catalog(payload: dict = Depends(verify_admin_token)):
+    from services.curated_training_import import list_curated_specs, list_local_curated_files
+    from services.image_prompt_library import image_prompt_library
+
+    return {
+        "datasets": list_curated_specs(),
+        "local_files": list_local_curated_files(),
+        "image_prompt_prior": image_prompt_library.status(),
+    }
+
+
+@router.post("/curated/import")
+async def import_curated(request: CuratedImportRequest, payload: dict = Depends(verify_admin_token)):
+    from services.curated_training_import import import_curated_datasets
+
+    max_rows = request.max_rows
+    if max_rows is not None and max_rows < 1:
+        raise HTTPException(status_code=400, detail="max_rows must be positive")
+
+    try:
+        results = import_curated_datasets(
+            request.spec_ids,
+            max_rows=max_rows,
+            auto_sync=request.auto_sync,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"Unknown curated dataset id: {exc.args[0]}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Curated import failed: {exc}") from exc
+
+    total_rows = sum(int(item.get("rows_imported") or 0) for item in results)
+    return {
+        "status": "imported",
+        "results": results,
+        "count": len(results),
+        "rows_imported": total_rows,
     }
 
 

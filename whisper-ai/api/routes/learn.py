@@ -82,12 +82,21 @@ def _count_jsonl_rows(path: Path) -> int:
 
 
 def get_learning_corpus_counts() -> dict[str, int]:
+    curated_text_pairs = 0
+    try:
+        from services.curated_training_import import count_curated_text_records
+
+        curated_text_pairs = count_curated_text_records()
+    except Exception as exc:
+        logger.warning(f"Failed to count curated text records: {exc}")
+
     training_pairs = _count_jsonl_rows(TRAINING_DATA_PATH)
     external_sources = _count_jsonl_rows(EXTERNAL_SOURCES_PATH)
     return {
         "training_pairs": training_pairs,
         "external_sources": external_sources,
-        "total_sequences": training_pairs + external_sources,
+        "curated_text_pairs": curated_text_pairs,
+        "total_sequences": training_pairs + external_sources + curated_text_pairs,
     }
 
 
@@ -107,7 +116,15 @@ def sync_to_huggingface():
         }
 
     try:
-        uploaded = hf_dataset_sync.sync_paths((TRAINING_DATA_PATH, EXTERNAL_SOURCES_PATH))
+        extra_paths = []
+        try:
+            from services.curated_training_import import list_local_curated_files
+
+            extra_paths = [item["path"] for item in list_local_curated_files()]
+        except Exception as exc:
+            logger.warning(f"Failed to enumerate curated datasets for sync: {exc}")
+
+        uploaded = hf_dataset_sync.sync_paths((TRAINING_DATA_PATH, EXTERNAL_SOURCES_PATH, *extra_paths))
         synced_count = get_learning_corpus_counts()["total_sequences"]
         hf_dataset_sync.set_last_sync_count(synced_count)
         logger.info(f"Synced learning datasets to {get_hf_dataset_repo()}")
@@ -544,7 +561,8 @@ async def get_learning_stats():
     return {
         "total_training_pairs": total_pairs,
         "external_model_pairs": external_pairs,
-        "total_knowledge": total_pairs + external_pairs,
+        "curated_text_pairs": counts["curated_text_pairs"],
+        "total_knowledge": counts["total_sequences"],
         "total_sequences": counts["total_sequences"],
         "huggingface_repo": get_hf_dataset_repo(),
         "hf_sync_enabled": bool(get_hf_token()),
@@ -561,6 +579,7 @@ async def get_learning_stats():
         "files": {
             "training": str(TRAINING_DATA_PATH),
             "external": str(EXTERNAL_SOURCES_PATH),
+            "curated_root": str((DATA_ROOT / "datasets" / "curated")),
         },
     }
 

@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from .profile import get_supabase
+from .profile import get_db_client
 from services.google_auth import google_auth_status
 
 
@@ -212,7 +212,7 @@ async def admin_status():
 async def signup(request: SignUpRequest):
     """User signup using the Turso-backed auth store."""
     try:
-        result = get_supabase().auth.sign_up(
+        result = get_db_client().auth.sign_up(
             {
                 "email": request.email,
                 "password": request.password,
@@ -257,7 +257,7 @@ async def signin(request: LoginRequest):
         }
 
     try:
-        result = get_supabase().auth.sign_in_with_password(
+        result = get_db_client().auth.sign_in_with_password(
             {
                 "email": username_or_email,
                 "password": request.password,
@@ -292,7 +292,7 @@ async def signin(request: LoginRequest):
 async def google_signin(request: GoogleAuthRequest):
     """Google sign-in using verified ID tokens and Turso-backed local profiles."""
     try:
-        result = get_supabase().auth.sign_in_with_id_token({"provider": "google", "token": request.id_token})
+        result = get_db_client().auth.sign_in_with_id_token({"provider": "google", "token": request.id_token})
         if result.user and result.session:
             token = create_jwt(
                 username=result.user.email or result.user.id,
@@ -316,7 +316,7 @@ async def google_signin(request: GoogleAuthRequest):
 async def reset_password(request: PasswordResetRequest):
     """Generate a local password-reset token."""
     try:
-        token = get_supabase().auth.reset_password_for_email(request.email)
+        token = get_db_client().auth.reset_password_for_email(request.email)
         if token:
             return {
                 "success": True,
@@ -341,7 +341,7 @@ async def verify_token(payload: dict = Depends(verify_token_payload)):
 @router.post("/auth/signout")
 async def signout():
     try:
-        get_supabase().auth.sign_out()
+        get_db_client().auth.sign_out()
         return {"success": True, "message": "Signed out"}
     except Exception:
         return {"success": True, "message": "Signed out"}

@@ -43,6 +43,7 @@ export interface ChatMessage {
 export interface CompletionRequest {
     messages: ChatMessage[];
     systemPrompt?: string;
+    useRag?: boolean;
     maxTokens?: number;
     temperature?: number;
     stream?: boolean;
@@ -695,6 +696,7 @@ class LLMBackendService {
                 message: request.messages[request.messages.length - 1]?.content ?? '',
                 history: request.messages.slice(0, -1),
                 system_prompt: request.systemPrompt,
+                use_rag: request.useRag ?? true,
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.maxTokens ?? 512,
                 nsfw_mode: request.nsfwMode ?? false,
@@ -1182,6 +1184,7 @@ class LLMBackendService {
                 message: request.messages[request.messages.length - 1]?.content ?? '',
                 history: request.messages.slice(0, -1),
                 system_prompt: request.systemPrompt,
+                use_rag: request.useRag ?? true,
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.maxTokens ?? 512,
                 nsfw_mode: request.nsfwMode ?? false,
@@ -1215,6 +1218,7 @@ class LLMBackendService {
             body: JSON.stringify({
                 message: request.messages[request.messages.length - 1]?.content ?? '',
                 history: request.messages.slice(0, -1),
+                use_rag: request.useRag ?? true,
                 system_prompt: request.systemPrompt,
                 temperature: request.temperature ?? 0.7,
                 max_tokens: request.maxTokens ?? 512,

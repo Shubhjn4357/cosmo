@@ -5,7 +5,14 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
 import { ThemeProvider, useTheme } from '@/constants/theme';
-import { AIRuntimeProvider, AuthProvider, useAuth, useSimpleKeepalive } from '@/hooks';
+import {
+    AIRuntimeProvider,
+    AppPreferencesProvider,
+    AuthProvider,
+    PersonalityProvider,
+    useAuth,
+    useSimpleKeepalive,
+} from '@/hooks';
 import { ToastProvider } from '@/components/Toast';
 import { DialogProvider } from '@/components/Dialog';
 
@@ -116,11 +123,15 @@ export default function RootLayout() {
             <ThemeProvider>
                 <AuthProvider>
                     <AIRuntimeProvider>
-                        <DialogProvider>
-                            <ToastProvider>
-                                <RootLayoutContent />
-                            </ToastProvider>
-                        </DialogProvider>
+                        <AppPreferencesProvider>
+                            <PersonalityProvider>
+                                <DialogProvider>
+                                    <ToastProvider>
+                                        <RootLayoutContent />
+                                    </ToastProvider>
+                                </DialogProvider>
+                            </PersonalityProvider>
+                        </AppPreferencesProvider>
                     </AIRuntimeProvider>
                 </AuthProvider>
             </ThemeProvider>

@@ -341,7 +341,7 @@ IMAGE_MODEL_BY_ID = {model.id: model for model in APPROVED_IMAGE_MODELS}
 
 DEFAULT_TEXT_MODEL_ID = "qwen3-1.7b-q4km"
 DEFAULT_ADULT_TEXT_MODEL_ID = "llama-3.2-3b-abliterated-q4km"
-DEFAULT_IMAGE_MODEL_ID = "flux-schnell"
+DEFAULT_IMAGE_MODEL_ID = "cyberrealistic-v9"
 DEFAULT_ADULT_IMAGE_MODEL_ID = "cyberrealistic-v9"
 
 
@@ -378,4 +378,3 @@ def bootstrap_text_models() -> tuple[TextModelSpec, ...]:
 
 def bootstrap_image_models() -> tuple[ImageModelSpec, ...]:
     return tuple(model for model in APPROVED_IMAGE_MODELS if model.auto_bootstrap)
-

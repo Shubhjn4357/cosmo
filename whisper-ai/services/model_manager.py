@@ -55,6 +55,8 @@ class RuntimeProfile:
     micro_tokenizer_path: str = ""
     max_context_tokens: int = 4096
     max_new_tokens: int = 512
+    allow_remote_code: bool = False
+    device: str = "cpu"
 
     def to_runtime_config(self) -> RuntimeConfig:
         return RuntimeConfig(
@@ -68,12 +70,15 @@ class RuntimeProfile:
             micro_tokenizer_path=self.micro_tokenizer_path,
             max_context_tokens=self.max_context_tokens,
             max_new_tokens=self.max_new_tokens,
+            allow_remote_code=self.allow_remote_code,
+            device=self.device,
         )
 
 
 _DEFAULT_TEXT_MODEL = get_text_model(DEFAULT_TEXT_MODEL_ID)
 _DEFAULT_BALANCED_MODEL = get_text_model("qwen3-4b-q4km")
 _DEFAULT_REASONING_MODEL = get_text_model("deepseek-r1-distill-qwen-7b-q4km")
+_DEFAULT_COMPLEX_MODEL_ID = os.getenv("WHISPER_COMPLEX_TASK_MODEL_ID", "Qwen/Qwen3-Coder-Next")
 
 if _DEFAULT_TEXT_MODEL is None or _DEFAULT_BALANCED_MODEL is None or _DEFAULT_REASONING_MODEL is None:
     raise RuntimeError("Approved model catalog defaults are missing")
@@ -124,6 +129,18 @@ RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
         recommended_for="Upgraded hardware or experimental full-local tier",
         max_context_tokens=8192,
         max_new_tokens=768,
+    ),
+    "complex-coder-next": RuntimeProfile(
+        id="complex-coder-next",
+        name="Qwen3 Coder Next",
+        description="Dedicated complex-task coding profile routed automatically for deep implementation and reasoning work.",
+        backend="transformers",
+        model_id=_DEFAULT_COMPLEX_MODEL_ID,
+        recommended_for="Complex coding, multi-step implementation, deep repo analysis, and agent synthesis",
+        max_context_tokens=int(os.getenv("WHISPER_COMPLEX_TASK_MAX_CONTEXT_TOKENS", "16384")),
+        max_new_tokens=int(os.getenv("WHISPER_COMPLEX_TASK_MAX_NEW_TOKENS", "1024")),
+        allow_remote_code=os.getenv("WHISPER_COMPLEX_TASK_TRUST_REMOTE_CODE", "true").lower() == "true",
+        device=os.getenv("WHISPER_COMPLEX_TASK_DEVICE", os.getenv("LOCAL_MODEL_DEVICE", "cpu")),
     ),
     "self-learner-turbo": RuntimeProfile(
         id="self-learner-turbo",

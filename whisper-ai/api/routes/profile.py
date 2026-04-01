@@ -18,8 +18,8 @@ router = APIRouter()
 _db_client: Optional[TursoClient] = None
 
 
-def get_supabase() -> TursoClient:
-    """Compatibility helper returning the shared Turso-backed client."""
+def get_db_client() -> TursoClient:
+    """Return the shared Turso-backed database client."""
     global _db_client
     if _db_client is None:
         try:
@@ -27,6 +27,11 @@ def get_supabase() -> TursoClient:
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Database initialization failed: {exc}") from exc
     return _db_client
+
+
+def get_supabase() -> TursoClient:
+    """Deprecated compatibility alias for the old client name."""
+    return get_db_client()
 
 
 def _utc_now() -> str:
@@ -69,7 +74,7 @@ async def create_profile(data: ProfileCreate):
     """Create a new user profile."""
     try:
         now = _utc_now()
-        client = get_supabase()
+        client = get_db_client()
         existing = client.table("profiles").select("*").eq("id", data.user_id).execute()
         if existing.data:
             return {"success": True, "profile": existing.data[0]}
@@ -101,7 +106,7 @@ async def create_profile(data: ProfileCreate):
 async def get_profile(user_id: str):
     """Get user profile."""
     try:
-        result = get_supabase().table("profiles").select("*").eq("id", user_id).execute()
+        result = get_db_client().table("profiles").select("*").eq("id", user_id).execute()
         if not result.data:
             return {"success": False, "error": "Profile not found"}
         return {"success": True, "profile": _sanitize_profile(result.data[0])}
@@ -115,7 +120,7 @@ async def update_profile(user_id: str, updates: ProfileUpdate):
     try:
         update_data = {key: value for key, value in updates.dict().items() if value is not None}
         update_data["updated_at"] = _utc_now()
-        get_supabase().table("profiles").update(update_data).eq("id", user_id).execute()
+        get_db_client().table("profiles").update(update_data).eq("id", user_id).execute()
         return {"success": True}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -125,7 +130,7 @@ async def update_profile(user_id: str, updates: ProfileUpdate):
 async def accept_consent(user_id: str, data_collection: bool):
     """Accept user consent."""
     try:
-        get_supabase().table("profiles").update(
+        get_db_client().table("profiles").update(
             {
                 "consent_given": True,
                 "consent_given_at": _utc_now(),
@@ -161,7 +166,7 @@ async def get_chat_histories(user_id: str):
     """Get all chat histories for a user."""
     try:
         result = (
-            get_supabase()
+            get_db_client()
             .table("chat_history")
             .select("*")
             .eq("user_id", user_id)
@@ -178,7 +183,7 @@ async def create_chat(data: ChatHistoryRequest):
     """Create new chat history."""
     try:
         result = (
-            get_supabase()
+            get_db_client()
             .table("chat_history")
             .insert({"user_id": data.user_id, "title": data.title, "messages": data.messages})
             .select("id")
@@ -199,7 +204,7 @@ async def update_chat(chat_id: str, data: ChatHistoryUpdate):
         if data.messages is not None:
             update_data["messages"] = data.messages
         update_data["updated_at"] = _utc_now()
-        get_supabase().table("chat_history").update(update_data).eq("id", chat_id).execute()
+        get_db_client().table("chat_history").update(update_data).eq("id", chat_id).execute()
         return {"success": True}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -209,7 +214,7 @@ async def update_chat(chat_id: str, data: ChatHistoryUpdate):
 async def delete_chat(chat_id: str):
     """Delete chat history."""
     try:
-        get_supabase().table("chat_history").delete().eq("id", chat_id).execute()
+        get_db_client().table("chat_history").delete().eq("id", chat_id).execute()
         return {"success": True}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -231,7 +236,7 @@ class HfApiKeyRequest(BaseModel):
 async def update_nsfw_preference(user_id: str, data: NsfwPreferenceRequest):
     """Update the user's NSFW content preference."""
     try:
-        get_supabase().table("profiles").update(
+        get_db_client().table("profiles").update(
             {
                 "nsfw_enabled": data.nsfw_enabled,
                 "updated_at": _utc_now(),
@@ -246,7 +251,7 @@ async def update_nsfw_preference(user_id: str, data: NsfwPreferenceRequest):
 async def update_hf_model(user_id: str, data: HfModelPreferenceRequest):
     """Update the user's Hugging Face model preference."""
     try:
-        get_supabase().table("profiles").update(
+        get_db_client().table("profiles").update(
             {
                 "hf_model_preference": data.hf_model_preference,
                 "updated_at": _utc_now(),
@@ -264,7 +269,7 @@ async def update_hf_api_key(user_id: str, data: HfApiKeyRequest):
         from utils.encryption import encrypt_api_key
 
         encrypted_key = encrypt_api_key(data.hf_api_key)
-        get_supabase().table("profiles").update(
+        get_db_client().table("profiles").update(
             {
                 "hf_api_key": encrypted_key,
                 "updated_at": _utc_now(),
@@ -279,7 +284,7 @@ async def update_hf_api_key(user_id: str, data: HfApiKeyRequest):
 async def delete_hf_api_key(user_id: str):
     """Delete the user's Hugging Face API key."""
     try:
-        get_supabase().table("profiles").update(
+        get_db_client().table("profiles").update(
             {
                 "hf_api_key": None,
                 "updated_at": _utc_now(),
@@ -295,7 +300,7 @@ async def get_preferences(user_id: str):
     """Get all user preferences."""
     try:
         result = (
-            get_supabase()
+            get_db_client()
             .table("profiles")
             .select("nsfw_enabled, hf_model_preference, hf_api_key, theme, notifications_enabled")
             .eq("id", user_id)

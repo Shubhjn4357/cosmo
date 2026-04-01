@@ -14,7 +14,7 @@ from loguru import logger
 
 from .auth import verify_admin_token
 from services.google_auth import google_auth_status
-from .profile import _sanitize_profile, get_supabase
+from .profile import _sanitize_profile, get_db_client
 from services.gguf_bootstrap import get_gguf_bootstrap_status, start_gguf_runtime_bootstrap
 from services.admin_state import get_model_enabled, set_model_enabled
 from services.model_manager import get_profile, get_profiles, queue_profile_download, runtime_profiles_payload, validate_profile
@@ -31,12 +31,12 @@ router = APIRouter()
 SMART_PROVIDER_IDS = {"gemini", "huggingface", "horde", "local"}
 
 
-def _count_total_profiles(supabase) -> int:
-    if not supabase:
+def _count_total_profiles(db_client) -> int:
+    if not db_client:
         return 0
 
     try:
-        result = supabase.table("profiles").select("id", count="exact").execute()
+        result = db_client.table("profiles").select("id", count="exact").execute()
         return result.count or 0
     except Exception:
         return 0
@@ -67,20 +67,9 @@ def _tail_text_file(path: Path, max_chars: int = 1600) -> str:
 
 
 def _collect_dataset_payload() -> dict[str, Any]:
-    from api.routes.datasets import DATASETS_DIR, MANAGED_DATASETS, _dataset_info
+    from api.routes.datasets import DATASETS_DIR, list_dataset_entries
 
-    datasets: list[dict[str, Any]] = []
-    seen: set[str] = set()
-
-    for path in MANAGED_DATASETS:
-        if path.exists() and path.name not in seen:
-            datasets.append(_dataset_info(path))
-            seen.add(path.name)
-
-    for path in sorted(DATASETS_DIR.glob("*")):
-        if path.is_file() and path.name not in seen:
-            datasets.append(_dataset_info(path))
-            seen.add(path.name)
+    datasets = list_dataset_entries()
 
     return {
         "datasets": datasets,
@@ -96,6 +85,7 @@ def _self_learner_summary() -> dict[str, Any]:
         SELF_LEARNER_INT8_CHECKPOINT,
         SELF_LEARNER_STATE,
         SELF_LEARNER_TOKENIZER,
+        get_self_learner_chat_thresholds,
         get_self_learner_runtime_manager,
     )
 
@@ -103,8 +93,9 @@ def _self_learner_summary() -> dict[str, Any]:
     readiness = runtime.readiness()
     training_state = _safe_json_file(SELF_LEARNER_STATE)
     corpus_counts = get_learning_corpus_counts()
-    min_steps = max(1, int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "50")))
-    min_sequences = max(1, int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "20")))
+    thresholds = get_self_learner_chat_thresholds()
+    min_steps = thresholds["min_steps"]
+    min_sequences = thresholds["min_sequences"]
     steps = int(training_state.get("steps") or 0)
     sequences = max(int(training_state.get("dataset_sequences") or 0), int(corpus_counts.get("total_sequences") or 0))
     chat_ready = readiness.get("can_load", False) and steps >= min_steps and sequences >= min_sequences
@@ -711,13 +702,13 @@ async def get_users(
     search: str = ""
 ):
     """Get paginated list of users"""
-    supabase = get_supabase()
-    if not supabase:
+    db_client = get_db_client()
+    if not db_client:
         return {"success": False, "error": "Database not available"}
     
     try:
         offset = (page - 1) * limit
-        query = supabase.table("profiles").select("*", count="exact")
+        query = db_client.table("profiles").select("*", count="exact")
         
         if search:
             query = query.or_(f"email.ilike.%{search}%,display_name.ilike.%{search}%")
@@ -743,12 +734,12 @@ async def ban_user(
     payload: dict = Depends(verify_admin_token)
 ):
     """Ban or unban a user"""
-    supabase = get_supabase()
-    if not supabase:
+    db_client = get_db_client()
+    if not db_client:
         return {"success": False, "error": "Database not available"}
     
     try:
-        supabase.table("profiles").update({
+        db_client.table("profiles").update({
             "banned": banned
         }).eq("id", user_id).execute()
         
@@ -893,10 +884,10 @@ async def get_analytics(payload: dict = Depends(verify_admin_token)):
     """Get analytics data for charts"""
     from api.routes.analytics import analytics as request_analytics
 
-    supabase = get_supabase()
+    db_client = get_db_client()
     request_stats = request_analytics.get_stats()
     daily = request_analytics.get_daily_series(days=7)
-    total_users = _count_total_profiles(supabase)
+    total_users = _count_total_profiles(db_client)
 
     feature_rows = [
         {"name": "Chat", "usage": daily["totals"]["chat_requests"], "color": "#6366f1"},

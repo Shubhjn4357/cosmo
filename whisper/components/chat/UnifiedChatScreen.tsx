@@ -16,7 +16,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 
@@ -24,7 +23,15 @@ import { useTheme, spacing, borderRadius, fontSize } from '@/constants/theme';
 import { Message } from '@/types';
 
 // Hooks
-import { useChat, useFilePicker, useNetworkStatus, useAuth, useSwipeToReload, useVoiceInput } from '@/hooks';
+import {
+    useAppPreferences,
+    useChat,
+    useFilePicker,
+    useNetworkStatus,
+    useAuth,
+    useSwipeToReload,
+    useVoiceInput,
+} from '@/hooks';
 
 // Components
 import { MessageBubble } from './MessageBubble';
@@ -120,7 +127,8 @@ export function UnifiedChatScreen({
 }: UnifiedChatScreenProps) {
     const { theme } = useTheme();
     const router = useRouter();
-    const { profile, isAuthenticated } = useAuth();
+    const { profile } = useAuth();
+    const { enterToSend, nsfwEnabled, setNsfwEnabled } = useAppPreferences();
     const { isRecording, isTranscribing, startRecording, stopRecording, transcribe, cancelRecording } = useVoiceInput();
     const toast = useToast();
 
@@ -168,13 +176,11 @@ export function UnifiedChatScreen({
         formatFileSize,
     } = useFilePicker();
 
-    const { isConnected, isServerReachable, isChecking } = useNetworkStatus();
-    const [enterToSend, setEnterToSend] = useState(true);
+    const { isConnected, isServerReachable } = useNetworkStatus();
     const [showSidebar, setShowSidebar] = useState(false);
     const [showBottomSheet, setShowBottomSheet] = useState(false);
     const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
     const [showCharacterSelector, setShowCharacterSelector] = useState(false);
-    const [nsfwMode, setNsfwMode] = useState(false);
 
     // Character state
     const [selectedCharacter, setSelectedCharacter] = useState<any | null>(activeCharacterProp);
@@ -190,10 +196,10 @@ export function UnifiedChatScreen({
     }, [activeCharacterProp, characterId, characterName]); // Re-run if props change
 
     useEffect(() => {
-        if (selectedCharacter && isAdultCharacter(selectedCharacter)) {
-            setNsfwMode(true);
+        if (selectedCharacter && isAdultCharacter(selectedCharacter) && !nsfwEnabled) {
+            void setNsfwEnabled(true);
         }
-    }, [selectedCharacter]);
+    }, [nsfwEnabled, selectedCharacter, setNsfwEnabled]);
 
     useEffect(() => {
         if (messages.length > 0) {
@@ -228,19 +234,13 @@ export function UnifiedChatScreen({
     });
     const flatListRef = useRef<FlatList>(null);
 
-    // Load settings
     useEffect(() => {
-        AsyncStorage.getItem('enter_to_send').then(val => {
-            if (val !== null) setEnterToSend(val === 'true');
-        });
-
-        // Request notification permissions
         if (mode === 'chat') {
             (async () => {
                 await notificationService.requestPermissions();
             })();
         }
-    }, [profile, mode]);
+    }, [mode, profile]);
 
     // Vision generation handler
     const handleGenerateVision = useCallback(async (prompt: string) => {
@@ -264,6 +264,7 @@ export function UnifiedChatScreen({
     );
 
     const isRoleplayActive = Boolean(selectedCharacter) || mode === 'roleplay';
+    const effectiveNsfwMode = nsfwEnabled || isAdultCharacter(selectedCharacter);
 
     // Render message
     const renderMessage = useCallback(({ item, index }: { item: Message; index: number }) => (
@@ -348,15 +349,17 @@ export function UnifiedChatScreen({
                                 </InteractiveButton>
 
                                 <InteractiveButton
-                                    onPress={() => setNsfwMode((previous) => !previous)}
+                                    onPress={() => {
+                                        void setNsfwEnabled(!nsfwEnabled);
+                                    }}
                                     style={[styles.headerButton, {
-                                        backgroundColor: nsfwMode ? theme.colors.error + '18' : 'transparent',
+                                        backgroundColor: effectiveNsfwMode ? theme.colors.error + '18' : 'transparent',
                                         borderRadius: borderRadius.full,
                                         borderWidth: 1,
-                                        borderColor: nsfwMode ? theme.colors.error : theme.colors.textMuted + '40',
+                                        borderColor: effectiveNsfwMode ? theme.colors.error : theme.colors.textMuted + '40',
                                     }]}
                                 >
-                                    <Text style={{ color: nsfwMode ? theme.colors.error : theme.colors.textMuted, fontSize: 12, fontWeight: '700' }}>
+                                    <Text style={{ color: effectiveNsfwMode ? theme.colors.error : theme.colors.textMuted, fontSize: 12, fontWeight: '700' }}>
                                         18+
                                     </Text>
                                 </InteractiveButton>
@@ -419,6 +422,7 @@ export function UnifiedChatScreen({
                                 {[
                                     { emoji: '🎨', label: 'Create image' },
                                     { emoji: '📄', label: 'Write anything' },
+                                    { emoji: '🧠', label: 'Whisper Agent' },
                                     { emoji: '🎓', label: 'Help me learn' },
                                 ].map((action, idx) => (
                                     <TouchableOpacity
@@ -426,6 +430,7 @@ export function UnifiedChatScreen({
                                         style={[styles.actionPill, { backgroundColor: theme.colors.surface }]}
                                         onPress={() => {
                                             if (action.label === 'Create image') setCreateImageMode(true);
+                                            else if (action.label === 'Whisper Agent') setInputText('/agent ');
                                             else setInputText(action.label + ': ');
                                         }}
                                     >
@@ -494,7 +499,7 @@ export function UnifiedChatScreen({
                                         file: selectedFile,
                                         systemPrompt: characterPrompt,
                                         roleplayMode: isRoleplayActive,
-                                        nsfwMode: nsfwMode || isAdultCharacter(selectedCharacter),
+                                        nsfwMode: effectiveNsfwMode,
                                     });
                                     setSelectedFile(null);
                                 }}
@@ -557,8 +562,8 @@ export function UnifiedChatScreen({
                         startNewChat();
                     }
                     setSelectedCharacter(character);
-                    if (character && isAdultCharacter(character)) {
-                        setNsfwMode(true);
+                    if (character && isAdultCharacter(character) && !nsfwEnabled) {
+                        void setNsfwEnabled(true);
                     }
                 }}
                 selectedCharacter={selectedCharacter}

@@ -92,6 +92,9 @@ The Docker image sets:
 - `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`
 
 If persistent storage is attached, local downloads and generated files can live there.
+If `/data` is not writable in the runtime, Whisper now falls back automatically
+to a writable local path such as `data/` or `/tmp/whisper` instead of crashing
+on startup.
 
 ## Local Development
 

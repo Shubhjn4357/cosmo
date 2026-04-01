@@ -30,12 +30,12 @@ async def face_swap(request: FaceSwapRequest):
     
     Requires REPLICATE_API_TOKEN env var.
     """
-    from api.routes.profile import get_supabase
+    from api.routes.profile import get_db_client
     from services.token_service import check_and_use_tokens
     
     # CHECK TOKENS - Faceswap costs 3.0 tokens
     token_result = await check_and_use_tokens(
-        supabase=get_supabase() if request.user_id else None,
+        db_client=get_db_client() if request.user_id else None,
         feature='faceswap',
         is_local=request.is_local,
         is_smart=False,

@@ -246,3 +246,58 @@ def resolve_bootstrap_artifact(kind: str, model_id: str, filename: str) -> dict[
     )
     return item
 
+
+def ensure_bootstrap_artifact(
+    kind: str,
+    *,
+    model_id: str,
+    name: str,
+    repo_id: str,
+    filename: str,
+    adult: bool = False,
+) -> dict[str, Any]:
+    if not filename:
+        _update_item(
+            model_id,
+            name=name,
+            kind=kind,
+            status="remote_only",
+            repo_id=repo_id,
+            filename="",
+            artifact_path="",
+            adult=adult,
+        )
+        return resolve_bootstrap_artifact(kind, model_id, filename)
+
+    with _LOCK:
+        current = resolve_bootstrap_artifact(kind, model_id, filename)
+        if current.get("downloaded"):
+            return current
+
+        if kind == "text":
+            spec = TextModelSpec(
+                id=model_id,
+                name=name,
+                description="",
+                repo_id=repo_id,
+                filename=filename,
+                size_mb=0,
+                ram_required_gb=0.0,
+                speed="unknown",
+                quantization="",
+                adult=adult,
+            )
+        else:
+            spec = ImageModelSpec(
+                id=model_id,
+                name=name,
+                description="",
+                provider="downloadable",
+                repo_id=repo_id,
+                generation_mode="image",
+                filename=filename,
+                adult=adult,
+            )
+
+        _download(kind, spec)
+        return resolve_bootstrap_artifact(kind, model_id, filename)

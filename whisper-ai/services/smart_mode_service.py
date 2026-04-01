@@ -617,12 +617,16 @@ class SmartModeService:
             if state.chat_runtime is None:
                 raise RuntimeError("Chat runtime not configured")
 
+            from services.complex_task_router import generate_server_response
+
             result = await asyncio.to_thread(
-                state.chat_runtime.generate,
-                self._build_local_prompt(prompt, context),
-                max_tokens,
-                0.7,
-                0.9,
+                generate_server_response,
+                prompt=self._build_local_prompt(prompt, context),
+                history=context or [],
+                fallback_runtime=state.chat_runtime,
+                max_new_tokens=max_tokens,
+                temperature=0.7,
+                top_p=0.9,
             )
             text = (result.get("text") or "").strip()
 

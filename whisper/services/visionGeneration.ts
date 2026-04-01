@@ -1,9 +1,9 @@
 /**
  * Vision Generation Service
- * Automatically selects the fastest AI Horde server for image generation
+ * Uses Whisper's local multimodal path before falling back to the local image runtime.
  */
 
-import { hordeAPI } from './hordeAPI';
+import { whisperAPI } from './api';
 
 export interface VisionGenerationOptions {
     prompt: string;
@@ -11,12 +11,6 @@ export interface VisionGenerationOptions {
     height?: number;
     steps?: number;
 }
-
-/**
- * Generate vision from text using fastest available AI Horde server
- * Automatically selects best model based on speed and availability
- */
-import { whisperAPI } from './api';
 
 export async function generateVisionFromText(
     prompt: string,
@@ -29,95 +23,36 @@ export async function generateVisionFromText(
     } = options;
 
     try {
-    // 1. Try AI Horde with automatic retries on multiple models
-        const result = await hordeAPI.getModels('image');
-
-        if (result.success && result.models && result.models.length > 0) {
-        // Sort by speed: count (more workers = faster) and performance
-            const fastestModels = result.models
-                .filter((m: any) => m.count > 0)
-                .sort((a: any, b: any) => {
-                    const scoreA = a.count * 10 - (a.queued || 0);
-                    const scoreB = b.count * 10 - (b.queued || 0);
-                    return scoreB - scoreA;
-                })
-                .slice(0, 3); // Attempt top 3 models
-
-            if (fastestModels.length > 0) {
-                console.log(`🚀 Attempting generation with top ${fastestModels.length} models...`);
-
-                for (const model of fastestModels) {
-                    try {
-                        console.log(`Trying model: ${model.name} (${model.count} workers)...`);
-                        const imageResult = await hordeAPI.generateImage({
-                            prompt,
-                             model: model.name,
-                             width,
-                             height,
-                             steps,
-                             cfg_scale: 7.0,
-                             sampler: 'k_euler_a',
-                             nsfw: true,
-                         });
-
-                         if (imageResult.success && imageResult.image_url) {
-                            return imageResult.image_url;
-                        }
-                    } catch (e) {
-                        console.warn(`Model ${model.name} failed, trying next...`, e);
-                    }
-                }
-            }
+        const result = await whisperAPI.generateVisionImage({
+            prompt,
+            use_pretrained: false,
+        });
+        if (result.generated_image) {
+            return result.generated_image;
         }
-    } catch (hordeError) {
-        console.warn('AI Horde completely failed, falling back...', hordeError);
+    } catch (visionError) {
+        console.warn('Local vision-memory generation failed, falling back to the local image runtime...', visionError);
     }
 
-    // 2. Fallback to Whisper Server (DALL-E / Server Local)
     try {
-        console.log('Falling back to Whisper Server generation...');
         const response = await whisperAPI.generateImage({
             prompt,
             width,
             height,
-            isLocal: false, // Use server resources
+            numSteps: steps,
+            isLocal: true,
         });
         return response.image_url;
     } catch (serverError) {
-        console.error('All vision generation methods failed:', serverError);
+        console.error('All local vision generation methods failed:', serverError);
         return null;
     }
 }
 
-/**
- * Get the fastest available image model info
- */
 export async function getFastestImageModel(): Promise<{ name: string; workers: number; eta: number } | null> {
-    try {
-        const result = await hordeAPI.getModels('image');
-
-        if (!result.success || !result.models || result.models.length === 0) {
-            return null;
-        }
-
-        const fastest = result.models
-            .filter((m: any) => m.count > 0)
-            .sort((a: any, b: any) => {
-                const scoreA = a.count * 10 - (a.queued || 0);
-                const scoreB = b.count * 10 - (b.queued || 0);
-                return scoreB - scoreA;
-            })[0];
-
-        if (!fastest) return null;
-
-        return {
-            name: fastest.name,
-            workers: fastest.count,
-            eta: fastest.eta || 0,
-        };
-
-    } catch (error) {
-        console.error('Failed to get fastest model:', error);
-        return null;
-    }
+    return {
+        name: 'local-self-vision',
+        workers: 1,
+        eta: 0,
+    };
 }

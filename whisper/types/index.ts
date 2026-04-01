@@ -18,6 +18,21 @@ export interface Message {
     metadata?: {
         model?: string;
         responseTime?: number;
+        agentSessionId?: string;
+        agentBackend?: string;
+        agentTools?: string[];
+        agentPlan?: {
+            id: string;
+            tool: string;
+            goal: string;
+            status: string;
+            output_preview?: string;
+        }[];
+        citations?: {
+            source: string;
+            score?: number;
+            chunk?: number;
+        }[];
     };
 }
 

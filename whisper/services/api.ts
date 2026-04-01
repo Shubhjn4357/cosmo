@@ -10,6 +10,13 @@ export interface ChatResponse {
     response: string;
     tokens_used: number;
     sources: { source: string }[];
+    image_url?: string;
+    multimodal?: {
+        image_attached?: boolean;
+        image_generated?: boolean;
+        vision_matches?: { text?: string; score?: number; similarity?: number }[];
+        vision_method?: string;
+    };
 }
 
 export interface ImageResponse {
@@ -109,6 +116,37 @@ export interface TrainingPair {
     input: string;
     output: string;
     model: string;
+}
+
+export interface AgentPlanStep {
+    id: string;
+    tool: string;
+    goal: string;
+    reason?: string;
+    status: 'pending' | 'running' | 'completed' | 'failed';
+    output_preview?: string;
+}
+
+export interface AgentToolResult {
+    tool: string;
+    summary: string;
+    context?: string;
+    sources?: { source: string; score?: number; chunk?: number }[];
+    image_url?: string | null;
+    answer?: string;
+}
+
+export interface AgentRunResponse {
+    session_id: string;
+    status: string;
+    backend: string;
+    goal: string;
+    answer: string;
+    image_url?: string | null;
+    plan: AgentPlanStep[];
+    tool_results: AgentToolResult[];
+    citations: { source: string; score?: number; chunk?: number }[];
+    updated_at?: number;
 }
 
 export class WhisperAPI {
@@ -214,6 +252,7 @@ export class WhisperAPI {
         message: string;
         history?: any[];
         context?: string;
+        useRAG?: boolean;
         temperature?: number;
         maxTokens?: number;
         systemPrompt?: string;
@@ -221,6 +260,9 @@ export class WhisperAPI {
         roleplayMode?: boolean;
         userId?: string;
         sessionId?: string;
+        imageDataUrl?: string;
+        imageUrl?: string;
+        generateImage?: boolean;
     }): Promise<ChatResponse> {
         const response = await fetch(`${this.baseUrl}/api/chat/self-learner`, {
             method: 'POST',
@@ -229,6 +271,7 @@ export class WhisperAPI {
                 message: params.message,
                 history: params.history || [],
                 context: params.context,
+                use_rag: params.useRAG !== false,
                 temperature: params.temperature || 0.7,
                 max_tokens: params.maxTokens || 256,
                 system_prompt: params.systemPrompt,
@@ -237,6 +280,9 @@ export class WhisperAPI {
                 is_local: true,
                 user_id: params.userId,
                 session_id: params.sessionId,
+                image_data_url: params.imageDataUrl,
+                image_url: params.imageUrl,
+                generate_image: params.generateImage || false,
             }),
         });
 
@@ -245,6 +291,59 @@ export class WhisperAPI {
             throw new Error(error.detail?.message || error.detail || `Self-learner chat failed: ${response.statusText}`);
         }
 
+        return response.json();
+    }
+
+    async runAgent(params: {
+        message: string;
+        history?: { role: string; content: string }[];
+        sessionId?: string;
+        context?: string;
+        systemPrompt?: string;
+        useRAG?: boolean;
+        nsfwMode?: boolean;
+        roleplayMode?: boolean;
+        backend?: 'server' | 'self_learner' | 'cloud';
+        allowResearch?: boolean;
+        allowImages?: boolean;
+        maxSteps?: number;
+        maxTokens?: number;
+        userId?: string;
+    }): Promise<AgentRunResponse> {
+        const response = await fetch(`${this.baseUrl}/api/agent/run`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                message: params.message,
+                history: params.history || [],
+                session_id: params.sessionId,
+                context: params.context,
+                system_prompt: params.systemPrompt,
+                use_rag: params.useRAG !== false,
+                nsfw_mode: params.nsfwMode || false,
+                roleplay_mode: params.roleplayMode || false,
+                backend: params.backend || 'server',
+                allow_research: params.allowResearch !== false,
+                allow_images: params.allowImages !== false,
+                max_steps: params.maxSteps || 4,
+                max_tokens: params.maxTokens || 320,
+                user_id: params.userId,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Agent run failed: ${response.statusText}`);
+        }
+
+        return response.json();
+    }
+
+    async getAgentSession(sessionId: string): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch agent session: ${response.status}`);
+        }
         return response.json();
     }
 
@@ -352,9 +451,9 @@ export class WhisperAPI {
                 height: params.height || 512,
                 num_steps: params.numSteps || 20,
                 guidance_scale: params.guidanceScale || 7.5,
-                model_id: params.modelId || 'flux-schnell',
+                model_id: params.modelId || 'cyberrealistic-v9',
                 // Token params
-                is_local: params.isLocal || false,  // Default FALSE = costs tokens
+                is_local: params.isLocal !== false,
                 user_id: params.userId,
                 session_id: params.sessionId,
             }),
@@ -1070,6 +1169,9 @@ export interface RoleplayCharacter {
     description: string;
     personality: string;
     tags: string[];
+    system_prompt?: string;
+    greeting?: string;
+    nsfw?: boolean;
     premium: boolean;
 }
 

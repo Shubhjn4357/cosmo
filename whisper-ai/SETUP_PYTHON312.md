@@ -87,5 +87,5 @@ C:\Python312\python.exe -m venv venv312
 - [ ] Virtual environment created
 - [ ] Dependencies installed without errors
 - [ ] Backend starts without errors
-- [ ] Can see "✅ Supabase client initialized" in logs
+- [ ] Can see the Turso/local database client initialization in logs
 - [ ] Auth test page can signup/login

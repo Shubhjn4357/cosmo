@@ -10,12 +10,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Message, ChatHistory, ModelType } from '@/types';
 import { whisperAPI, ChatResponse } from '@/services/api';
+import agentMode from '@/services/agentMode';
 import LLMBackendService from '@/services/llmBackend';
+import { imageToBase64 } from '@/services/camera';
 import { useAuth } from './useAuth';
 import { useUnifiedTokens } from './useUnifiedTokens';
 import { usePersonality } from './usePersonality';
 import { useAIRuntime } from './useAIRuntime';
-import { smartModeAPI } from '@/services/smartModeAPI';
 
 interface UseChatOptions {
     useRag?: boolean;
@@ -59,7 +60,7 @@ interface UseChatReturn {
 }
 
 const STORAGE_KEY = 'chatHistories';
-const DEFAULT_IMAGE_MODEL_ID = 'flux-schnell';
+const DEFAULT_IMAGE_MODEL_ID = 'cyberrealistic-v9';
 const DEFAULT_IMAGE_NEGATIVE_PROMPT = 'blurry, bad quality, distorted, ugly, low resolution, watermark, text, signature';
 
 function truncate(text: string, maxLength: number) {
@@ -164,6 +165,31 @@ function extractImagePrompt(prompt: string) {
     return trimmed;
 }
 
+function isImageAttachment(file: { name?: string; type?: string } | null | undefined) {
+    if (!file) return false;
+    const mimeType = String(file.type || '').toLowerCase();
+    if (mimeType.startsWith('image/')) return true;
+    return /\.(png|jpe?g|webp|gif|bmp)$/i.test(String(file.name || ''));
+}
+
+function shouldRunAgent(prompt: string) {
+    const normalized = prompt.trim().toLowerCase();
+    return /^\/(agent|task)\b/.test(normalized)
+        || /^agent:\s*/.test(normalized)
+        || /^whisper agent[:,]?\s*/.test(normalized);
+}
+
+function extractAgentPrompt(prompt: string) {
+    const trimmed = prompt.trim();
+
+    if (/^\/agent\b/i.test(trimmed)) return trimmed.replace(/^\/agent\b\s*/i, '').trim();
+    if (/^\/task\b/i.test(trimmed)) return trimmed.replace(/^\/task\b\s*/i, '').trim();
+    if (/^agent:\s*/i.test(trimmed)) return trimmed.replace(/^agent:\s*/i, '').trim();
+    if (/^whisper agent[:,]?\s*/i.test(trimmed)) return trimmed.replace(/^whisper agent[:,]?\s*/i, '').trim();
+
+    return trimmed;
+}
+
 function buildConversationContext(historyMessages: Message[]) {
     const textOnlyMessages = historyMessages
         .filter((message) => !message.imageUri && message.text.trim())
@@ -176,6 +202,25 @@ function buildConversationContext(historyMessages: Message[]) {
     ));
 
     return `Conversation memory summary:\n${summaryLines.map((line) => `- ${line}`).join('\n')}`;
+}
+
+async function buildKnowledgeContext(query: string) {
+    const normalized = query.trim();
+    if (!normalized) return '';
+
+    try {
+        const results = await whisperAPI.searchKnowledge(normalized, 5);
+        if (!results.length) return '';
+
+        const snippets = results.slice(0, 4).map((result, index) => (
+            `[${index + 1}] ${result.text}\nSource: ${result.source}`
+        ));
+
+        return `Knowledge context:\n${snippets.join('\n\n')}`;
+    } catch (error) {
+        console.error('Knowledge lookup failed:', error);
+        return '';
+    }
 }
 
 export function useChat(options: UseChatOptions = {}): UseChatReturn {
@@ -197,6 +242,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     const [currentChatId, setCurrentChatId] = useState<string | null>(null);
     const fadeAnim = useRef(new Animated.Value(0)).current;
     const abortControllerRef = useRef<AbortController | null>(null);
+    const agentSessionIdRef = useRef<string | null>(null);
 
     useEffect(() => {
         void loadHistories();
@@ -261,6 +307,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     const hydrateMessages = useCallback((nextMessages: Message[], chatId?: string | null) => {
         setMessages(nextMessages.map(normalizeMessage));
         setCurrentChatId(chatId ?? null);
+        agentSessionIdRef.current = null;
     }, []);
 
     const saveToHistory = useCallback(async (historyMessages: Message[] = messages) => {
@@ -337,7 +384,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                 height: 768,
                 numSteps: 18,
                 guidanceScale: 6.5,
-                isLocal: false,
+                isLocal: true,
                 ...getApiParams(),
             });
 
@@ -379,11 +426,60 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         }
     }, []);
 
+    const runAgentTask = useCallback(async (params: {
+        prompt: string;
+        userMessage: Message;
+        history: { role: 'user' | 'assistant'; content: string }[];
+        conversationContext: string;
+        effectiveSystemPrompt: string;
+        options: SendMessageOptions;
+    }): Promise<{ text: string; imageUri?: string; metadata?: Message['metadata'] }> => {
+        setProgressStatus('Whisper Agent is planning...');
+
+        const task = await agentMode.createTask({
+            message: params.prompt,
+            history: params.history,
+            sessionId: agentSessionIdRef.current || undefined,
+            context: params.conversationContext,
+            systemPrompt: params.effectiveSystemPrompt,
+            useRAG: useRag,
+            nsfwMode: params.options.nsfwMode,
+            roleplayMode: params.options.roleplayMode,
+            modelMode: useModel,
+            allowResearch: true,
+            allowImages: true,
+            maxSteps: 4,
+            maxTokens: 384,
+            userId: user?.id,
+        });
+
+        agentSessionIdRef.current = task.sessionId;
+        setProgressStatus(task.imageUrl ? 'Whisper Agent completed with an image.' : 'Whisper Agent completed.');
+
+        return {
+            text: task.answer || 'Whisper Agent completed, but no final answer was returned.',
+            imageUri: task.imageUrl || undefined,
+            metadata: {
+                model: `agent:${task.backend}`,
+                agentSessionId: task.sessionId,
+                agentBackend: task.backend,
+                agentTools: task.toolResults.map((item) => item.tool),
+                agentPlan: task.plan,
+                citations: task.citations,
+            },
+        };
+    }, [useModel, useRag, user?.id]);
+
     const sendMessage = useCallback(async (options: SendMessageOptions = {}) => {
         const selectedFile = options.file ?? null;
         const trimmedInput = inputText.trim();
+        const isAgentRequest = !selectedFile && shouldRunAgent(trimmedInput);
+        const agentPrompt = isAgentRequest ? extractAgentPrompt(trimmedInput) : '';
+        const autoImageIntent = !selectedFile && !isAgentRequest && shouldAutoGenerateImage(trimmedInput);
+        const selectedFileIsImage = isImageAttachment(selectedFile);
+        const selfLearnerUnifiedImageRequest = useModel === 'self-learner' && (createImageMode || autoImageIntent);
 
-        if (createImageMode) {
+        if (createImageMode && !selfLearnerUnifiedImageRequest) {
             await generateImage(trimmedInput, false, DEFAULT_IMAGE_MODEL_ID);
             setInputText('');
             return;
@@ -391,7 +487,20 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
         if ((!trimmedInput && !selectedFile) || isLoading) return;
 
-        if (!selectedFile && shouldAutoGenerateImage(trimmedInput)) {
+        if (isAgentRequest && !agentPrompt) {
+            setMessages((previous) => [
+                ...previous,
+                {
+                    id: `msg-${Date.now()}`,
+                    text: 'Whisper Agent needs a task. Example: /agent research the best local model setup for this app.',
+                    isUser: false,
+                    timestamp: new Date(),
+                },
+            ]);
+            return;
+        }
+
+        if (autoImageIntent && useModel !== 'self-learner') {
             setInputText('');
             await generateImage(extractImagePrompt(trimmedInput), false, DEFAULT_IMAGE_MODEL_ID);
             return;
@@ -426,7 +535,11 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
         const userMessage: Message = {
             id: `msg-${Date.now()}`,
-            text: trimmedInput || (selectedFile ? `Analyze file: ${selectedFile.name}` : ''),
+            text: trimmedInput || (selectedFile
+                ? (selectedFileIsImage && useModel === 'self-learner'
+                    ? `Describe and learn this image: ${selectedFile.name}`
+                    : `Analyze file: ${selectedFile.name}`)
+                : ''),
             isUser: true,
             timestamp: new Date(),
             file: selectedFile ? { name: selectedFile.name, type: selectedFile.type, size: selectedFile.size } : undefined,
@@ -444,12 +557,21 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             }
 
             const baseSystemPrompt = getSystemPrompt();
-            const effectiveSystemPrompt = [baseSystemPrompt, options.systemPrompt]
-                .filter(Boolean)
-                .join('\n\n')
-                .trim();
+            const effectiveSystemPrompt = options.roleplayMode && options.systemPrompt
+                ? [
+                    baseSystemPrompt,
+                    'Roleplay character instructions override the default assistant personality when they conflict.',
+                    options.systemPrompt,
+                ].filter(Boolean).join('\n\n').trim()
+                : [baseSystemPrompt, options.systemPrompt].filter(Boolean).join('\n\n').trim();
 
-            const conversationContext = [options.context, buildConversationContext(messages)]
+            const effectivePrompt = isAgentRequest ? agentPrompt : userMessage.text;
+
+            const externalKnowledgeContext = useRag && (useModel === 'cloud' || useModel === 'local')
+                ? await buildKnowledgeContext(effectivePrompt)
+                : '';
+
+            const conversationContext = [options.context, externalKnowledgeContext, buildConversationContext(messages)]
                 .filter(Boolean)
                 .join('\n\n')
                 .trim();
@@ -462,53 +584,68 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                     content: message.text,
                 }));
 
-            if (useModel === 'cloud' && user?.id && !selectedFile && !options.roleplayMode && !options.nsfwMode) {
-                try {
-                    const response = await smartModeAPI.chat({
-                        message: userMessage.text,
-                        conversation_history: history.map((message) => ({
-                            text: message.content,
-                            isUser: message.role === 'user',
-                        })),
-                        user_id: user.id,
-                        max_tokens: 400,
-                    });
-
-                    const aiMessage: Message = {
-                        id: `msg-${Date.now() + 1}`,
-                        text: response.response,
-                        isUser: false,
-                        timestamp: new Date(),
-                        metadata: {
-                            model: response.model_used,
-                            responseTime: response.response_time,
-                        },
-                    };
-
-                    const nextMessages = [...messages, userMessage, aiMessage];
-                    setMessages(nextMessages);
-                    animateMessage();
-                    await saveToHistory(nextMessages);
-                    return;
-                } catch (smartError) {
-                    console.error('Cloud mode failed over to direct runtime:', smartError);
-                }
-            }
-
             let responseText = '';
+            let responseImageUri: string | undefined;
+            let responseMetadata: Message['metadata'] | undefined;
 
             if (selectedFile) {
-                try {
-                    const question = trimmedInput || 'Summarize this document and tell me what it contains.';
-                    const response = await whisperAPI.analyzeFile(
-                        { uri: selectedFile.uri, name: selectedFile.name, type: selectedFile.type },
-                        question
-                    );
-                    responseText = response.answer || 'I could not analyze this file. Please try again.';
-                } catch (fileError) {
-                    console.error('File analysis failed:', fileError);
-                    responseText = 'Sorry, I had trouble analyzing that file. Please make sure the file is readable and try again.';
+                if (useModel === 'self-learner' && selectedFileIsImage) {
+                    try {
+                        const base64 = await imageToBase64(selectedFile.uri);
+                        if (!base64) {
+                            throw new Error('Could not read the selected image.');
+                        }
+
+                        const response = await whisperAPI.chatSelfLearner({
+                            message: trimmedInput || 'Describe this image, learn it, and use it in future multimodal reasoning.',
+                            history,
+                            context: conversationContext,
+                            useRAG: useRag,
+                            systemPrompt: effectiveSystemPrompt,
+                            maxTokens: 320,
+                            temperature: options.roleplayMode ? 0.85 : 0.7,
+                            nsfwMode: options.nsfwMode,
+                            roleplayMode: options.roleplayMode,
+                            imageDataUrl: `data:${selectedFile.type || 'image/jpeg'};base64,${base64}`,
+                            ...getApiParams(),
+                        });
+                        responseText = response.response;
+                        responseImageUri = response.image_url;
+                        responseMetadata = {
+                            model: response.image_url ? 'self-learner-multimodal' : 'self-learner',
+                        };
+                    } catch (fileError) {
+                        console.error('Self-learner image analysis failed:', fileError);
+                        responseText = 'Sorry, I had trouble analyzing that image with the self-learner runtime.';
+                    }
+                } else {
+                    try {
+                        const question = [
+                            trimmedInput || 'Summarize this document and tell me what it contains.',
+                            effectiveSystemPrompt ? `Use this response style:\n${effectiveSystemPrompt}` : '',
+                        ].filter(Boolean).join('\n\n');
+                        const response = await whisperAPI.analyzeFile(
+                            { uri: selectedFile.uri, name: selectedFile.name, type: selectedFile.type },
+                            question
+                        );
+                        responseText = response.answer || 'I could not analyze this file. Please try again.';
+                    } catch (fileError) {
+                        console.error('File analysis failed:', fileError);
+                        responseText = 'Sorry, I had trouble analyzing that file. Please make sure the file is readable and try again.';
+                    }
                 }
+            } else if (isAgentRequest) {
+                const agentResponse = await runAgentTask({
+                    prompt: agentPrompt,
+                    userMessage,
+                    history,
+                    conversationContext,
+                    effectiveSystemPrompt,
+                    options,
+                });
+                responseText = agentResponse.text;
+                responseImageUri = agentResponse.imageUri;
+                responseMetadata = agentResponse.metadata;
             } else {
                 const streamSystemPrompt = [effectiveSystemPrompt, conversationContext]
                     .filter(Boolean)
@@ -524,17 +661,23 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                 try {
                     if (useModel === 'self-learner') {
                         const response = await whisperAPI.chatSelfLearner({
-                            message: userMessage.text,
+                            message: selfLearnerUnifiedImageRequest ? extractImagePrompt(userMessage.text) : userMessage.text,
                             history,
                             context: conversationContext,
+                            useRAG: useRag,
                             systemPrompt: effectiveSystemPrompt,
                             maxTokens: 320,
                             temperature: options.roleplayMode ? 0.85 : 0.7,
                             nsfwMode: options.nsfwMode,
                             roleplayMode: options.roleplayMode,
+                            generateImage: selfLearnerUnifiedImageRequest,
                             ...getApiParams(),
                         });
                         responseText = response.response;
+                        responseImageUri = response.image_url;
+                        responseMetadata = {
+                            model: response.image_url ? 'self-learner-multimodal' : 'self-learner',
+                        };
                     } else {
                         if (useModel === 'local') {
                             await LLMBackendService.setCurrentBackend('local');
@@ -550,6 +693,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                                 { role: 'user' as const, content: userMessage.text },
                             ],
                             systemPrompt: streamSystemPrompt,
+                            useRag,
                             temperature: options.roleplayMode ? 0.85 : 0.7,
                             maxTokens: 384,
                             nsfwMode: options.nsfwMode,
@@ -585,7 +729,6 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                             context: conversationContext,
                             systemPrompt: effectiveSystemPrompt,
                             history,
-                            smartMode: useModel === 'cloud',
                             isLocal: useModel !== 'cloud',
                             nsfwMode: options.nsfwMode,
                             roleplayMode: options.roleplayMode,
@@ -604,8 +747,10 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             const aiMessage: Message = {
                 id: `msg-${Date.now() + 1}`,
                 text: responseText,
+                imageUri: responseImageUri,
                 isUser: false,
                 timestamp: new Date(),
+                metadata: responseMetadata,
             };
 
             const nextMessages = [...messages, userMessage, aiMessage];
@@ -642,6 +787,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         inputText,
         isLoading,
         messages,
+        runAgentTask,
         safeHaptic,
         saveToHistory,
         tokenInfo?.isLow,
@@ -655,6 +801,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         const normalized = normalizeHistory(history);
         setMessages(normalized.messages);
         setCurrentChatId(normalized.id);
+        agentSessionIdRef.current = null;
     }, []);
 
     const deleteHistory = useCallback(async (historyId: string) => {
@@ -685,6 +832,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         setMessages([]);
         setInputText('');
         setCurrentChatId(null);
+        agentSessionIdRef.current = null;
         setStreamingMessage('');
         setProgressStatus('');
     }, [messages, saveToHistory]);

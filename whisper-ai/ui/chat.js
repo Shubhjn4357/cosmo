@@ -40,15 +40,15 @@ async function refreshImageModels() {
   models.forEach((model) => {
     const option = document.createElement("option");
     option.value = model.id;
-    option.textContent = `${model.name} (${model.style})`;
+    option.textContent = `${model.name} (${model.speed || "local"})`;
     option.selected = model.id === payload.current_model;
     imageModelSelect.appendChild(option);
   });
 
   const current = models.find((model) => model.id === imageModelSelect.value) || models[0];
   if (current) {
-    const alias = current.alias_for ? ` Routed to ${current.alias_for}.` : "";
-    imageModelMeta.textContent = `${current.description}.${alias}`;
+    const status = current.downloaded ? "Downloaded" : (current.install_status || "Preparing");
+    imageModelMeta.textContent = `${current.description}. ${status}.`;
   } else {
     imageModelMeta.textContent = "No image models available.";
   }
@@ -130,10 +130,10 @@ document.getElementById("imageButton").addEventListener("click", async () => {
 
   const payload = {
     prompt,
-    model_id: imageModelSelect.value || "flux-schnell",
+    model_id: imageModelSelect.value || "cyberrealistic-v9",
     width: Number(document.getElementById("imageWidthInput").value),
     height: Number(document.getElementById("imageHeightInput").value),
-    is_local: false,
+    is_local: true,
     session_id: guestSessionId,
   };
 
@@ -160,8 +160,8 @@ imageModelSelect.addEventListener("change", async () => {
     imageModelMeta.textContent = "";
     return;
   }
-  const alias = current.alias_for ? ` Routed to ${current.alias_for}.` : "";
-  imageModelMeta.textContent = `${current.description}.${alias}`;
+  const status = current.downloaded ? "Downloaded" : (current.install_status || "Preparing");
+  imageModelMeta.textContent = `${current.description}. ${status}.`;
 });
 
 refreshImageModels();

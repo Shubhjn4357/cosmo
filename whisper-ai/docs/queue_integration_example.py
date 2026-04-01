@@ -38,12 +38,12 @@ class ChatResponse(BaseModel):
 async def _process_chat_request(request: ChatRequest) -> dict:
     """Internal function to process chat (used by queue)."""
     from api.route import get_app_state
-    from api.routes.profile import get_supabase
+    from api.routes.profile import get_db_client
     from services.token_service import check_and_use_tokens
     
     # CHECK TOKENS - Local is free, cloud costs tokens
     token_result = await check_and_use_tokens(
-        supabase=get_supabase() if request.user_id else None,
+        db_client=get_db_client() if request.user_id else None,
         feature='chat',
         is_local=request.is_local,
         is_smart=False,

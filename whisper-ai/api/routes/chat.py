@@ -5,6 +5,7 @@ Whisper AI - Chat API Routes.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 from typing import Any, Optional
@@ -45,6 +46,10 @@ class ChatRequest(BaseModel):
     is_local: bool = True  # Default to local (free)
     user_id: Optional[str] = None  # User ID if logged in
     session_id: Optional[str] = None  # Session ID for guests
+    image_url: Optional[str] = None
+    image_data_url: Optional[str] = None
+    generate_image: bool = False
+    use_trained_vision_model: bool = True
 
 
 class ChatResponse(BaseModel):
@@ -54,6 +59,207 @@ class ChatResponse(BaseModel):
     sources: list[dict] = Field(default_factory=list)
     model_used: Optional[str] = None
     backend: Optional[str] = None
+    image_url: Optional[str] = None
+    multimodal: Optional[dict[str, Any]] = None
+
+
+def _copy_chat_request(request: ChatRequest, **updates: Any) -> ChatRequest:
+    if hasattr(request, "model_copy"):
+        return request.model_copy(update=updates)
+    return request.copy(update=updates)
+
+
+def _request_wants_image_generation(request: ChatRequest) -> bool:
+    if request.generate_image:
+        return True
+
+    normalized = (request.message or "").strip().lower()
+    return (
+        normalized.startswith("/image ")
+        or normalized.startswith("/imagine ")
+        or normalized.startswith("generate image")
+        or normalized.startswith("create image")
+        or normalized.startswith("make image")
+        or normalized.startswith("draw ")
+        or normalized.startswith("render ")
+        or normalized.startswith("illustrate ")
+    )
+
+
+def _self_learner_text_fallback_enabled() -> bool:
+    return os.getenv("WHISPER_SELF_LEARNER_TEXT_FALLBACK", "true").lower() == "true"
+
+
+async def _load_multimodal_image_bytes(request: ChatRequest) -> Optional[bytes]:
+    if request.image_data_url:
+        if "," not in request.image_data_url:
+            raise HTTPException(status_code=400, detail="Malformed image_data_url")
+        try:
+            _, encoded = request.image_data_url.split(",", 1)
+            return base64.b64decode(encoded)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid image_data_url") from exc
+
+    if request.image_url:
+        from api.routes.collect import _download_image_bytes
+
+        image_bytes = await _download_image_bytes(request.image_url)
+        if image_bytes is None:
+            raise HTTPException(status_code=400, detail="Could not load image_url")
+        return image_bytes
+
+    return None
+
+
+async def _prepare_self_learner_multimodal_context(request: ChatRequest) -> dict[str, Any]:
+    from api.routes.collect import _compute_local_image_embedding
+    from api.routes.feed import store_vision_data
+    from model.hybrid_vision import get_hybrid_model
+
+    image_bytes = await _load_multimodal_image_bytes(request)
+    if image_bytes is None:
+        return {
+            "has_image": False,
+            "context": "",
+            "matches": [],
+            "preview_url": None,
+        }
+
+    text_representation = (
+        (request.message or "").strip()
+        or "User shared an image for multimodal self-learner reasoning."
+    )
+    embedding = _compute_local_image_embedding(image_bytes)
+    stored = store_vision_data(
+        embedding=embedding,
+        text_representation=text_representation,
+        source="chat:self-learner",
+        image_url=request.image_url,
+        preview_bytes=image_bytes,
+        metadata={
+            "backend": "self-learner",
+            "user_id": request.user_id,
+            "session_id": request.session_id,
+            "origin": "chat_multimodal",
+        },
+    )
+    hybrid_model = get_hybrid_model()
+    matches = hybrid_model.search_memories(text_representation, top_k=3)
+
+    context_lines = [
+        "The user attached an image.",
+        f"Stored image note: {text_representation}",
+    ]
+    if matches:
+        context_lines.append("Relevant visual memories:")
+        for match in matches:
+            match_text = str(match.get("text") or "").strip()
+            if match_text:
+                context_lines.append(f"- {match_text[:220]}")
+
+    return {
+        "has_image": True,
+        "context": "\n".join(context_lines),
+        "matches": matches,
+        "preview_url": stored["entry"].get("preview_url"),
+    }
+
+
+async def _generate_self_learner_visual(request: ChatRequest) -> dict[str, Any]:
+    from model.hybrid_vision import get_hybrid_model
+
+    hybrid_model = get_hybrid_model()
+    result = await hybrid_model.generate_image(
+        request.message,
+        use_pretrained=False,
+        use_trained_model=bool(request.use_trained_vision_model),
+    )
+
+    generated_image = result.get("generated_image")
+    if not generated_image and os.getenv("WHISPER_SELF_LEARNER_IMAGE_FALLBACK_LOCAL", "true").lower() == "true":
+        from api.routes.image import ImageGenerationRequest, generate_image as generate_local_image
+
+        fallback = await generate_local_image(
+            ImageGenerationRequest(
+                prompt=request.message,
+                user_id=request.user_id,
+                session_id=request.session_id,
+                is_local=True,
+            )
+        )
+        result = {
+            "method": "local_checkpoint_fallback",
+            "message": "Generated with the local image checkpoint fallback.",
+            "prompt": fallback.prompt,
+            "generated_image": fallback.image_url,
+        }
+
+    return result
+
+
+def _build_multimodal_fallback_text(
+    *,
+    learner_state: dict[str, Any],
+    min_steps: int,
+    min_sequences: int,
+    image_context: dict[str, Any],
+    visual_result: Optional[dict[str, Any]],
+) -> str:
+    lines = [
+        "Self-learner text generation is still warming up, but the multimodal path is active.",
+    ]
+
+    if image_context.get("has_image"):
+        lines.append("The attached image was embedded into local vision memory.")
+        if image_context.get("matches"):
+            lines.append("Closest visual memories:")
+            for match in image_context["matches"][:3]:
+                match_text = str(match.get("text") or "").strip()
+                if match_text:
+                    lines.append(f"- {match_text[:180]}")
+
+    if visual_result and visual_result.get("generated_image"):
+        lines.append("An image was generated for this request.")
+
+    lines.append(
+        "Training progress: "
+        f"{learner_state.get('steps', 0)}/{min_steps} steps, "
+        f"{learner_state.get('dataset_sequences', 0)}/{min_sequences} sequences."
+    )
+    return "\n".join(lines)
+
+
+async def _generate_self_learner_text_fallback(
+    request: ChatRequest,
+    state,
+    prompt: str,
+) -> dict[str, Any]:
+    from services.complex_task_router import generate_server_response
+    from services.runtime_manager import get_chat_runtime_manager
+
+    fallback_runtime = state.chat_runtime or get_chat_runtime_manager()
+    if fallback_runtime is None:
+        raise RuntimeError("Server text fallback is not configured")
+
+    result = await asyncio.to_thread(
+        generate_server_response,
+        prompt=prompt,
+        history=request.history or [],
+        fallback_runtime=fallback_runtime,
+        max_new_tokens=min(request.max_tokens, 384),
+        temperature=request.temperature,
+        top_p=request.top_p,
+    )
+    response_text = (result.get("text") or "").strip()
+    if not response_text:
+        raise RuntimeError("Server text fallback returned an empty response")
+
+    backend_name = result.get("backend") or "server"
+    return {
+        **result,
+        "text": response_text,
+        "backend": f"self_learner_fallback:{backend_name}",
+    }
 
 
 def _build_prompt(
@@ -180,7 +386,7 @@ def _record_chat_interaction(
     learning_source: Optional[str] = None,
 ):
     from api.routes.learn import save_training_pair
-    from api.routes.profile import get_supabase
+    from api.routes.profile import get_db_client
 
     save_training_pair(
         request.message,
@@ -194,9 +400,9 @@ def _record_chat_interaction(
     )
 
     try:
-        supabase = get_supabase()
-        if supabase is not None:
-            supabase.table("chats").insert(
+        db_client = get_db_client()
+        if db_client is not None:
+            db_client.table("chats").insert(
                 {
                     "user_id": request.user_id,
                     "session_id": request.session_id,
@@ -212,12 +418,9 @@ def _record_chat_interaction(
 
 def _self_learner_output_is_usable(text: str) -> bool:
     stripped = (text or "").strip()
-    if len(stripped) < 12:
+    if len(stripped) < 2:
         return False
-
-    alpha_count = sum(1 for char in stripped if char.isalpha())
-    unique_chars = len(set(stripped.lower()))
-    return alpha_count >= 6 and unique_chars >= 4
+    return any(char.isalnum() for char in stripped)
 
 
 def _load_self_learner_state() -> dict:
@@ -275,12 +478,12 @@ async def chat(request: ChatRequest) -> ChatResponse:
         Generated response with metadata
     """
     from api.route import get_app_state
-    from api.routes.profile import get_supabase
+    from api.routes.profile import get_db_client
     from services.token_service import check_and_use_tokens
     
     # CHECK TOKENS - Local is free, cloud costs tokens
     token_result = await check_and_use_tokens(
-        supabase=get_supabase() if request.user_id else None,
+        db_client=get_db_client() if request.user_id else None,
         feature='chat',
         is_local=request.is_local,
         is_smart=False,
@@ -308,12 +511,16 @@ async def chat(request: ChatRequest) -> ChatResponse:
     )
     
     try:
+        from services.complex_task_router import generate_server_response
+
         result = await asyncio.to_thread(
-            state.chat_runtime.generate,
-            prompt,
-            request.max_tokens,
-            request.temperature,
-            request.top_p,
+            generate_server_response,
+            prompt=prompt,
+            history=request.history or [],
+            fallback_runtime=state.chat_runtime,
+            max_new_tokens=request.max_tokens,
+            temperature=request.temperature,
+            top_p=request.top_p,
         )
         response_text = (result.get("text") or "").strip()
         if not response_text:
@@ -342,12 +549,12 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
     Generate a response using the built-in scratch Whisper transformer.
     """
     from api.route import get_app_state
-    from api.routes.profile import get_supabase
-    from services.runtime_manager import get_self_learner_runtime_manager
+    from api.routes.profile import get_db_client
+    from services.runtime_manager import get_self_learner_chat_thresholds, get_self_learner_runtime_manager
     from services.token_service import check_and_use_tokens
 
     token_result = await check_and_use_tokens(
-        supabase=get_supabase() if request.user_id else None,
+        db_client=get_db_client() if request.user_id else None,
         feature='chat',
         is_local=True,
         is_smart=False,
@@ -363,10 +570,95 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
 
     state = get_app_state()
     learner_state = _load_self_learner_state()
-    min_steps = int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "8"))
-    min_sequences = int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "4"))
+    thresholds = get_self_learner_chat_thresholds()
+    min_steps = thresholds["min_steps"]
+    min_sequences = thresholds["min_sequences"]
+    runtime = get_self_learner_runtime_manager()
+    readiness = runtime.readiness()
+    has_min_training = (
+        learner_state.get("steps", 0) >= min_steps
+        and learner_state.get("dataset_sequences", 0) >= min_sequences
+    )
+    image_context = await _prepare_self_learner_multimodal_context(request)
+    wants_image_generation = _request_wants_image_generation(request)
+    visual_result: Optional[dict[str, Any]] = None
+    if wants_image_generation:
+        visual_result = await _generate_self_learner_visual(request)
 
-    if learner_state.get("steps", 0) < min_steps or learner_state.get("dataset_sequences", 0) < min_sequences:
+    multimodal_context = image_context.get("context", "").strip()
+    if visual_result and visual_result.get("generated_image"):
+        visual_note = (
+            "A companion image was generated for this response. "
+            f"Generation method: {visual_result.get('method') or 'unknown'}."
+        )
+        multimodal_context = "\n\n".join(part for part in (multimodal_context, visual_note) if part).strip()
+
+    augmented_request = _copy_chat_request(
+        request,
+        context="\n\n".join(
+            part for part in (request.context, multimodal_context) if str(part or "").strip()
+        ).strip() or None,
+    )
+
+    knowledge_context, knowledge_sources = await _resolve_knowledge_context(augmented_request, state)
+    prompt, sources = _build_prompt(
+        augmented_request,
+        state,
+        knowledge_context=knowledge_context,
+        knowledge_sources=knowledge_sources,
+    )
+
+    if not has_min_training and not readiness.get("can_load", False):
+        if _self_learner_text_fallback_enabled():
+            try:
+                fallback_result = await _generate_self_learner_text_fallback(augmented_request, state, prompt)
+                response_text = fallback_result["text"]
+                _record_chat_interaction(
+                    request,
+                    response_text,
+                    fallback_result,
+                    sources,
+                    learning_source="self-learner-fallback",
+                )
+                return ChatResponse(
+                    response=response_text,
+                    tokens_used=max(1, len(response_text.split())),
+                    sources=[{"source": s.get("source", "unknown")} for s in sources[:5]],
+                    model_used=fallback_result.get("model_used"),
+                    backend=fallback_result.get("backend"),
+                    image_url=(visual_result or {}).get("generated_image") or image_context.get("preview_url"),
+                    multimodal={
+                        "image_attached": image_context.get("has_image", False),
+                        "image_generated": bool((visual_result or {}).get("generated_image")),
+                        "vision_matches": image_context.get("matches", []),
+                        "vision_method": (visual_result or {}).get("method"),
+                        "text_fallback": True,
+                        "text_fallback_reason": "self_learner_not_ready",
+                    },
+                )
+            except Exception as fallback_exc:
+                logger.warning(f"Self-learner text fallback failed during warm-up: {fallback_exc}")
+        if image_context.get("has_image") or (visual_result and visual_result.get("generated_image")):
+            return ChatResponse(
+                response=_build_multimodal_fallback_text(
+                    learner_state=learner_state,
+                    min_steps=min_steps,
+                    min_sequences=min_sequences,
+                    image_context=image_context,
+                    visual_result=visual_result,
+                ),
+                tokens_used=0,
+                sources=[],
+                model_used="whisper-micro-transformer",
+                backend="micro_transformer",
+                image_url=(visual_result or {}).get("generated_image") or image_context.get("preview_url"),
+                multimodal={
+                    "image_attached": image_context.get("has_image", False),
+                    "image_generated": bool((visual_result or {}).get("generated_image")),
+                    "vision_matches": image_context.get("matches", []),
+                    "vision_method": (visual_result or {}).get("method"),
+                },
+            )
         return ChatResponse(
             response=(
                 "Self-learner mode is online, but the built-in transformer is still warming up. "
@@ -379,15 +671,6 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
             backend="micro_transformer",
         )
 
-    knowledge_context, knowledge_sources = await _resolve_knowledge_context(request, state)
-    prompt, sources = _build_prompt(
-        request,
-        state,
-        knowledge_context=knowledge_context,
-        knowledge_sources=knowledge_sources,
-    )
-    runtime = get_self_learner_runtime_manager()
-
     try:
         result = await asyncio.to_thread(
             runtime.generate,
@@ -398,15 +681,55 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
         )
         response_text = (result.get("text") or "").strip()
         if not _self_learner_output_is_usable(response_text):
+            if _self_learner_text_fallback_enabled():
+                try:
+                    fallback_result = await _generate_self_learner_text_fallback(augmented_request, state, prompt)
+                    response_text = fallback_result["text"]
+                    _record_chat_interaction(
+                        request,
+                        response_text,
+                        fallback_result,
+                        sources,
+                        learning_source="self-learner-fallback",
+                    )
+                    return ChatResponse(
+                        response=response_text,
+                        tokens_used=max(1, len(response_text.split())),
+                        sources=[{"source": s.get("source", "unknown")} for s in sources[:5]],
+                        model_used=fallback_result.get("model_used"),
+                        backend=fallback_result.get("backend"),
+                        image_url=(visual_result or {}).get("generated_image") or image_context.get("preview_url"),
+                        multimodal={
+                            "image_attached": image_context.get("has_image", False),
+                            "image_generated": bool((visual_result or {}).get("generated_image")),
+                            "vision_matches": image_context.get("matches", []),
+                            "vision_method": (visual_result or {}).get("method"),
+                            "text_fallback": True,
+                            "text_fallback_reason": "self_learner_low_quality",
+                        },
+                    )
+                except Exception as fallback_exc:
+                    logger.warning(f"Self-learner text fallback failed after low-quality output: {fallback_exc}")
             return ChatResponse(
                 response=(
                     "Self-learner mode is online, but the built-in transformer still needs more training "
                     "before it can answer reliably. Run a longer training pass or add more learned pairs."
+                    if has_min_training else
+                    "Self-learner mode loaded a low-training checkpoint, but it still needs more learned pairs "
+                    "before it can answer reliably."
                 ),
                 tokens_used=0,
                 sources=[],
                 model_used=result.get("model_used"),
                 backend=result.get("backend"),
+                image_url=(visual_result or {}).get("generated_image") or image_context.get("preview_url"),
+                multimodal={
+                    "image_attached": image_context.get("has_image", False),
+                    "image_generated": bool((visual_result or {}).get("generated_image")),
+                    "vision_matches": image_context.get("matches", []),
+                    "vision_method": (visual_result or {}).get("method"),
+                    "text_fallback": False,
+                },
             )
 
         _record_chat_interaction(
@@ -423,6 +746,13 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
             sources=[{"source": s.get("source", "unknown")} for s in sources[:5]],
             model_used=result.get("model_used"),
             backend=result.get("backend"),
+            image_url=(visual_result or {}).get("generated_image") or image_context.get("preview_url"),
+            multimodal={
+                "image_attached": image_context.get("has_image", False),
+                "image_generated": bool((visual_result or {}).get("generated_image")),
+                "vision_matches": image_context.get("matches", []),
+                "vision_method": (visual_result or {}).get("method"),
+            },
         )
     except HTTPException:
         raise
@@ -433,19 +763,25 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
 
 @router.get("/chat/self-learner/status")
 async def self_learner_status():
+    from api.route import get_app_state
     from services.runtime_manager import (
         SELF_LEARNER_CHECKPOINT,
         SELF_LEARNER_INT8_CHECKPOINT,
         SELF_LEARNER_STATE,
         SELF_LEARNER_TOKENIZER,
+        get_self_learner_chat_thresholds,
         get_self_learner_runtime_manager,
     )
+    from model.hybrid_vision import get_hybrid_model
 
     runtime = get_self_learner_runtime_manager()
+    hybrid_model = get_hybrid_model()
+    state = get_app_state()
     readiness = runtime.readiness()
     learner_state = _load_self_learner_state()
-    min_steps = int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "8"))
-    min_sequences = int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "4"))
+    thresholds = get_self_learner_chat_thresholds()
+    min_steps = thresholds["min_steps"]
+    min_sequences = thresholds["min_sequences"]
     chat_ready = (
         readiness.get("can_load", False)
         and learner_state.get("steps", 0) >= min_steps
@@ -458,6 +794,8 @@ async def self_learner_status():
         "training_state": learner_state,
         "captured_pairs": learner_state.get("dataset_sequences", 0),
         "runtime": runtime.status(),
+        "multimodal": hybrid_model.get_stats(),
+        "text_fallback_available": state.chat_runtime is not None,
         "artifacts": {
             "checkpoint": {
                 "path": str(SELF_LEARNER_CHECKPOINT),

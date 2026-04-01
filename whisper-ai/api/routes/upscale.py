@@ -41,12 +41,12 @@ async def upscale_image(request: UpscaleRequest):
         scale: Upscale factor (2 or 4)
         method: auto, replicate, or local
     """
-    from api.routes.profile import get_supabase
+    from api.routes.profile import get_db_client
     from services.token_service import check_and_use_tokens
     
     # CHECK TOKENS - Upscale costs 2.0 tokens
     token_result = await check_and_use_tokens(
-        supabase=get_supabase() if request.user_id else None,
+        db_client=get_db_client() if request.user_id else None,
         feature='upscale',
         is_local=request.is_local,
         is_smart=False,

@@ -1,6 +1,7 @@
 /**
  * Whisper App - Authentication Context
- * Server-based auth using profileAPI  (NO direct Supabase)
+ * Server-based auth using the Whisper API.
+ * The app does not connect directly to Supabase or Turso.
  */
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';

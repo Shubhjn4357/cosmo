@@ -1,190 +1,174 @@
-/**
- * Whisper AI - Agent Mode Service
- * Handles task-oriented AI interactions with planning and tool execution
- */
-
-import { whisperAPI } from './api';
-import { localLLM } from './localLLM';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export interface AgentTask {
-    id: string;
-    goal: string;
-    status: 'pending' | 'planning' | 'executing' | 'complete' | 'failed';
-    plan: AgentStep[];
-    results: Record<string, string>;
-    createdAt: Date;
+import type { ModelType } from '@/types';
+
+import {
+    whisperAPI,
+    type AgentPlanStep,
+    type AgentRunResponse,
+    type AgentToolResult,
+} from './api';
+
+const ACTIVE_TASK_KEY = '@whisper_agent_active_task';
+const TASK_HISTORY_KEY = '@whisper_agent_task_history';
+const MAX_TASK_HISTORY = 20;
+
+export type WhisperAgentBackend = 'server' | 'self_learner' | 'cloud';
+
+export interface WhisperAgentTask {
+    sessionId: string;
+    prompt: string;
+    status: string;
+    backend: WhisperAgentBackend;
+    answer: string;
+    imageUrl?: string | null;
+    plan: AgentPlanStep[];
+    toolResults: AgentToolResult[];
+    citations: { source: string; score?: number; chunk?: number }[];
+    updatedAt?: number;
 }
 
-export interface AgentStep {
-    id: string;
-    description: string;
-    tool: 'chat' | 'image' | 'search' | 'analyze' | 'code';
-    params: Record<string, any>;
-    status: 'pending' | 'running' | 'complete' | 'failed';
-    result?: string;
+export interface WhisperAgentRequest {
+    message: string;
+    history?: { role: string; content: string }[];
+    sessionId?: string;
+    context?: string;
+    systemPrompt?: string;
+    useRAG?: boolean;
+    nsfwMode?: boolean;
+    roleplayMode?: boolean;
+    modelMode?: ModelType;
+    allowResearch?: boolean;
+    allowImages?: boolean;
+    maxSteps?: number;
+    maxTokens?: number;
+    userId?: string;
 }
 
-export interface AgentContext {
-    conversationHistory: { role: 'user' | 'assistant'; content: string }[];
-    currentTask: AgentTask | null;
-    preferences: Record<string, any>;
+function resolveAgentBackend(mode: ModelType = 'server'): WhisperAgentBackend {
+    if (mode === 'cloud') return 'cloud';
+    if (mode === 'self-learner') return 'self_learner';
+    return 'server';
 }
 
-const AGENT_CONTEXT_KEY = 'agent_context';
+function toTask(response: AgentRunResponse, prompt: string): WhisperAgentTask {
+    return {
+        sessionId: response.session_id,
+        prompt,
+        status: response.status,
+        backend: response.backend as WhisperAgentBackend,
+        answer: response.answer,
+        imageUrl: response.image_url,
+        plan: response.plan || [],
+        toolResults: response.tool_results || [],
+        citations: response.citations || [],
+        updatedAt: response.updated_at,
+    };
+}
+
+async function loadHistory(): Promise<WhisperAgentTask[]> {
+    try {
+        const raw = await AsyncStorage.getItem(TASK_HISTORY_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        console.error('Failed to load agent task history:', error);
+        return [];
+    }
+}
+
+async function persistTask(task: WhisperAgentTask): Promise<void> {
+    try {
+        await AsyncStorage.setItem(ACTIVE_TASK_KEY, JSON.stringify(task));
+
+        const history = await loadHistory();
+        const deduped = [task, ...history.filter((entry) => entry.sessionId !== task.sessionId)]
+            .slice(0, MAX_TASK_HISTORY);
+        await AsyncStorage.setItem(TASK_HISTORY_KEY, JSON.stringify(deduped));
+    } catch (error) {
+        console.error('Failed to persist agent task:', error);
+    }
+}
 
 class AgentModeService {
-    private context: AgentContext = {
-        conversationHistory: [],
-        currentTask: null,
-        preferences: {},
-    };
-
-    constructor() {
-        this.loadContext();
+    resolveBackend(mode: ModelType = 'server'): WhisperAgentBackend {
+        return resolveAgentBackend(mode);
     }
 
-    private async loadContext() {
-        try {
-            const data = await AsyncStorage.getItem(AGENT_CONTEXT_KEY);
-            if (data) {
-                this.context = JSON.parse(data);
-            }
-        } catch (e) {
-            console.error('Failed to load agent context:', e);
-        }
-    }
+    async think(request: WhisperAgentRequest): Promise<WhisperAgentTask> {
+        const response = await whisperAPI.runAgent({
+            message: request.message,
+            history: request.history || [],
+            sessionId: request.sessionId,
+            context: request.context,
+            systemPrompt: request.systemPrompt,
+            useRAG: request.useRAG !== false,
+            nsfwMode: request.nsfwMode || false,
+            roleplayMode: request.roleplayMode || false,
+            backend: resolveAgentBackend(request.modelMode || 'server'),
+            allowResearch: request.allowResearch !== false,
+            allowImages: request.allowImages !== false,
+            maxSteps: request.maxSteps || 4,
+            maxTokens: request.maxTokens || 320,
+            userId: request.userId,
+        });
 
-    private async saveContext() {
-        try {
-            await AsyncStorage.setItem(AGENT_CONTEXT_KEY, JSON.stringify(this.context));
-        } catch (e) {
-            console.error('Failed to save agent context:', e);
-        }
-    }
-
-    async think(userMessage: string): Promise<string> {
-        // Add to conversation history
-        this.context.conversationHistory.push({ role: 'user', content: userMessage });
-
-        // Generate response with task understanding
-        const systemPrompt = `You are Whisper, an AI assistant that can help with tasks.
-When the user asks something complex, break it down into steps.
-Available tools: chat, image generation, file analysis, web search.
-If you need to use a tool, say "[TOOL:toolname] description".
-Be helpful and proactive.`;
-
-        const prompt = `${systemPrompt}\n\nConversation:\n${this.context.conversationHistory
-            .slice(-10)
-            .map(m => `${m.role === 'user' ? 'User' : 'Whisper'}: ${m.content}`)
-            .join('\n')}\nWhisper:`;
-
-        let response: string;
-
-        // Try local model first, fall back to server
-        if (localLLM.isLoaded()) {
-            response = await localLLM.generate(prompt);
-        } else {
-            try {
-                const result = await whisperAPI.chat({ message: userMessage, isLocal: true });
-                response = result.response;
-            } catch {
-                response = "I'm having trouble connecting. Please check your internet connection.";
-            }
-        }
-
-        // Add response to history
-        this.context.conversationHistory.push({ role: 'assistant', content: response });
-
-        // Keep history manageable
-        if (this.context.conversationHistory.length > 20) {
-            this.context.conversationHistory = this.context.conversationHistory.slice(-20);
-        }
-
-        await this.saveContext();
-
-        // Parse for tool calls
-        const toolMatch = response.match(/\[TOOL:(\w+)\]\s*(.+)/);
-        if (toolMatch) {
-            const [, tool, description] = toolMatch;
-            return await this.executeTool(tool, description, response);
-        }
-
-        return response;
-    }
-
-    private async executeTool(tool: string, description: string, originalResponse: string): Promise<string> {
-        switch (tool.toLowerCase()) {
-            case 'image':
-                return `${originalResponse}\n\n💡 Tip: Go to the Create tab and use: "${description}"`;
-
-            case 'search':
-                return `${originalResponse}\n\n🔍 I would search for: "${description}" (Web search coming soon)`;
-
-            case 'analyze':
-                return `${originalResponse}\n\n📄 Go to Files tab to analyze documents`;
-
-            case 'code':
-                return `${originalResponse}\n\n💻 Code generation coming soon`;
-
-            default:
-                return originalResponse;
-        }
-    }
-
-    async createTask(goal: string): Promise<AgentTask> {
-        const task: AgentTask = {
-            id: Date.now().toString(),
-            goal,
-            status: 'planning',
-            plan: [],
-            results: {},
-            createdAt: new Date(),
-        };
-
-        this.context.currentTask = task;
-        await this.saveContext();
-
-        // Generate plan
-        const planPrompt = `Break down this task into steps: "${goal}"
-Respond with numbered steps only, one per line.`;
-
-        let planText: string;
-        if (localLLM.isLoaded()) {
-            planText = await localLLM.generate(planPrompt);
-        } else {
-            const result = await whisperAPI.chat({ message: planPrompt, isLocal: true });
-            planText = result.response;
-        }
-
-        // Parse steps
-        const stepLines = planText.split('\n').filter(line => line.match(/^\d+\./));
-        task.plan = stepLines.map((line, i) => ({
-            id: `step-${i}`,
-            description: line.replace(/^\d+\.\s*/, ''),
-            tool: 'chat',
-            params: {},
-            status: 'pending' as const,
-        }));
-
-        task.status = 'pending';
-        await this.saveContext();
-
+        const task = toTask(response, request.message);
+        await persistTask(task);
         return task;
     }
 
-    getCurrentTask(): AgentTask | null {
-        return this.context.currentTask;
+    async createTask(request: WhisperAgentRequest): Promise<WhisperAgentTask> {
+        return this.think(request);
+    }
+
+    async getCurrentTask(): Promise<WhisperAgentTask | null> {
+        try {
+            const raw = await AsyncStorage.getItem(ACTIVE_TASK_KEY);
+            return raw ? JSON.parse(raw) : null;
+        } catch (error) {
+            console.error('Failed to load current agent task:', error);
+            return null;
+        }
+    }
+
+    async getTaskHistory(): Promise<WhisperAgentTask[]> {
+        return loadHistory();
+    }
+
+    async refreshTask(sessionId: string): Promise<WhisperAgentTask> {
+        const response = await whisperAPI.getAgentSession(sessionId);
+        const task: WhisperAgentTask = {
+            sessionId: response.id,
+            prompt: response.goal || '',
+            status: response.status,
+            backend: (response.backend_resolved || 'server') as WhisperAgentBackend,
+            answer: response.answer || '',
+            imageUrl: response.image_url,
+            plan: response.plan || [],
+            toolResults: response.tool_results || [],
+            citations: response.citations || [],
+            updatedAt: response.updated_at,
+        };
+        await persistTask(task);
+        return task;
     }
 
     async clearTask(): Promise<void> {
-        this.context.currentTask = null;
-        await this.saveContext();
+        try {
+            await AsyncStorage.removeItem(ACTIVE_TASK_KEY);
+        } catch (error) {
+            console.error('Failed to clear current agent task:', error);
+        }
     }
 
     async clearHistory(): Promise<void> {
-        this.context.conversationHistory = [];
-        await this.saveContext();
+        try {
+            await AsyncStorage.multiRemove([ACTIVE_TASK_KEY, TASK_HISTORY_KEY]);
+        } catch (error) {
+            console.error('Failed to clear agent history:', error);
+        }
     }
 }
 

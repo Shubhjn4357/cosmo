@@ -11,6 +11,7 @@ import json
 import importlib
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -34,8 +35,34 @@ SELF_LEARNER_TOKENIZER = SELF_LEARNER_DIR / "tokenizer.json"
 SELF_LEARNER_STATE = SELF_LEARNER_DIR / "state.json"
 
 
+def get_self_learner_chat_thresholds() -> dict[str, int]:
+    return {
+        "min_steps": max(1, int(os.getenv("WHISPER_SELF_LEARNER_MIN_STEPS", "8"))),
+        "min_sequences": max(1, int(os.getenv("WHISPER_SELF_LEARNER_MIN_SEQUENCES", "4"))),
+    }
+
+
 def _package_available(module_name: str) -> bool:
     return importlib.util.find_spec(module_name) is not None
+
+
+def _repair_collapsed_spacing(text: str) -> str:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return cleaned
+
+    # Leave already well-spaced output alone.
+    if cleaned.count(" ") >= max(2, len(cleaned) // 24):
+        return cleaned
+
+    repaired = re.sub(r"([.!?,:;])([A-Za-z0-9`])", r"\1 \2", cleaned)
+    repaired = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", repaired)
+    repaired = re.sub(r"([A-Za-z])(`)", r"\1 \2", repaired)
+    repaired = re.sub(r"(`)([A-Za-z])", r"\1 \2", repaired)
+    repaired = re.sub(r"(\d)([A-Za-z])", r"\1 \2", repaired)
+    repaired = re.sub(r"([A-Za-z])(\d)", r"\1 \2", repaired)
+    repaired = re.sub(r"\s{2,}", " ", repaired).strip()
+    return repaired if repaired.count(" ") > cleaned.count(" ") else cleaned
 
 
 def _purge_airllm_modules():
@@ -901,6 +928,7 @@ class ChatRuntimeManager:
             )
             generated_ids = output_ids[0][len(prompt_ids) :].tolist()
             text = self._tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+            text = _repair_collapsed_spacing(text)
             return {
                 "text": text,
                 "model_used": self.config.model_id or "whisper-micro-transformer",

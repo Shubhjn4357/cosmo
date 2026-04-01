@@ -33,6 +33,15 @@ const researchProviderSelect = document.getElementById("researchProvider");
 const lastRefreshLabel = document.getElementById("lastRefreshLabel");
 const autoRefreshToggle = document.getElementById("autoRefreshToggle");
 const trainingStepsInput = document.getElementById("trainingSteps");
+const drawerToggleButton = document.getElementById("drawerToggleButton");
+const adminSidebar = document.getElementById("adminSidebar");
+const adminSidebarBackdrop = document.getElementById("adminSidebarBackdrop");
+const sectionNavButtons = Array.from(document.querySelectorAll("[data-section-target]"));
+const trackedSections = Array.from(document.querySelectorAll(".content-section[id]"));
+const mobileDrawerQuery = window.matchMedia("(max-width: 1080px)");
+const curatedDatasetSelect = document.getElementById("curatedDatasetSelect");
+const curatedImportMaxRowsInput = document.getElementById("curatedImportMaxRows");
+const curatedImportAutoSyncToggle = document.getElementById("curatedImportAutoSync");
 const tokenKey = "whisper_admin_token";
 let runtimeProfileState = null;
 let controlCenterState = null;
@@ -40,6 +49,9 @@ let researchAutonomyState = null;
 let selectedAutonomySourceId = null;
 let refreshInFlight = false;
 let adminConfigState = null;
+let activeSectionId = trackedSections[0]?.id || null;
+let sectionObserver = null;
+let curatedDatasetCatalog = [];
 
 function getAdminToken() {
   return window.localStorage.getItem(tokenKey) || "";
@@ -67,6 +79,116 @@ function setAuthMessage(message, tone = "status-warn") {
   }
   authStatus.textContent = message;
   authStatus.className = `auth-feedback ${tone}`;
+}
+
+function setDrawerOpen(open) {
+  if (!drawerToggleButton || !adminSidebar) {
+    return;
+  }
+  const nextState = Boolean(open) && mobileDrawerQuery.matches;
+  document.body.classList.toggle("drawer-open", nextState);
+  drawerToggleButton.setAttribute("aria-expanded", nextState ? "true" : "false");
+}
+
+function closeDrawer() {
+  setDrawerOpen(false);
+}
+
+function setActiveSection(sectionId) {
+  if (!sectionId) {
+    return;
+  }
+  activeSectionId = sectionId;
+  sectionNavButtons.forEach((button) => {
+    const isActive = button.getAttribute("data-section-target") === sectionId;
+    button.classList.toggle("active", isActive);
+    if (isActive) {
+      button.setAttribute("aria-current", "location");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  });
+}
+
+function navigateToSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) {
+    return;
+  }
+  setActiveSection(sectionId);
+  if (window.location.hash !== `#${sectionId}`) {
+    window.history.replaceState(null, "", `#${sectionId}`);
+  }
+  section.scrollIntoView({ behavior: "smooth", block: "start" });
+  closeDrawer();
+}
+
+function initializeAdminShell() {
+  if (drawerToggleButton) {
+    drawerToggleButton.addEventListener("click", () => {
+      const isOpen = document.body.classList.contains("drawer-open");
+      setDrawerOpen(!isOpen);
+    });
+  }
+
+  if (adminSidebarBackdrop) {
+    adminSidebarBackdrop.addEventListener("click", closeDrawer);
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeDrawer();
+    }
+  });
+
+  sectionNavButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.getAttribute("data-section-target");
+      if (target) {
+        navigateToSection(target);
+      }
+    });
+  });
+
+  if (sectionObserver) {
+    sectionObserver.disconnect();
+  }
+  sectionObserver = new IntersectionObserver((entries) => {
+    const visibleEntry = entries
+      .filter((entry) => entry.isIntersecting)
+      .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+    if (visibleEntry?.target?.id) {
+      setActiveSection(visibleEntry.target.id);
+    }
+  }, {
+    rootMargin: "-18% 0px -62% 0px",
+    threshold: [0.15, 0.35, 0.6],
+  });
+  trackedSections.forEach((section) => sectionObserver.observe(section));
+
+  const resetDrawerForDesktop = () => {
+    if (!mobileDrawerQuery.matches) {
+      closeDrawer();
+    }
+  };
+  if (typeof mobileDrawerQuery.addEventListener === "function") {
+    mobileDrawerQuery.addEventListener("change", resetDrawerForDesktop);
+  } else if (typeof mobileDrawerQuery.addListener === "function") {
+    mobileDrawerQuery.addListener(resetDrawerForDesktop);
+  }
+
+  const hashSectionId = window.location.hash.replace(/^#/, "");
+  if (hashSectionId && document.getElementById(hashSectionId)) {
+    setActiveSection(hashSectionId);
+    window.requestAnimationFrame(() => {
+      document.getElementById(hashSectionId)?.scrollIntoView({ block: "start" });
+    });
+    return;
+  }
+
+  if (activeSectionId) {
+    setActiveSection(activeSectionId);
+  }
 }
 
 function updateAdminConfigUi() {
@@ -568,6 +690,7 @@ function renderDatasetCards(datasets) {
     card.className = "card";
     card.innerHTML = `
       <strong>${escapeHtml(dataset.name)}</strong>
+      <div class="meta">Kind: ${escapeHtml(dataset.kind || "managed")}</div>
       <div class="meta">Rows: ${escapeHtml(dataset.rows ?? "n/a")}</div>
       <div class="meta">Bytes: ${escapeHtml(formatBytes(dataset.size_bytes))}</div>
       <a href="/api/datasets/download/${encodeURIComponent(dataset.name)}" target="_blank" rel="noreferrer">download</a>
@@ -604,6 +727,34 @@ function renderHfSyncStatus(syncStatus) {
     null,
     2,
   );
+}
+
+function renderCuratedCatalog(payload) {
+  curatedDatasetCatalog = Array.isArray(payload?.datasets) ? payload.datasets : [];
+  if (!curatedDatasetSelect) {
+    return;
+  }
+
+  const previousValue = curatedDatasetSelect.value;
+  curatedDatasetSelect.innerHTML = "";
+
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = curatedDatasetCatalog.length
+    ? "Select a curated dataset"
+    : "No curated datasets available";
+  curatedDatasetSelect.appendChild(defaultOption);
+
+  curatedDatasetCatalog.forEach((dataset) => {
+    const option = document.createElement("option");
+    option.value = dataset.id;
+    option.textContent = `${dataset.name} (${dataset.kind})`;
+    curatedDatasetSelect.appendChild(option);
+  });
+
+  if (previousValue && curatedDatasetCatalog.some((dataset) => dataset.id === previousValue)) {
+    curatedDatasetSelect.value = previousValue;
+  }
 }
 
 function renderReadiness(report) {
@@ -977,8 +1128,12 @@ async function refreshAdmin() {
       return;
     }
 
-    const controlCenterRes = await adminFetch("/api/admin/control-center");
+    const [controlCenterRes, curatedCatalogRes] = await Promise.all([
+      adminFetch("/api/admin/control-center"),
+      adminFetch("/api/datasets/curated/catalog"),
+    ]);
     const controlCenterPayload = await readJson(controlCenterRes);
+    const curatedCatalogPayload = await readJson(curatedCatalogRes);
     if (!controlCenterRes.ok) {
       throw new Error(controlCenterPayload.error || "Failed to load admin control center");
     }
@@ -988,6 +1143,7 @@ async function refreshAdmin() {
     renderProfileCards(runtimeStatus);
     renderJobCards();
     renderDatasetCards(controlCenterPayload.datasets?.datasets || []);
+    renderCuratedCatalog(curatedCatalogRes.ok ? curatedCatalogPayload : {});
     renderHfSyncStatus(controlCenterPayload.hf_sync || {});
     renderReadiness(controlCenterPayload.readiness || {});
     renderResearchPolicy(controlCenterPayload.research_policy || {});
@@ -1133,6 +1289,41 @@ document.getElementById("syncLearningDataButton").addEventListener("click", asyn
   const payload = await readJson(response);
   hfSyncOutput.textContent = JSON.stringify(payload, null, 2);
   await refreshAdmin();
+});
+
+async function runCuratedImport(specIds) {
+  const isAdmin = await verifyAdminToken();
+  if (!isAdmin) {
+    hfSyncOutput.textContent = "Admin login required.";
+    return;
+  }
+
+  const maxRows = normalizeNumericField(curatedImportMaxRowsInput?.value);
+  const response = await adminFetch("/api/datasets/curated/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      spec_ids: specIds,
+      max_rows: maxRows,
+      auto_sync: Boolean(curatedImportAutoSyncToggle?.checked),
+    }),
+  });
+  const payload = await readJson(response);
+  hfSyncOutput.textContent = JSON.stringify(payload, null, 2);
+  await refreshAdmin();
+}
+
+document.getElementById("importCuratedDatasetButton").addEventListener("click", async () => {
+  const selectedId = curatedDatasetSelect?.value || "";
+  if (!selectedId) {
+    hfSyncOutput.textContent = "Choose a curated dataset first, or use Import All.";
+    return;
+  }
+  await runCuratedImport([selectedId]);
+});
+
+document.getElementById("importAllCuratedDatasetsButton").addEventListener("click", async () => {
+  await runCuratedImport(null);
 });
 
 datasetGrid.addEventListener("click", async (event) => {
@@ -1729,5 +1920,6 @@ window.setInterval(() => {
   }
 }, REFRESH_INTERVAL_MS);
 
+initializeAdminShell();
 resetAutonomySourceForm();
 refreshAdmin();

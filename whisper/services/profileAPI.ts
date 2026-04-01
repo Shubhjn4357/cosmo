@@ -1,6 +1,7 @@
 /**
  * Whisper App - Profile API Service
- * Client-side service that calls server API for ALL operations including auth
+ * Client-side service that calls the Whisper server API for auth, profiles,
+ * history, and preferences. Persistent storage lives on the server in Turso.
  */
 
 import { whisperAPI } from './api';
@@ -63,7 +64,8 @@ export const authAPI = {
 
     /**
      * Sign up with email/password
-     * NOTE: If email verification is enabled in Supabase, user will receive confirmation email
+     * NOTE: If server-side email verification is enabled, the user may need to
+     * confirm their email before a session is returned.
      */
     async signUp(email: string, password: string, displayName?: string): Promise<{ success: boolean; session: AuthSession | null; error: string | null }> {
         try {

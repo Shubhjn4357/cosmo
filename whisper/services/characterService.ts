@@ -1,9 +1,10 @@
 /**
  * Character Service
- * Manages roleplay characters for chat interactions.
+ * Uses the full local 22-character preset catalog and merges in any server extras.
  */
 
 import { whisperAPI } from './api';
+import { BUILT_IN_CHARACTERS } from './roleplayService';
 
 export interface RoleplayCharacter {
   id: string;
@@ -11,16 +12,73 @@ export interface RoleplayCharacter {
   avatar: string;
   description: string;
   personality: string;
+  systemPrompt?: string;
+  greeting?: string;
   tags: string[];
   nsfw: boolean;
   premium: boolean;
 }
 
+function normalizeBuiltInCharacters(includeNSFW: boolean): RoleplayCharacter[] {
+  return BUILT_IN_CHARACTERS
+    .filter((character) => includeNSFW || !character.isNSFW)
+    .map((character) => ({
+      id: character.id,
+      name: character.name,
+      avatar: character.avatar,
+      description: character.description,
+      personality: character.tags.join(', '),
+      systemPrompt: character.systemPrompt,
+      greeting: character.greeting,
+      tags: character.tags,
+      nsfw: character.isNSFW,
+      premium: false,
+    }));
+}
+
+function normalizeRemoteCharacter(raw: any): RoleplayCharacter {
+  return {
+    id: String(raw?.id ?? ''),
+    name: String(raw?.name ?? 'Character'),
+    avatar: String(raw?.avatar ?? ''),
+    description: String(raw?.description ?? ''),
+    personality: String(raw?.personality ?? ''),
+    systemPrompt: raw?.system_prompt ?? raw?.systemPrompt,
+    greeting: raw?.greeting,
+    tags: Array.isArray(raw?.tags) ? raw.tags.map(String) : [],
+    nsfw: Boolean(raw?.nsfw ?? raw?.isNSFW),
+    premium: Boolean(raw?.premium),
+  };
+}
+
 class CharacterService {
+  private getBuiltInCharacters(includeNSFW: boolean): RoleplayCharacter[] {
+    return normalizeBuiltInCharacters(includeNSFW);
+  }
+
+  private mergeCharacters(primary: RoleplayCharacter[], secondary: RoleplayCharacter[]) {
+    const merged = new Map<string, RoleplayCharacter>();
+
+    primary.forEach((character) => merged.set(character.id, character));
+    secondary.forEach((character) => {
+      const existing = merged.get(character.id);
+      merged.set(character.id, {
+        ...character,
+        systemPrompt: character.systemPrompt || existing?.systemPrompt,
+        greeting: character.greeting || existing?.greeting,
+      });
+    });
+
+    return Array.from(merged.values());
+  }
+
   /**
-   * Get list of available characters
+   * Get list of available characters.
+   * Local presets stay authoritative so roleplay always has the full 22-character set.
    */
   async getCharacters(includeNSFW: boolean = true): Promise<RoleplayCharacter[]> {
+    const localCharacters = this.getBuiltInCharacters(includeNSFW);
+
     try {
       const baseUrl = whisperAPI.getBaseUrl();
       const response = await fetch(
@@ -33,89 +91,27 @@ class CharacterService {
       }
 
       const data = await response.json();
-      return data.characters || [];
-    } catch (error) {
-      console.log('Characters API not available, using fallback:', error);
+      const remoteCharacters = Array.isArray(data.characters)
+        ? data.characters.map(normalizeRemoteCharacter)
+        : [];
 
-      // Return mock characters as fallback
-      return this.getMockCharacters(includeNSFW);
+      return this.mergeCharacters(localCharacters, remoteCharacters);
+    } catch (error) {
+      console.log('Characters API not available, using local presets:', error);
+      return localCharacters;
     }
   }
 
   /**
-   * Get mock characters (fallback when API unavailable)
-   */
-  private getMockCharacters(includeNSFW: boolean): RoleplayCharacter[] {
-    const allCharacters: RoleplayCharacter[] = [
-      {
-        id: '1',
-        name: 'Luna',
-        avatar: 'local://character1.webp',
-        description: 'A friendly AI assistant who loves to help with creative tasks',
-        personality: 'Cheerful, creative, and supportive. Always encouraging and ready to help brainstorm ideas.',
-        tags: ['friendly', 'creative'],
-        nsfw: false,
-        premium: false,
-      },
-      {
-        id: '2',
-        name: 'Professor',
-        avatar: 'local://character6.webp',
-        description: 'An knowledgeable teacher who explains complex topics simply',
-        personality: 'Scholarly, patient, and thorough. Loves to teach and explain concepts clearly.',
-        tags: ['educational', 'patient'],
-        nsfw: false,
-        premium: false,
-      },
-      {
-        id: '3',
-        name: 'Sage',
-        avatar: 'local://character3.webp',
-        description: 'A wise advisor offering thoughtful guidance',
-        personality: 'Wise, calm, and reflective. Provides balanced perspectives and thoughtful advice.',
-        tags: ['wise', 'advisor'],
-        nsfw: false,
-        premium: false,
-      },
-      {
-        id: '4',
-        name: 'Scout',
-        avatar: 'local://character4.webp',
-        description: 'An adventurous explorer always ready for new experiences',
-        personality: 'Energetic, curious, and bold. Loves adventure and trying new things.',
-        tags: ['adventurous', 'energetic'],
-        nsfw: false,
-        premium: false,
-      },
-      {
-        id: '5',
-        name: 'Alex',
-        avatar: 'local://character5.webp',
-        description: 'A tech-savvy developer who loves coding and problem-solving',
-        personality: 'Analytical, detail-oriented, and loves technology. Great at breaking down complex problems.',
-        tags: ['tech', 'analytical'],
-        nsfw: false,
-        premium: false,
-      },
-      {
-        id: '6',
-        name: 'Maya',
-        avatar: 'local://character2.webp',
-        description: 'A creative artist with a passion for storytelling',
-        personality: 'Imaginative, expressive, and artistic. Loves creating stories and exploring emotions.',
-        tags: ['creative', 'storyteller'],
-        nsfw: false,
-        premium: false,
-      },
-    ];
-
-    return includeNSFW ? allCharacters : allCharacters.filter(c => !c.nsfw);
-  }
-
-  /**
-   * Get a specific character by ID
+   * Get a specific character by ID.
    */
   async getCharacter(characterId: string): Promise<RoleplayCharacter | null> {
+    const localCharacters = this.getBuiltInCharacters(true);
+    const localMatch = localCharacters.find((character) => character.id === characterId);
+    if (localMatch) {
+      return localMatch;
+    }
+
     try {
       const baseUrl = whisperAPI.getBaseUrl();
       const response = await fetch(`${baseUrl}/api/characters/${characterId}`);
@@ -125,7 +121,7 @@ class CharacterService {
       }
 
       const data = await response.json();
-      return data.character || null;
+      return data.character ? normalizeRemoteCharacter(data.character) : null;
     } catch (error) {
       console.error('Get character failed:', error);
       return null;
@@ -133,15 +129,12 @@ class CharacterService {
   }
 
   /**
-   * Get avatar source for a character
+   * Get avatar source for a character.
    */
   getAvatarSource(character: RoleplayCharacter): string | { uri: string } | any {
-    // Check if avatar is a local file reference
     if (character.avatar.startsWith('local://')) {
       const filename = character.avatar.replace('local://', '');
 
-      // Metro bundler requires static require paths
-      // Map filenames to imports
       const avatarMap: Record<string, any> = {
         'character1.webp': require('@/assets/characters/images/character1.webp'),
         'character2.webp': require('@/assets/characters/images/character2.webp'),
@@ -165,21 +158,13 @@ class CharacterService {
         'character20.webp': require('@/assets/characters/images/character20.webp'),
       };
 
-      if (avatarMap[filename]) {
-        return avatarMap[filename];
-      } else {
-        console.warn(`Local avatar not found: ${filename}`);
-        // Fallback to URL
-        return character.avatar;
-      }
+      return avatarMap[filename] || character.avatar;
     }
 
-    // Check if avatar is already a full URL (CDN)
     if (character.avatar.startsWith('http')) {
       return character.avatar;
     }
 
-    // Otherwise construct server URL
     const baseUrl = whisperAPI.getBaseUrl();
     return `${baseUrl}/static/characters/${character.avatar}`;
   }
