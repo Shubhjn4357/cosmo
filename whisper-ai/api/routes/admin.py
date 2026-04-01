@@ -47,6 +47,17 @@ def _format_currency_from_paise(amount_paise: int, currency: str = "INR") -> str
     return f"{symbol}{amount_paise / 100:.2f}"
 
 
+def _require_runtime_profile(profile_id: str):
+    normalized = str(profile_id or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="profile_id is required")
+
+    try:
+        return get_profile(normalized)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown runtime profile: {normalized}") from exc
+
+
 def _safe_json_file(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -392,6 +403,7 @@ def _control_center_payload(app_state) -> dict[str, Any]:
         get_background_research_status,
         list_research_documents,
         list_research_runs,
+        summarize_research_runs,
         summarize_research_documents,
     )
 
@@ -560,7 +572,7 @@ async def select_runtime_profile(
     from api.route import get_app_state
 
     app_state = get_app_state()
-    profile = get_profile(request.profile_id)
+    profile = _require_runtime_profile(request.profile_id)
     if not get_model_enabled(f"runtime.{profile.id}", True):
         raise HTTPException(status_code=400, detail=f"Runtime profile '{profile.id}' is disabled")
     app_state.chat_runtime.reconfigure(profile.to_runtime_config(), selected_profile=profile.id, persist=True)
@@ -655,7 +667,7 @@ async def validate_runtime_profile(
 
     app_state = get_app_state()
     runtime_before = app_state.chat_runtime.status() if app_state.chat_runtime is not None else None
-    profile = get_profile(request.profile_id)
+    profile = _require_runtime_profile(request.profile_id)
     if not get_model_enabled(f"runtime.{profile.id}", True):
         raise HTTPException(status_code=400, detail=f"Runtime profile '{profile.id}' is disabled")
 

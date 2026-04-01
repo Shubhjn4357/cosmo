@@ -117,6 +117,40 @@ def test_runtime_profile_validation_is_cached_without_mutating_live_runtime(serv
     assert gguf_profile["validation"]["summary"]
 
 
+def test_admin_control_center_returns_research_summaries(server, admin_headers):
+    response = requests.get(
+        f"{server.base_url}/api/admin/control-center",
+        headers=admin_headers,
+        timeout=60,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "research_history" in payload
+    assert "summary" in payload["research_history"]
+    assert "research_documents" in payload
+    assert "summary" in payload["research_documents"]
+
+
+def test_runtime_profile_actions_require_nonempty_profile_id(server, admin_headers):
+    validate = requests.post(
+        f"{server.base_url}/api/admin/runtime/validate",
+        headers=admin_headers,
+        json={"profile_id": "", "test_load": False, "refresh_imports": True},
+        timeout=60,
+    )
+    assert validate.status_code == 400
+    assert "profile_id is required" in validate.text
+
+    select = requests.post(
+        f"{server.base_url}/api/admin/runtime-profiles/select",
+        headers=admin_headers,
+        json={"profile_id": "", "eager_load": False},
+        timeout=60,
+    )
+    assert select.status_code == 400
+    assert "profile_id is required" in select.text
+
+
 def test_gguf_runtime_diagnostics_are_explicit(server, admin_headers):
     select = requests.post(
         f"{server.base_url}/api/admin/runtime-profiles/select",

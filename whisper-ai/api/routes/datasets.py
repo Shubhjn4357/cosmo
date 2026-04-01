@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -33,6 +33,15 @@ MANAGED_DATASETS = [
 
 class CuratedImportRequest(BaseModel):
     spec_ids: Optional[List[str]] = None
+    max_rows: Optional[int] = None
+    auto_sync: bool = False
+
+
+class HuggingFaceDatasetImportRequest(BaseModel):
+    dataset_id: str
+    config_name: Optional[str] = None
+    split: Optional[str] = "train"
+    kind: Literal["auto", "text", "image_prompt"] = "auto"
     max_rows: Optional[int] = None
     auto_sync: bool = False
 
@@ -156,6 +165,42 @@ async def import_curated(request: CuratedImportRequest, payload: dict = Depends(
         "results": results,
         "count": len(results),
         "rows_imported": total_rows,
+    }
+
+
+@router.post("/hf/import")
+async def import_huggingface_dataset(
+    request: HuggingFaceDatasetImportRequest,
+    payload: dict = Depends(verify_admin_token),
+):
+    from services.curated_training_import import import_hf_dataset
+
+    max_rows = request.max_rows
+    if max_rows is not None and max_rows < 1:
+        raise HTTPException(status_code=400, detail="max_rows must be positive")
+
+    dataset_id = str(request.dataset_id or "").strip()
+    if not dataset_id or "/" not in dataset_id:
+        raise HTTPException(status_code=400, detail="dataset_id must look like 'owner/name'")
+
+    try:
+        result = import_hf_dataset(
+            dataset_id,
+            config_name=request.config_name,
+            split=request.split,
+            kind=request.kind,
+            max_rows=max_rows,
+            auto_sync=request.auto_sync,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Hugging Face dataset import failed: {exc}") from exc
+
+    return {
+        "status": "imported",
+        "result": result,
+        "rows_imported": int(result.get("rows_imported") or 0),
     }
 
 

@@ -42,12 +42,19 @@ const mobileDrawerQuery = window.matchMedia("(max-width: 1080px)");
 const curatedDatasetSelect = document.getElementById("curatedDatasetSelect");
 const curatedImportMaxRowsInput = document.getElementById("curatedImportMaxRows");
 const curatedImportAutoSyncToggle = document.getElementById("curatedImportAutoSync");
+const hfDatasetIdInput = document.getElementById("hfDatasetIdInput");
+const hfDatasetConfigInput = document.getElementById("hfDatasetConfigInput");
+const hfDatasetSplitInput = document.getElementById("hfDatasetSplitInput");
+const hfDatasetKindSelect = document.getElementById("hfDatasetKindSelect");
+const hfDatasetImportMaxRowsInput = document.getElementById("hfDatasetImportMaxRows");
+const hfDatasetAutoSyncToggle = document.getElementById("hfDatasetAutoSync");
 const tokenKey = "whisper_admin_token";
 let runtimeProfileState = null;
 let controlCenterState = null;
 let researchAutonomyState = null;
 let selectedAutonomySourceId = null;
 let refreshInFlight = false;
+let refreshQueued = false;
 let adminConfigState = null;
 let activeSectionId = trackedSections[0]?.id || null;
 let sectionObserver = null;
@@ -345,6 +352,28 @@ function setBusy(buttonOrId, busy, busyLabel = "Working...") {
   button.textContent = busy ? busyLabel : button.dataset.idleLabel;
 }
 
+async function withButtonBusy(buttonOrId, busyLabel, task) {
+  try {
+    setBusy(buttonOrId, true, busyLabel);
+    return await task();
+  } finally {
+    setBusy(buttonOrId, false);
+  }
+}
+
+function getSelectedRuntimeProfileId() {
+  return String(runtimeProfileSelect?.value || "").trim();
+}
+
+function ensureSelectedRuntimeProfile(outputElement) {
+  const profileId = getSelectedRuntimeProfileId();
+  if (!profileId) {
+    outputElement.textContent = "Choose a runtime profile first.";
+    return "";
+  }
+  return profileId;
+}
+
 function jobStatusClass(status) {
   if (status === "completed") {
     return "status-ok";
@@ -578,13 +607,29 @@ function renderHealth(runtime, knowledge, research) {
 
 function renderProfileOptions() {
   runtimeProfileSelect.innerHTML = "";
-  (runtimeProfileState?.profiles || []).forEach((profile) => {
+  const profiles = runtimeProfileState?.profiles || [];
+
+  if (!profiles.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No runtime profiles available";
+    runtimeProfileSelect.appendChild(option);
+    runtimeProfileSelect.disabled = true;
+    return;
+  }
+
+  runtimeProfileSelect.disabled = false;
+  profiles.forEach((profile) => {
     const option = document.createElement("option");
     option.value = profile.id;
     option.textContent = `${profile.name} (${profile.backend})`;
     option.selected = profile.id === runtimeProfileState.selected_profile;
     runtimeProfileSelect.appendChild(option);
   });
+
+  if (!getSelectedRuntimeProfileId() && runtimeProfileSelect.options.length) {
+    runtimeProfileSelect.selectedIndex = 0;
+  }
 }
 
 function renderProfileCards(runtimeStatus) {
@@ -1099,9 +1144,15 @@ async function verifyAdminToken() {
 
 async function refreshAdmin() {
   if (refreshInFlight) {
+    refreshQueued = true;
     return;
   }
   refreshInFlight = true;
+
+  const previousRefreshLabel = lastRefreshLabel?.textContent || "Last sync: never";
+  if (lastRefreshLabel) {
+    lastRefreshLabel.textContent = "Syncing...";
+  }
 
   try {
     const adminStatusPromise = refreshAdminConfigStatus();
@@ -1112,10 +1163,10 @@ async function refreshAdmin() {
     const runtimePayload = await readJson(runtimeRes);
     const researchPayload = await readJson(researchRes);
     if (!runtimeRes.ok) {
-      throw new Error(runtimePayload.error || "Failed to load runtime status");
+      throw new Error(runtimePayload.error || runtimePayload.detail || "Failed to load runtime status");
     }
     if (!researchRes.ok) {
-      throw new Error(researchPayload.error || "Failed to load research stats");
+      throw new Error(researchPayload.error || researchPayload.detail || "Failed to load research stats");
     }
 
     const runtimeStatus = runtimePayload.runtime || {};
@@ -1135,7 +1186,7 @@ async function refreshAdmin() {
     const controlCenterPayload = await readJson(controlCenterRes);
     const curatedCatalogPayload = await readJson(curatedCatalogRes);
     if (!controlCenterRes.ok) {
-      throw new Error(controlCenterPayload.error || "Failed to load admin control center");
+      throw new Error(controlCenterPayload.error || controlCenterPayload.detail || "Failed to load admin control center");
     }
 
     runtimeProfileState = controlCenterPayload.runtime_profiles || { profiles: [], download_jobs: [] };
@@ -1179,138 +1230,146 @@ async function refreshAdmin() {
     );
   } catch (error) {
     runtimeOutput.textContent = error.message || String(error);
+    if (lastRefreshLabel) {
+      lastRefreshLabel.textContent = `${previousRefreshLabel} (refresh failed)`;
+    }
   } finally {
     refreshInFlight = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      await refreshAdmin();
+    } else if (lastRefreshLabel?.textContent === "Syncing...") {
+      lastRefreshLabel.textContent = previousRefreshLabel;
+    }
   }
 }
 
-async function runAdminAction(buttonId, outputElement, task, busyLabel = "Working...") {
-  const button = document.getElementById(buttonId);
-  try {
-    setBusy(button, true, busyLabel);
+async function runAdminAction(buttonOrId, outputElement, task, options = {}) {
+  const normalizedOptions = typeof options === "string"
+    ? { busyLabel: options }
+    : options;
+  const {
+    busyLabel = "Working...",
+    adminMessage = "Admin login required.",
+    refresh = true,
+  } = normalizedOptions;
+
+  return withButtonBusy(buttonOrId, busyLabel, async () => {
     const isAdmin = await verifyAdminToken();
     if (!isAdmin) {
-      outputElement.textContent = "Admin login required.";
-      return;
+      outputElement.textContent = adminMessage;
+      return null;
     }
     const payload = await task();
     outputElement.textContent = JSON.stringify(payload, null, 2);
-    await refreshAdmin();
-  } catch (error) {
+    if (refresh) {
+      await refreshAdmin();
+    }
+    return payload;
+  }).catch((error) => {
     outputElement.textContent = error.message || String(error);
-  } finally {
-    setBusy(button, false);
-  }
+    return null;
+  });
 }
 
 document.getElementById("researchButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const topic = document.getElementById("researchTopic").value.trim();
-  const max_pages = Number(document.getElementById("researchPages").value);
-  const provider = researchProviderSelect.value;
-  const start_url = document.getElementById("researchStartUrl").value.trim();
-  const depth = Number(document.getElementById("researchDepth").value);
-  const render = document.getElementById("researchRender").checked;
-  const refresh_existing = document.getElementById("researchRefreshExisting").checked;
-  const response = await adminFetch("/api/research/discover", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topic,
-      max_pages,
-      provider,
-      start_url: start_url || null,
-      depth,
-      render,
-      refresh_existing,
-      formats: ["markdown"],
-    }),
-  });
-  const payload = await readJson(response);
-  researchOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("researchButton", researchOutput, async () => {
+    const topic = document.getElementById("researchTopic").value.trim();
+    const max_pages = Number(document.getElementById("researchPages").value);
+    const provider = researchProviderSelect.value;
+    const start_url = document.getElementById("researchStartUrl").value.trim();
+    const depth = Number(document.getElementById("researchDepth").value);
+    const render = document.getElementById("researchRender").checked;
+    const refresh_existing = document.getElementById("researchRefreshExisting").checked;
+    const response = await adminFetch("/api/research/discover", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic,
+        max_pages,
+        provider,
+        start_url: start_url || null,
+        depth,
+        render,
+        refresh_existing,
+        formats: ["markdown"],
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Research discovery failed");
+    }
+    return payload;
+  }, "Discovering...");
 });
 
 document.getElementById("uploadDatasetButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchOutput.textContent = "Admin login required.";
-    return;
-  }
-
   const input = document.getElementById("datasetFileInput");
   if (!input.files.length) {
-    researchOutput.textContent = "Choose a dataset file first.";
+    hfSyncOutput.textContent = "Choose a dataset file first.";
     return;
   }
-
-  const form = new FormData();
-  form.append("file", input.files[0]);
-  const response = await adminFetch("/api/datasets/upload", {
-    method: "POST",
-    body: form,
-  });
-  const payload = await readJson(response);
-  researchOutput.textContent = JSON.stringify(payload, null, 2);
-  input.value = "";
-  await refreshAdmin();
+  await runAdminAction("uploadDatasetButton", hfSyncOutput, async () => {
+    const form = new FormData();
+    form.append("file", input.files[0]);
+    const response = await adminFetch("/api/datasets/upload", {
+      method: "POST",
+      body: form,
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Dataset upload failed");
+    }
+    input.value = "";
+    return payload;
+  }, "Uploading...");
 });
 
 document.getElementById("validateHfButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    hfSyncOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/learn/validate-remote", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  hfSyncOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("validateHfButton", hfSyncOutput, async () => {
+    const response = await adminFetch("/api/learn/validate-remote", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "HF validation failed");
+    }
+    return payload;
+  }, "Validating...");
 });
 
 document.getElementById("syncLearningDataButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    hfSyncOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/learn/sync-now?wait=true", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  hfSyncOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("syncLearningDataButton", hfSyncOutput, async () => {
+    const response = await adminFetch("/api/learn/sync-now?wait=true", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "HF sync failed");
+    }
+    return payload;
+  }, "Syncing...");
 });
 
 async function runCuratedImport(specIds) {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    hfSyncOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const maxRows = normalizeNumericField(curatedImportMaxRowsInput?.value);
-  const response = await adminFetch("/api/datasets/curated/import", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      spec_ids: specIds,
-      max_rows: maxRows,
-      auto_sync: Boolean(curatedImportAutoSyncToggle?.checked),
-    }),
-  });
-  const payload = await readJson(response);
-  hfSyncOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  const buttonId = Array.isArray(specIds) ? "importCuratedDatasetButton" : "importAllCuratedDatasetsButton";
+  await runAdminAction(buttonId, hfSyncOutput, async () => {
+    const maxRows = normalizeNumericField(curatedImportMaxRowsInput?.value);
+    const response = await adminFetch("/api/datasets/curated/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        spec_ids: specIds,
+        max_rows: maxRows,
+        auto_sync: Boolean(curatedImportAutoSyncToggle?.checked),
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Curated import failed");
+    }
+    return payload;
+  }, Array.isArray(specIds) ? "Importing..." : "Importing all...");
 }
 
 document.getElementById("importCuratedDatasetButton").addEventListener("click", async () => {
@@ -1326,15 +1385,37 @@ document.getElementById("importAllCuratedDatasetsButton").addEventListener("clic
   await runCuratedImport(null);
 });
 
-datasetGrid.addEventListener("click", async (event) => {
-  const button = event.target.closest(".dataset-sync-button");
-  if (!button) {
+document.getElementById("importHfDatasetButton").addEventListener("click", async () => {
+  const datasetId = String(hfDatasetIdInput?.value || "").trim();
+  if (!datasetId) {
+    hfSyncOutput.textContent = "Enter a Hugging Face dataset id like owner/name.";
     return;
   }
 
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    hfSyncOutput.textContent = "Admin login required.";
+  await runAdminAction("importHfDatasetButton", hfSyncOutput, async () => {
+    const response = await adminFetch("/api/datasets/hf/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dataset_id: datasetId,
+        config_name: String(hfDatasetConfigInput?.value || "").trim() || null,
+        split: String(hfDatasetSplitInput?.value || "").trim() || "train",
+        kind: String(hfDatasetKindSelect?.value || "auto").trim() || "auto",
+        max_rows: normalizeNumericField(hfDatasetImportMaxRowsInput?.value),
+        auto_sync: Boolean(hfDatasetAutoSyncToggle?.checked),
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "HF dataset import failed");
+    }
+    return payload;
+  }, "Importing...");
+});
+
+datasetGrid.addEventListener("click", async (event) => {
+  const button = event.target.closest(".dataset-sync-button");
+  if (!button) {
     return;
   }
 
@@ -1343,122 +1424,110 @@ datasetGrid.addEventListener("click", async (event) => {
     return;
   }
 
-  const response = await adminFetch(`/api/datasets/sync/${encodeURIComponent(datasetName)}`, {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  hfSyncOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction(button, hfSyncOutput, async () => {
+    const response = await adminFetch(`/api/datasets/sync/${encodeURIComponent(datasetName)}`, {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Dataset sync failed");
+    }
+    return payload;
+  }, "Syncing...");
 });
 
 document.getElementById("saveResearchPolicyButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchPolicyOutput.textContent = "Admin login required.";
-    return;
-  }
+  await runAdminAction("saveResearchPolicyButton", researchPolicyOutput, async () => {
+    const allowedDomains = document.getElementById("researchAllowedDomains").value
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const blockedDomains = document.getElementById("researchBlockedDomains").value
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
 
-  const allowedDomains = document.getElementById("researchAllowedDomains").value
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const blockedDomains = document.getElementById("researchBlockedDomains").value
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  const response = await adminFetch("/api/research/policy", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      require_allowed_sources: document.getElementById("researchRequireAllowed").checked,
-      require_license_metadata: document.getElementById("researchRequireLicensed").checked,
-      allowed_domains: allowedDomains,
-      blocked_domains: blockedDomains,
-    }),
-  });
-  const payload = await readJson(response);
-  researchPolicyOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+    const response = await adminFetch("/api/research/policy", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        require_allowed_sources: document.getElementById("researchRequireAllowed").checked,
+        require_license_metadata: document.getElementById("researchRequireLicensed").checked,
+        allowed_domains: allowedDomains,
+        blocked_domains: blockedDomains,
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to save research policy");
+    }
+    return payload;
+  }, "Saving...");
 });
 
 document.getElementById("saveAutonomySettingsButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchAutonomyOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/research/autonomy", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      enabled: document.getElementById("autonomyEnabled").checked,
-      interval_minutes: Math.max(1, Number(document.getElementById("autonomyIntervalMinutes").value) || 60),
-      auto_sync_hf: document.getElementById("autonomyAutoSyncHf").checked,
-      learning_chunk_chars: Math.max(200, Number(document.getElementById("autonomyChunkChars").value) || 1200),
-      learning_max_chunks_per_document: Math.max(1, Number(document.getElementById("autonomyMaxChunks").value) || 2),
-    }),
-  });
-  const payload = await readJson(response);
-  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("saveAutonomySettingsButton", researchAutonomyOutput, async () => {
+    const response = await adminFetch("/api/research/autonomy", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: document.getElementById("autonomyEnabled").checked,
+        interval_minutes: Math.max(1, Number(document.getElementById("autonomyIntervalMinutes").value) || 60),
+        auto_sync_hf: document.getElementById("autonomyAutoSyncHf").checked,
+        learning_chunk_chars: Math.max(200, Number(document.getElementById("autonomyChunkChars").value) || 1200),
+        learning_max_chunks_per_document: Math.max(1, Number(document.getElementById("autonomyMaxChunks").value) || 2),
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to save autonomy settings");
+    }
+    return payload;
+  }, "Saving...");
 });
 
 document.getElementById("runAutonomyNowButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchAutonomyOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/research/autonomy/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
-  });
-  const payload = await readJson(response);
-  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("runAutonomyNowButton", researchAutonomyOutput, async () => {
+    const response = await adminFetch("/api/research/autonomy/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to run autonomy source");
+    }
+    return payload;
+  }, "Running...");
 });
 
 document.getElementById("startAutonomyButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchAutonomyOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/research/autonomy/start", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("startAutonomyButton", researchAutonomyOutput, async () => {
+    const response = await adminFetch("/api/research/autonomy/start", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to start autonomy loop");
+    }
+    return payload;
+  }, "Starting...");
 });
 
 document.getElementById("stopAutonomyButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchAutonomyOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/research/autonomy/stop", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("stopAutonomyButton", researchAutonomyOutput, async () => {
+    const response = await adminFetch("/api/research/autonomy/stop", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to stop autonomy loop");
+    }
+    return payload;
+  }, "Stopping...");
 });
 
 document.getElementById("addAutonomySourceButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchAutonomyOutput.textContent = "Admin login required.";
-    return;
-  }
-
   const sourceId = document.getElementById("autonomySourceId").value.trim();
   const payloadBody = collectAutonomySourcePayload();
   const topic = payloadBody.topic || "";
@@ -1468,23 +1537,25 @@ document.getElementById("addAutonomySourceButton").addEventListener("click", asy
     return;
   }
 
-  const response = await adminFetch(
-    sourceId
-      ? `/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`
-      : "/api/research/autonomy/sources",
-    {
-      method: sourceId ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payloadBody),
-    },
-  );
-  const payload = await readJson(response);
-  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
-  if (response.ok) {
+  await runAdminAction("addAutonomySourceButton", researchAutonomyOutput, async () => {
+    const response = await adminFetch(
+      sourceId
+        ? `/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`
+        : "/api/research/autonomy/sources",
+      {
+        method: sourceId ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadBody),
+      },
+    );
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to save autonomy source");
+    }
     selectedAutonomySourceId = payload.source?.id || sourceId || null;
     resetAutonomySourceForm();
-  }
-  await refreshAdmin();
+    return payload;
+  }, sourceId ? "Saving..." : "Creating...");
 });
 
 document.getElementById("cancelAutonomySourceEditButton").addEventListener("click", () => {
@@ -1492,8 +1563,10 @@ document.getElementById("cancelAutonomySourceEditButton").addEventListener("clic
 });
 
 document.getElementById("clearResearchHistoryScopeButton").addEventListener("click", async () => {
-  selectedAutonomySourceId = null;
-  await refreshAdmin();
+  await withButtonBusy("clearResearchHistoryScopeButton", "Clearing...", async () => {
+    selectedAutonomySourceId = null;
+    await refreshAdmin();
+  });
 });
 
 researchAutonomyGrid.addEventListener("click", async (event) => {
@@ -1507,190 +1580,179 @@ researchAutonomyGrid.addEventListener("click", async (event) => {
     return;
   }
 
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchAutonomyOutput.textContent = "Admin login required.";
-    return;
-  }
-
   let response;
   if (target.classList.contains("autonomy-view-history-button")) {
-    selectedAutonomySourceId = sourceId;
-    await refreshAdmin();
+    await withButtonBusy(target, "Loading...", async () => {
+      selectedAutonomySourceId = sourceId;
+      await refreshAdmin();
+    });
     return;
   }
   if (target.classList.contains("autonomy-edit-button")) {
     populateAutonomySourceForm(findAutonomySource(sourceId));
     return;
   }
-  if (target.classList.contains("autonomy-run-button")) {
-    response = await adminFetch("/api/research/autonomy/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source_id: sourceId }),
-    });
-  } else if (target.classList.contains("autonomy-toggle-button")) {
-    response = await adminFetch(`/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        enabled: target.getAttribute("data-enabled") === "true",
-      }),
-    });
-  } else if (target.classList.contains("autonomy-delete-button")) {
-    response = await adminFetch(`/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`, {
-      method: "DELETE",
-    });
-  } else {
-    return;
-  }
 
-  const payload = await readJson(response);
-  researchAutonomyOutput.textContent = JSON.stringify(payload, null, 2);
-  if (target.classList.contains("autonomy-delete-button") && selectedAutonomySourceId === sourceId) {
-    selectedAutonomySourceId = null;
-  }
-  await refreshAdmin();
+  await runAdminAction(target, researchAutonomyOutput, async () => {
+    if (target.classList.contains("autonomy-run-button")) {
+      response = await adminFetch("/api/research/autonomy/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_id: sourceId }),
+      });
+    } else if (target.classList.contains("autonomy-toggle-button")) {
+      response = await adminFetch(`/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: target.getAttribute("data-enabled") === "true",
+        }),
+      });
+    } else if (target.classList.contains("autonomy-delete-button")) {
+      response = await adminFetch(`/api/research/autonomy/sources/${encodeURIComponent(sourceId)}`, {
+        method: "DELETE",
+      });
+    } else {
+      return null;
+    }
+
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Autonomy action failed");
+    }
+    if (target.classList.contains("autonomy-delete-button") && selectedAutonomySourceId === sourceId) {
+      selectedAutonomySourceId = null;
+    }
+    return payload;
+  }, target.classList.contains("autonomy-delete-button")
+    ? "Deleting..."
+    : (target.classList.contains("autonomy-toggle-button") ? "Saving..." : "Running..."));
 });
 
 document.getElementById("exportResearchButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchDatasetOutput.textContent = "Admin login required.";
-    return;
-  }
-
   const topic = document.getElementById("researchTopic").value.trim();
   const provider = researchProviderSelect.value;
   const datasetName = topic
     ? `research_${topic.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "export"}`
     : "research_export";
 
-  const response = await adminFetch("/api/research/documents/export", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topic: topic || null,
-      provider: provider === "auto" ? null : provider,
-      include_text: true,
-      dataset_name: datasetName,
-    }),
-  });
-  const payload = await readJson(response);
-  researchDatasetOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("exportResearchButton", researchDatasetOutput, async () => {
+    const response = await adminFetch("/api/research/documents/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: topic || null,
+        provider: provider === "auto" ? null : provider,
+        include_text: true,
+        dataset_name: datasetName,
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Research export failed");
+    }
+    return payload;
+  }, "Exporting...");
 });
 
 document.getElementById("validateCloudflareButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchDatasetOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/research/cloudflare/validate", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  researchDatasetOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("validateCloudflareButton", researchDatasetOutput, async () => {
+    const response = await adminFetch("/api/research/cloudflare/validate", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Cloudflare validation failed");
+    }
+    return payload;
+  }, "Validating...");
 });
 
 document.getElementById("deleteResearchDocsButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchDatasetOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const topic = document.getElementById("researchTopic").value.trim();
-  const provider = researchProviderSelect.value;
-  const response = await adminFetch("/api/research/documents", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topic: topic || null,
-      provider: provider === "auto" ? null : provider,
-    }),
-  });
-  const payload = await readJson(response);
-  researchDatasetOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("deleteResearchDocsButton", researchDatasetOutput, async () => {
+    const topic = document.getElementById("researchTopic").value.trim();
+    const provider = researchProviderSelect.value;
+    const response = await adminFetch("/api/research/documents", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: topic || null,
+        provider: provider === "auto" ? null : provider,
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to delete research documents");
+    }
+    return payload;
+  }, "Deleting...");
 });
 
 document.getElementById("deleteResearchHistoryButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchDatasetOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const topic = document.getElementById("researchTopic").value.trim();
-  const provider = researchProviderSelect.value;
-  const response = await adminFetch("/api/research/history", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topic: topic || null,
-      provider: provider === "auto" ? null : provider,
-      source_id: selectedAutonomySourceId || null,
-    }),
-  });
-  const payload = await readJson(response);
-  researchDatasetOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("deleteResearchHistoryButton", researchDatasetOutput, async () => {
+    const topic = document.getElementById("researchTopic").value.trim();
+    const provider = researchProviderSelect.value;
+    const response = await adminFetch("/api/research/history", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: topic || null,
+        provider: provider === "auto" ? null : provider,
+        source_id: selectedAutonomySourceId || null,
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to delete research history");
+    }
+    return payload;
+  }, "Deleting...");
 });
 
 document.getElementById("resetResearchQuotaButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchDatasetOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/research/quota/reset", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  researchDatasetOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("resetResearchQuotaButton", researchDatasetOutput, async () => {
+    const response = await adminFetch("/api/research/quota/reset", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to reset research quota");
+    }
+    return payload;
+  }, "Resetting...");
 });
 
 document.getElementById("resetResearchScraperButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchDatasetOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/research/scraper/reset", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  researchDatasetOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("resetResearchScraperButton", researchDatasetOutput, async () => {
+    const response = await adminFetch("/api/research/scraper/reset", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to reset scraper state");
+    }
+    return payload;
+  }, "Resetting...");
 });
 
 document.getElementById("rebuildResearchIndexButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    researchDatasetOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const topic = document.getElementById("researchTopic").value.trim();
-  const provider = researchProviderSelect.value;
-  const response = await adminFetch("/api/research/index/rebuild", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topic: topic || null,
-      provider: provider === "auto" ? null : provider,
-    }),
-  });
-  const payload = await readJson(response);
-  researchDatasetOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("rebuildResearchIndexButton", researchDatasetOutput, async () => {
+    const topic = document.getElementById("researchTopic").value.trim();
+    const provider = researchProviderSelect.value;
+    const response = await adminFetch("/api/research/index/rebuild", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: topic || null,
+        provider: provider === "auto" ? null : provider,
+      }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to rebuild research index");
+    }
+    return payload;
+  }, "Rebuilding...");
 });
 
 async function submitAdminLogin() {
@@ -1741,125 +1803,138 @@ adminLoginForm.addEventListener("submit", async (event) => {
 });
 
 adminLogoutButton.addEventListener("click", async () => {
-  setAdminToken("");
-  adminPasswordInput.value = "";
-  setAuthBadge("Logged out", "status-warn");
-  setAuthMessage("Admin session cleared.", "status-warn");
-  await refreshAdmin();
+  await withButtonBusy(adminLogoutButton, "Logging out...", async () => {
+    setAdminToken("");
+    adminPasswordInput.value = "";
+    setAuthBadge("Logged out", "status-warn");
+    setAuthMessage("Admin session cleared.", "status-warn");
+    await refreshAdmin();
+  });
 });
 
 document.getElementById("applyProfileButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    runtimeOutput.textContent = "Admin login required.";
+  const profile_id = ensureSelectedRuntimeProfile(runtimeOutput);
+  if (!profile_id) {
     return;
   }
-
-  const profile_id = runtimeProfileSelect.value;
-  const response = await adminFetch("/api/admin/runtime-profiles/select", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profile_id, eager_load: false }),
-  });
-  const payload = await readJson(response);
-  runtimeOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("applyProfileButton", runtimeOutput, async () => {
+    const response = await adminFetch("/api/admin/runtime-profiles/select", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id, eager_load: false }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to apply runtime profile");
+    }
+    return payload;
+  }, "Applying...");
 });
 
 document.getElementById("reloadRuntimeButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    runtimeOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/admin/runtime/reload", { method: "POST" });
-  const payload = await readJson(response);
-  runtimeOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("reloadRuntimeButton", runtimeOutput, async () => {
+    const response = await adminFetch("/api/admin/runtime/reload", { method: "POST" });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to load runtime");
+    }
+    return payload;
+  }, "Loading...");
 });
 
 document.getElementById("unloadRuntimeButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    runtimeOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/admin/runtime/unload", { method: "POST" });
-  const payload = await readJson(response);
-  runtimeOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("unloadRuntimeButton", runtimeOutput, async () => {
+    const response = await adminFetch("/api/admin/runtime/unload", { method: "POST" });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to unload runtime");
+    }
+    return payload;
+  }, "Unloading...");
 });
 
 document.getElementById("downloadProfileButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    runtimeOutput.textContent = "Admin login required.";
+  const profileId = ensureSelectedRuntimeProfile(runtimeOutput);
+  if (!profileId) {
     return;
   }
-
-  const profileId = runtimeProfileSelect.value;
-  const response = await adminFetch(`/api/admin/runtime/download/${encodeURIComponent(profileId)}`, {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  runtimeOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("downloadProfileButton", runtimeOutput, async () => {
+    const response = await adminFetch(`/api/admin/runtime/download/${encodeURIComponent(profileId)}`, {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Failed to queue model download");
+    }
+    return payload;
+  }, "Queuing...");
 });
 
 document.getElementById("validateRuntimeButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    runtimeOutput.textContent = "Admin login required.";
+  const profile_id = ensureSelectedRuntimeProfile(runtimeOutput);
+  if (!profile_id) {
     return;
   }
-
-  const profile_id = runtimeProfileSelect.value;
-  const test_load = document.getElementById("runtimeValidationLoadTest").checked;
-  const response = await adminFetch("/api/admin/runtime/validate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profile_id, test_load, refresh_imports: true }),
-  });
-  const payload = await readJson(response);
-  runtimeOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("validateRuntimeButton", runtimeOutput, async () => {
+    const test_load = document.getElementById("runtimeValidationLoadTest").checked;
+    const response = await adminFetch("/api/admin/runtime/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ profile_id, test_load, refresh_imports: true }),
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Runtime validation failed");
+    }
+    return payload;
+  }, "Validating...");
 });
 
-document.getElementById("refreshRuntimeButton").addEventListener("click", refreshAdmin);
-document.getElementById("refreshDatasetsButton").addEventListener("click", refreshAdmin);
-document.getElementById("refreshReadinessButton").addEventListener("click", refreshAdmin);
+document.getElementById("refreshRuntimeButton").addEventListener("click", async () => {
+  await withButtonBusy("refreshRuntimeButton", "Refreshing...", async () => {
+    await refreshAdmin();
+  });
+});
+document.getElementById("refreshDatasetsButton").addEventListener("click", async () => {
+  await withButtonBusy("refreshDatasetsButton", "Refreshing...", async () => {
+    await refreshAdmin();
+  });
+});
+document.getElementById("refreshReadinessButton").addEventListener("click", async () => {
+  await withButtonBusy("refreshReadinessButton", "Refreshing...", async () => {
+    await refreshAdmin();
+  });
+});
 
 document.getElementById("validateDatabaseButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    readinessOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/admin/database/validate", {
-    method: "POST",
-  });
-  const payload = await readJson(response);
-  readinessOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("validateDatabaseButton", readinessOutput, async () => {
+    const response = await adminFetch("/api/admin/database/validate", {
+      method: "POST",
+    });
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Database validation failed");
+    }
+    return payload;
+  }, "Validating...");
 });
 
 document.getElementById("validatePaymentsButton").addEventListener("click", async () => {
-  const isAdmin = await verifyAdminToken();
-  if (!isAdmin) {
-    readinessOutput.textContent = "Admin login required.";
-    return;
-  }
-
-  const response = await adminFetch("/api/admin/readiness");
-  const payload = await readJson(response);
-  readinessOutput.textContent = JSON.stringify(payload, null, 2);
-  await refreshAdmin();
+  await runAdminAction("validatePaymentsButton", readinessOutput, async () => {
+    const response = await adminFetch("/api/admin/readiness");
+    const payload = await readJson(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || payload.error || "Readiness check failed");
+    }
+    return payload;
+  }, "Checking...");
 });
 
-document.getElementById("refreshControlCenterButton").addEventListener("click", refreshAdmin);
+document.getElementById("refreshControlCenterButton").addEventListener("click", async () => {
+  await withButtonBusy("refreshControlCenterButton", "Refreshing...", async () => {
+    await refreshAdmin();
+  });
+});
 
 document.getElementById("startTrainingButton").addEventListener("click", async () => {
   await runAdminAction("startTrainingButton", aiOpsOutput, async () => {

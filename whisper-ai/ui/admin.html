@@ -367,6 +367,51 @@
               </div>
             </div>
             <div class="spacer-md"></div>
+            <div class="fields-grid four">
+              <div class="field-group">
+                <label for="hfDatasetIdInput">HF dataset id</label>
+                <input id="hfDatasetIdInput" placeholder="owner/name" value="jtatman/stable-diffusion-prompts-stats-full-uncensored">
+              </div>
+              <div class="field-group">
+                <label for="hfDatasetConfigInput">HF config name</label>
+                <input id="hfDatasetConfigInput" placeholder="Optional config or subset">
+              </div>
+              <div class="field-group">
+                <label for="hfDatasetSplitInput">HF split</label>
+                <input id="hfDatasetSplitInput" placeholder="train" value="train">
+              </div>
+              <div class="field-group">
+                <label for="hfDatasetKindSelect">Import kind</label>
+                <select id="hfDatasetKindSelect">
+                  <option value="auto" selected>Auto detect</option>
+                  <option value="text">Text training</option>
+                  <option value="image_prompt">Image prompt prior</option>
+                </select>
+              </div>
+            </div>
+            <div class="spacer-md"></div>
+            <div class="fields-grid four">
+              <div class="field-group">
+                <label for="hfDatasetImportMaxRows">HF max rows</label>
+                <input id="hfDatasetImportMaxRows" type="number" min="100" step="100" placeholder="Use server default">
+              </div>
+              <div class="field-group">
+                <label class="compact-label">HF auto sync</label>
+                <label>
+                  <input id="hfDatasetAutoSync" type="checkbox">
+                  Auto sync imported file to HF
+                </label>
+              </div>
+              <div class="field-group">
+                <label class="compact-label">HF import</label>
+                <button id="importHfDatasetButton" class="secondary">Import HF Dataset</button>
+              </div>
+              <div class="field-group">
+                <label class="compact-label">Notes</label>
+                <p class="meta">Imports normalize public HF datasets into Whisper’s local curated corpora so training and prompt enrichment can consume them.</p>
+              </div>
+            </div>
+            <div class="spacer-md"></div>
             <pre id="hfSyncOutput" class="message assistant"></pre>
             <div class="spacer-md"></div>
             <div id="datasetGrid" class="grid"></div>

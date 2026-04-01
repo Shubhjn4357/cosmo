@@ -54,6 +54,7 @@ class CuratedDatasetSpec:
     kind: str  # text or image_prompt
     source_type: str  # hf_dataset, csv_url, json_url, jsonl_url
     source: str
+    config_name: str = ""
     split: str = "train"
     default_max_rows: int = DEFAULT_TEXT_ROWS
     description: str = ""
@@ -179,6 +180,11 @@ def _save_manifest(manifest: dict[str, Any]) -> None:
 def _output_path(spec: CuratedDatasetSpec) -> Path:
     base_dir = CURATED_TEXT_DIR if spec.kind == "text" else CURATED_IMAGE_PROMPT_DIR
     return base_dir / f"{spec.id}.jsonl"
+
+
+def _slugify_identifier(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower())
+    return slug.strip("_") or "dataset"
 
 
 def _normalize_text(value: Any) -> str:
@@ -375,9 +381,27 @@ def _fallback_hf_dataset_rows(spec: CuratedDatasetSpec, max_rows: int) -> Iterat
     if not splits:
         raise RuntimeError(f"No splits were returned for dataset '{spec.source}'")
 
-    split_record = next((item for item in splits if item.get("split") == spec.split), splits[0])
+    preferred_config = str(spec.config_name or "").strip()
+    preferred_split = str(spec.split or "").strip() or "train"
+
+    split_record = None
+    if preferred_config:
+        split_record = next(
+            (
+                item
+                for item in splits
+                if item.get("config") == preferred_config and item.get("split") == preferred_split
+            ),
+            None,
+        )
+        if split_record is None:
+            split_record = next((item for item in splits if item.get("config") == preferred_config), None)
+
+    if split_record is None:
+        split_record = next((item for item in splits if item.get("split") == preferred_split), splits[0])
+
     config = split_record.get("config")
-    split = split_record.get("split") or spec.split
+    split = split_record.get("split") or preferred_split
     if not config or not split:
         raise RuntimeError(f"Could not resolve config/split for dataset '{spec.source}'")
 
@@ -477,10 +501,13 @@ def _load_source_dataset(spec: CuratedDatasetSpec):
         return None
 
     if spec.source_type == "hf_dataset":
+        load_kwargs: dict[str, Any] = {"trust_remote_code": True}
+        if spec.config_name:
+            load_kwargs["name"] = spec.config_name
         try:
-            return load_dataset(spec.source, split=spec.split, trust_remote_code=True)
+            return load_dataset(spec.source, split=spec.split, **load_kwargs)
         except Exception:
-            return load_dataset(spec.source, trust_remote_code=True)
+            return load_dataset(spec.source, **load_kwargs)
 
     if spec.source_type == "csv_url":
         return load_dataset("csv", data_files={"train": spec.source}, split="train")
@@ -491,13 +518,37 @@ def _load_source_dataset(spec: CuratedDatasetSpec):
     raise ValueError(f"Unsupported source_type '{spec.source_type}'")
 
 
-def import_curated_dataset(
-    spec_id: str,
+def _detect_dataset_kind(spec: CuratedDatasetSpec, max_rows: int) -> str:
+    row_limit = max(1, min(max_rows, 48))
+    dataset = _load_source_dataset(spec)
+    row_source: Iterator[dict[str, Any]]
+    if dataset is None:
+        row_source = _fallback_remote_rows(spec, row_limit)
+    else:
+        row_source = _iter_dataset_rows(dataset, row_limit)
+
+    text_score = 0
+    image_prompt_score = 0
+    for row in row_source:
+        text_records = _extract_text_records(row, spec)
+        if text_records:
+            text_score += len(text_records)
+        prompt = _extract_image_prompt(row)
+        if prompt:
+            image_prompt_score += 1
+
+    if image_prompt_score > text_score:
+        return "image_prompt"
+    return "text"
+
+
+def _import_dataset_spec(
+    spec: CuratedDatasetSpec,
     *,
     max_rows: int | None = None,
     auto_sync: bool = False,
+    requested_kind: str | None = None,
 ) -> dict[str, Any]:
-    spec = get_curated_spec(spec_id)
     row_limit = max_rows or spec.default_max_rows
     dataset = _load_source_dataset(spec)
     row_source: Iterator[dict[str, Any]]
@@ -544,8 +595,11 @@ def import_curated_dataset(
     manifest[spec.id] = {
         "id": spec.id,
         "kind": spec.kind,
+        "requested_kind": requested_kind or spec.kind,
         "source": spec.source,
         "source_type": spec.source_type,
+        "config_name": spec.config_name,
+        "split": spec.split,
         "rows_imported": imported_rows,
         "rows_skipped": skipped_rows,
         "output_path": str(output_path),
@@ -562,7 +616,83 @@ def import_curated_dataset(
         "output_path": str(output_path),
         "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
         "sync": sync_result,
+        "requested_kind": requested_kind or spec.kind,
+        "resolved_kind": spec.kind,
     }
+
+
+def import_curated_dataset(
+    spec_id: str,
+    *,
+    max_rows: int | None = None,
+    auto_sync: bool = False,
+) -> dict[str, Any]:
+    spec = get_curated_spec(spec_id)
+    return _import_dataset_spec(spec, max_rows=max_rows, auto_sync=auto_sync)
+
+
+def import_hf_dataset(
+    dataset_id: str,
+    *,
+    config_name: str | None = None,
+    split: str | None = "train",
+    kind: str = "auto",
+    max_rows: int | None = None,
+    auto_sync: bool = False,
+) -> dict[str, Any]:
+    normalized_dataset_id = str(dataset_id or "").strip()
+    if not normalized_dataset_id:
+        raise ValueError("dataset_id is required")
+
+    normalized_config = str(config_name or "").strip()
+    normalized_split = str(split or "").strip() or "train"
+    requested_kind = str(kind or "auto").strip().lower() or "auto"
+    if requested_kind not in {"auto", "text", "image_prompt"}:
+        raise ValueError("kind must be one of: auto, text, image_prompt")
+
+    row_limit = max_rows or DEFAULT_TEXT_ROWS
+    probe_spec = CuratedDatasetSpec(
+        id="hf_probe",
+        name=normalized_dataset_id,
+        kind="text",
+        source_type="hf_dataset",
+        source=normalized_dataset_id,
+        config_name=normalized_config,
+        split=normalized_split,
+        default_max_rows=row_limit,
+        description="User-supplied Hugging Face dataset probe",
+    )
+    resolved_kind = requested_kind if requested_kind != "auto" else _detect_dataset_kind(probe_spec, row_limit)
+
+    output_id_parts = [
+        "hf",
+        _slugify_identifier(normalized_dataset_id),
+        _slugify_identifier(normalized_split),
+    ]
+    if normalized_config:
+        output_id_parts.append(_slugify_identifier(normalized_config))
+    output_id_parts.append(_slugify_identifier(resolved_kind))
+
+    if max_rows is None and resolved_kind == "image_prompt":
+        row_limit = DEFAULT_IMAGE_PROMPT_ROWS
+
+    spec = CuratedDatasetSpec(
+        id="_".join(output_id_parts),
+        name=normalized_dataset_id,
+        kind=resolved_kind,
+        source_type="hf_dataset",
+        source=normalized_dataset_id,
+        config_name=normalized_config,
+        split=normalized_split,
+        default_max_rows=row_limit,
+        description="User-imported Hugging Face dataset",
+    )
+    return _import_dataset_spec(
+        spec,
+        max_rows=max_rows,
+        auto_sync=auto_sync,
+        requested_kind=requested_kind,
+    )
 
 
 def import_curated_datasets(
