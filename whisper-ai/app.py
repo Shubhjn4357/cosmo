@@ -5,9 +5,6 @@ Main script to run the API server.
 
 import os
 
-import uvicorn
-from loguru import logger
-
 
 def _space_safe_mode_enabled() -> bool:
     return os.getenv("WHISPER_SPACE_SAFE_MODE", "false").lower() == "true"
@@ -18,9 +15,13 @@ if __name__ == "__main__":
     app_target = "api.route:app"
 
     if _space_safe_mode_enabled():
-        logger.warning("WHISPER_SPACE_SAFE_MODE enabled; using minimal space-safe app target")
-        app_target = "api.space_safe:app"
+        from space_safe_server import serve
+
+        print("WHISPER_SPACE_SAFE_MODE enabled; using stdlib space_safe_server", flush=True)
+        serve(host=host, port=port)
     else:
+        import uvicorn
+        from loguru import logger
         from utils.app_paths import (
             DATA_ROOT,
             HF_HOME_DIR,
@@ -41,9 +42,9 @@ if __name__ == "__main__":
         logger.info(f"HF home: {HF_HOME_DIR}")
         logger.info(f"Python user base: {PYTHON_USER_BASE}")
 
-    uvicorn.run(
-        app_target,
-        host=host,
-        port=port,
-        log_level="info"
-    )
+        uvicorn.run(
+            app_target,
+            host=host,
+            port=port,
+            log_level="info"
+        )
