@@ -10,6 +10,17 @@ import warnings
 from pathlib import Path
 
 
+def _skip_writability_probe(path: Path) -> bool:
+    if os.getenv("WHISPER_SKIP_PATH_WRITABILITY_PROBES", "false").lower() == "true":
+        return True
+    if os.name == "nt":
+        return False
+    persistent_root = os.getenv("WHISPER_PERSISTENT_VOLUME_ROOT", "").strip()
+    persistent_enabled = os.getenv("WHISPER_USE_PERSISTENT_VOLUME", "false").lower() == "true"
+    path_str = str(path)
+    return path_str.startswith("/data") and (persistent_enabled or bool(persistent_root))
+
+
 def _should_suppress_fallback_warning(original: Path, fallback: Path) -> bool:
     original_str = str(original)
     fallback_str = str(fallback)
@@ -31,6 +42,8 @@ def _unique_paths(paths: list[Path]) -> list[Path]:
 def _ensure_writable_directory(path: Path) -> tuple[bool, str | None]:
     try:
         path.mkdir(parents=True, exist_ok=True)
+        if _skip_writability_probe(path):
+            return True, None
         probe = path / f".whisper-write-test-{uuid.uuid4().hex}"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink(missing_ok=True)
