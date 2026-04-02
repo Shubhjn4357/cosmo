@@ -3,17 +3,37 @@ Vision Training Dataset Loader
 Loads image-text pairs from HuggingFace dataset for vision model training
 """
 
+import json
 from typing import Optional, Dict, Any
 import torch
 from torch.utils.data import Dataset
-from datasets import load_dataset
 from PIL import Image
 import requests
 from io import BytesIO
-from torchvision import transforms
 from loguru import logger
 import hashlib
 from pathlib import Path
+
+try:
+    from datasets import load_dataset
+
+    DATASETS_AVAILABLE = True
+except Exception:  # pragma: no cover - import guard
+    load_dataset = None
+    DATASETS_AVAILABLE = False
+
+try:
+    from torchvision import transforms
+
+    TORCHVISION_AVAILABLE = True
+except Exception:  # pragma: no cover - import guard
+    transforms = None
+    TORCHVISION_AVAILABLE = False
+
+try:
+    from services.curated_training_import import CURATED_VISION_DIR
+except Exception:  # pragma: no cover - fallback for standalone usage
+    CURATED_VISION_DIR = Path("data/datasets/curated/vision")
 
 
 class VisionTrainingDataset(Dataset):
@@ -24,7 +44,7 @@ class VisionTrainingDataset(Dataset):
     
     def __init__(
         self,
-        dataset_name: str = "shubhjn/whisper-trained-data",
+        dataset_name: str = "shubhjn/whisper-data",
         split: str = "train",
         image_size: int = 64,
         cache_dir: Optional[str] = None,
@@ -44,33 +64,84 @@ class VisionTrainingDataset(Dataset):
         self.image_size = image_size
         self.cache_dir = Path(cache_dir or "data/vision_cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.local_records: list[Dict[str, Any]] = []
         
         logger.info(f"Loading dataset: {dataset_name} ({split})")
-        
-        try:
-            # Load from HuggingFace
-            self.dataset = load_dataset(dataset_name, split=split, trust_remote_code=True)
-            
-            # Limit size if specified
-            if max_samples and len(self.dataset) > max_samples:
-                self.dataset = self.dataset.select(range(max_samples))
-                
-            logger.info(f"Loaded {len(self.dataset)} samples")
-            
-        except Exception as e:
-            logger.error(f"Failed to load dataset: {e}")
-            logger.info("Creating empty dataset for testing")
+
+        if DATASETS_AVAILABLE:
+            try:
+                # Load from HuggingFace
+                self.dataset = load_dataset(dataset_name, split=split, trust_remote_code=True)
+
+                # Limit size if specified
+                if max_samples and len(self.dataset) > max_samples:
+                    self.dataset = self.dataset.select(range(max_samples))
+
+                logger.info(f"Loaded {len(self.dataset)} samples")
+
+            except Exception as e:
+                logger.error(f"Failed to load dataset: {e}")
+                logger.info("Creating empty dataset for testing")
+                self.dataset = []
+        else:
+            logger.warning("datasets package is unavailable; using only local imported vision records")
             self.dataset = []
+
+        self.local_records = self._load_local_records()
+        self.remote_samples = len(self.dataset)
+        self.local_samples = len(self.local_records)
+        self.total_samples = self.remote_samples + self.local_samples
+        if max_samples is not None:
+            self.total_samples = min(self.total_samples, max_samples)
+        logger.info(
+            "Vision dataset ready: remote={} local={} total={}",
+            self.remote_samples,
+            self.local_samples,
+            self.total_samples,
+        )
         
         # Image preprocessing
-        self.transform = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.ToTensor(),
-            transforms.Lambda(lambda x: x * 2 - 1)  # Normalize to [-1, 1]
-        ])
+        if TORCHVISION_AVAILABLE:
+            self.transform = transforms.Compose([
+                transforms.Resize((image_size, image_size)),
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: x * 2 - 1)  # Normalize to [-1, 1]
+            ])
+        else:
+            logger.warning("torchvision is unavailable; using fallback PIL image transform")
+            self.transform = self._fallback_transform
     
     def __len__(self) -> int:
-        return len(self.dataset)
+        return self.total_samples
+
+    def _load_local_records(self) -> list[Dict[str, Any]]:
+        records: list[Dict[str, Any]] = []
+        if not CURATED_VISION_DIR.exists():
+            return records
+
+        for path in sorted(CURATED_VISION_DIR.glob("*.jsonl")):
+            try:
+                with path.open("r", encoding="utf-8") as handle:
+                    for line in handle:
+                        if not line.strip():
+                            continue
+                        payload = json.loads(line)
+                        if not isinstance(payload, dict):
+                            continue
+                        image_ref = payload.get("image_path") or payload.get("image_url") or payload.get("image")
+                        text = str(payload.get("text") or payload.get("prompt") or "").strip()
+                        if not image_ref or not text:
+                            continue
+                        records.append(payload)
+            except Exception as exc:
+                logger.warning(f"Failed to load local vision file {path}: {exc}")
+        return records
+
+    def _fallback_transform(self, image: Image.Image) -> torch.Tensor:
+        image = image.convert('RGB').resize((self.image_size, self.image_size))
+        tensor = torch.tensor(list(image.getdata()), dtype=torch.float32)
+        tensor = tensor.view(self.image_size, self.image_size, 3).permute(2, 0, 1) / 255.0
+        return tensor * 2 - 1
     
     def _get_cache_path(self, url: str) -> Path:
         """Get cache file path for image URL"""
@@ -112,6 +183,14 @@ class VisionTrainingDataset(Dataset):
         except Exception as e:
             logger.warning(f"Failed to download image from {url}: {e}")
             return None
+
+    def _load_local_image(self, path_value: str) -> Optional[torch.Tensor]:
+        try:
+            image = Image.open(Path(path_value)).convert('RGB')
+            return self.transform(image)
+        except Exception as e:
+            logger.warning(f"Failed to load local image from {path_value}: {e}")
+            return None
     
     def __getitem__(self, idx: int) -> Optional[Dict[str, Any]]:
         """
@@ -124,23 +203,34 @@ class VisionTrainingDataset(Dataset):
             Dictionary with 'text', 'image', 'metadata' or None if failed
         """
         if idx >= len(self.dataset):
-            return None
+            local_index = idx - len(self.dataset)
+            if local_index < 0 or local_index >= len(self.local_records):
+                return None
+            item = self.local_records[local_index]
+        else:
+            item = self.dataset[idx]
         
         try:
-            item = self.dataset[idx]
-            
             # Get text prompt
-            text = item.get('text') or item.get('prompt') or ""
+            text = item.get('text') or item.get('prompt') or item.get('caption') or ""
             
             # Get image
-            image_url = item.get('image_url') or item.get('image')
-            
-            if isinstance(image_url, str):
-                # URL - download
-                image_tensor = self._download_image(image_url)
-            elif hasattr(image_url, 'convert'):
+            image_source = item.get('image_url') or item.get('image_path') or item.get('image')
+
+            if isinstance(image_source, str):
+                if image_source.startswith(('http://', 'https://')):
+                    image_tensor = self._download_image(image_source)
+                else:
+                    image_tensor = self._load_local_image(image_source)
+            elif isinstance(image_source, dict):
+                image_tensor = None
+                if image_source.get('url'):
+                    image_tensor = self._download_image(str(image_source['url']))
+                elif image_source.get('path'):
+                    image_tensor = self._load_local_image(str(image_source['path']))
+            elif hasattr(image_source, 'convert'):
                 # PIL Image
-                image_tensor = self.transform(image_url)
+                image_tensor = self.transform(image_source)
             else:
                 logger.warning(f"Invalid image format at index {idx}")
                 return None
@@ -164,7 +254,9 @@ class VisionTrainingDataset(Dataset):
     def get_stats(self) -> Dict[str, Any]:
         """Get dataset statistics"""
         return {
-            'total_samples': len(self.dataset),
+            'total_samples': self.total_samples,
+            'remote_samples': self.remote_samples,
+            'local_samples': len(self.local_records),
             'image_size': self.image_size,
             'cache_dir': str(self.cache_dir),
             'cached_images': len(list(self.cache_dir.glob('*.pt')))

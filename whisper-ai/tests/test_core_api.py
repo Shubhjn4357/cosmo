@@ -175,7 +175,7 @@ def test_gguf_runtime_diagnostics_are_explicit(server, admin_headers):
 def test_auto_runtime_prefers_local_gguf_when_artifact_is_ready(server, admin_headers):
     gguf_dir = server.data_root / "models" / "llm" / "gguf-coder"
     gguf_dir.mkdir(parents=True, exist_ok=True)
-    gguf_path = gguf_dir / "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    gguf_path = gguf_dir / "Qwen3-1.7B-Q4_K_M.gguf"
     gguf_path.write_bytes(b"fake-gguf")
 
     llama_bin_dir = server.data_root / "models" / "llama-bin"
@@ -188,7 +188,7 @@ def test_auto_runtime_prefers_local_gguf_when_artifact_is_ready(server, admin_he
         headers=admin_headers,
         json={
             "backend": "auto",
-            "model_id": "Qwen/Qwen2.5-Coder-0.5B-Instruct",
+            "model_id": "Qwen/Qwen3-1.7B",
             "gguf_model_path": "",
             "airllm_model_id": "",
             "airllm_model_path": "",
@@ -228,7 +228,7 @@ def test_auto_runtime_prefers_local_gguf_when_artifact_is_ready(server, admin_he
 def test_runtime_profile_validation_can_load_prepared_gguf_runtime(server, admin_headers):
     gguf_dir = server.data_root / "models" / "llm" / "gguf-coder"
     gguf_dir.mkdir(parents=True, exist_ok=True)
-    gguf_path = gguf_dir / "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    gguf_path = gguf_dir / "Qwen3-1.7B-Q4_K_M.gguf"
     gguf_path.write_bytes(b"fake-gguf")
 
     llama_bin_dir = server.data_root / "models" / "llama-bin"

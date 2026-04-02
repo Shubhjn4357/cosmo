@@ -18,14 +18,14 @@ from fastapi import APIRouter, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from services.admin_state import get_model_enabled
+from services.admin_state import get_model_enabled, get_selected_image_model, set_selected_image_model
 from services.approved_model_catalog import (
     DEFAULT_ADULT_IMAGE_MODEL_ID,
     DEFAULT_IMAGE_MODEL_ID,
     get_image_model,
     list_image_models,
 )
-from services.catalog_bootstrap import ensure_bootstrap_artifact, resolve_bootstrap_artifact
+from services.catalog_bootstrap import resolve_bootstrap_artifact
 from services.image_prompt_library import image_prompt_library
 from services.local_image_runtime import local_image_runtime, supports_single_file_runtime
 from utils.app_paths import UPLOADS_DIR
@@ -83,7 +83,7 @@ def _resolve_default_server_model() -> str | None:
 
 
 DEFAULT_SERVER_MODEL = _resolve_default_server_model()
-_current_server_model = DEFAULT_SERVER_MODEL
+_current_server_model = get_selected_image_model(DEFAULT_SERVER_MODEL)
 
 
 def _enabled_image_catalog() -> list[dict]:
@@ -198,24 +198,18 @@ async def generate_image(request: ImageGenerationRequest) -> ImageGenerationResp
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Image model '{selected_model}' was not found")
 
-    try:
-        artifact = ensure_bootstrap_artifact(
-            "image",
-            model_id=spec.id,
-            name=spec.name,
-            repo_id=spec.repo_id,
-            filename=spec.filename,
-            adult=spec.adult,
-        )
-    except Exception as exc:
-        logger.error("Failed to prepare image artifact for {}: {}", selected_model, exc)
-        raise HTTPException(status_code=500, detail=f"Could not download image model '{selected_model}'") from exc
+    artifact = resolve_bootstrap_artifact("image", spec.id, spec.filename)
 
     artifact_path = artifact.get("artifact_path") or ""
     if not artifact.get("downloaded") or not artifact_path:
         raise HTTPException(
             status_code=503,
-            detail=f"Image model '{selected_model}' is not downloaded yet",
+            detail={
+                "message": f"Image model '{selected_model}' is still preparing in background bootstrap",
+                "model_id": selected_model,
+                "install_status": artifact.get("status", "pending"),
+                "artifact_path": artifact_path,
+            },
         )
 
     try:
@@ -289,6 +283,7 @@ async def set_server_model(model_id: str):
 
     old_model = _current_server_model
     _current_server_model = model_id
+    set_selected_image_model(model_id)
     logger.info("Image server model changed: {} -> {}", old_model, model_id)
     return {
         "status": "success",

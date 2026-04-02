@@ -42,6 +42,8 @@ class CloudflareCrawlService:
             os.getenv("CLOUDFLARE_CRAWL_VALIDATION_PATH", str(VALIDATION_STATE_PATH))
         )
         self._quota_lock = threading.Lock()
+        self._runtime_failure_reason: Optional[str] = None
+        self._runtime_failure_status_code: Optional[int] = None
 
     def is_available(self) -> bool:
         return self.unavailable_reason() is None
@@ -54,6 +56,8 @@ class CloudflareCrawlService:
             return "Cloudflare crawl is disabled"
         if not self.test_mode and not self.is_configured():
             return "Cloudflare crawl is not configured"
+        if self._runtime_failure_reason:
+            return self._runtime_failure_reason
         quota = self.quota_status()
         if not quota["job_quota_available"]:
             return (
@@ -61,6 +65,28 @@ class CloudflareCrawlService:
                 f"({quota['jobs_started_today']}/{quota['jobs_per_day_limit']})"
             )
         return None
+
+    def _clear_runtime_failure(self) -> None:
+        self._runtime_failure_reason = None
+        self._runtime_failure_status_code = None
+
+    def _remember_runtime_failure(self, message: str, *, status_code: int | None = None) -> None:
+        normalized_message = message.strip() or "Cloudflare crawl is unavailable"
+        if status_code in {401, 403}:
+            normalized_message = (
+                f"Cloudflare crawl credentials were rejected ({status_code}); "
+                "falling back to legacy research until restart or successful validation"
+            )
+        elif status_code is None:
+            lowered = normalized_message.lower()
+            if "401" in lowered or "403" in lowered or "unauthorized" in lowered or "forbidden" in lowered:
+                normalized_message = (
+                    "Cloudflare crawl credentials were rejected; "
+                    "falling back to legacy research until restart or successful validation"
+                )
+                status_code = 401
+        self._runtime_failure_reason = normalized_message
+        self._runtime_failure_status_code = status_code
 
     def status(self) -> dict[str, Any]:
         quota = self.quota_status()
@@ -295,6 +321,7 @@ class CloudflareCrawlService:
             }
 
         if self.test_mode:
+            self._clear_runtime_failure()
             validation = self._record_validation_result(
                 last_valid=True,
                 last_message="Validated in test mode with synthetic inline HTML",
@@ -349,12 +376,15 @@ class CloudflareCrawlService:
                 body = response.json()
                 links = body.get("result") or []
         except Exception as exc:
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
             message = str(exc)
+            if status_code in {401, 403}:
+                self._remember_runtime_failure(message, status_code=status_code)
             validation = self._record_validation_result(
                 last_valid=False,
                 last_message=message,
                 validated_endpoint="/links",
-                status_code=getattr(getattr(exc, "response", None), "status_code", None),
+                status_code=status_code,
                 last_error=message,
             )
             return {
@@ -364,6 +394,7 @@ class CloudflareCrawlService:
                 "validation": validation,
             }
 
+        self._clear_runtime_failure()
         validation = self._record_validation_result(
             last_valid=True,
             last_message="Cloudflare Browser Rendering /links validation succeeded",
@@ -520,30 +551,45 @@ class CloudflareCrawlService:
             payload["options"] = options
 
         async with httpx.AsyncClient() as client:
-            start_payload = await self._request_json(
-                client,
-                "POST",
-                json=payload,
-                timeout=60.0,
-            )
-            job_id = start_payload.get("result")
-            if not job_id:
-                raise RuntimeError(f"Cloudflare crawl start failed: {start_payload}")
+            try:
+                start_payload = await self._request_json(
+                    client,
+                    "POST",
+                    json=payload,
+                    timeout=60.0,
+                )
+                job_id = start_payload.get("result")
+                if not job_id:
+                    raise RuntimeError(f"Cloudflare crawl start failed: {start_payload}")
 
-            terminal = await self._poll_until_terminal(client, job_id)
-            status = terminal.get("status")
-            if status != "completed":
-                return {
-                    "job_id": job_id,
-                    "status": status,
-                    "total": terminal.get("total", 0),
-                    "finished": terminal.get("finished", 0),
-                    "browser_seconds_used": terminal.get("browserSecondsUsed"),
-                    "records": [],
-                    "texts": [],
-                }
+                terminal = await self._poll_until_terminal(client, job_id)
+                status = terminal.get("status")
+                if status != "completed":
+                    self._clear_runtime_failure()
+                    return {
+                        "job_id": job_id,
+                        "status": status,
+                        "total": terminal.get("total", 0),
+                        "finished": terminal.get("finished", 0),
+                        "browser_seconds_used": terminal.get("browserSecondsUsed"),
+                        "records": [],
+                        "texts": [],
+                    }
 
-            return await self._fetch_records(client, job_id)
+                self._clear_runtime_failure()
+                return await self._fetch_records(client, job_id)
+            except Exception as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code in {401, 403}:
+                    self._remember_runtime_failure(str(exc), status_code=status_code)
+                    self._record_validation_result(
+                        last_valid=False,
+                        last_message=str(exc),
+                        validated_endpoint="/crawl",
+                        status_code=status_code,
+                        last_error=str(exc),
+                    )
+                raise
 
 
 try:

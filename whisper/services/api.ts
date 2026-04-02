@@ -309,6 +309,7 @@ export class WhisperAPI {
         maxSteps?: number;
         maxTokens?: number;
         userId?: string;
+        waitForCompletion?: boolean;
     }): Promise<AgentRunResponse> {
         const response = await fetch(`${this.baseUrl}/api/agent/run`, {
             method: 'POST',
@@ -328,6 +329,7 @@ export class WhisperAPI {
                 max_steps: params.maxSteps || 4,
                 max_tokens: params.maxTokens || 320,
                 user_id: params.userId,
+                wait_for_completion: params.waitForCompletion || false,
             }),
         });
 
@@ -343,6 +345,18 @@ export class WhisperAPI {
         const response = await fetch(`${this.baseUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}`);
         if (!response.ok) {
             throw new Error(`Failed to fetch agent session: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    async cancelAgentSession(sessionId: string): Promise<any> {
+        const response = await fetch(`${this.baseUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+            method: 'POST',
+            headers: this.getHeaders(),
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Failed to cancel agent session: ${response.status}`);
         }
         return response.json();
     }

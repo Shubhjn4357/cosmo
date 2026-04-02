@@ -9,10 +9,12 @@ prepared files to the configured HF dataset repo.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import os
 import re
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -28,7 +30,10 @@ try:
 
     DATASETS_AVAILABLE = True
 except Exception:  # pragma: no cover - import guard
-    Dataset = DatasetDict = IterableDataset = IterableDatasetDict = object
+    class _MissingDatasetsType:
+        pass
+
+    Dataset = DatasetDict = IterableDataset = IterableDatasetDict = _MissingDatasetsType
     load_dataset = None
     DATASETS_AVAILABLE = False
 
@@ -38,9 +43,13 @@ ensure_app_dirs()
 CURATED_ROOT = DATASETS_DIR / "curated"
 CURATED_TEXT_DIR = CURATED_ROOT / "text"
 CURATED_IMAGE_PROMPT_DIR = CURATED_ROOT / "image_prompts"
+CURATED_VISION_DIR = CURATED_ROOT / "vision"
+CURATED_VISION_ASSETS_DIR = CURATED_VISION_DIR / "assets"
 CURATED_MANIFEST_PATH = CURATED_ROOT / "manifest.json"
 CURATED_TEXT_DIR.mkdir(parents=True, exist_ok=True)
 CURATED_IMAGE_PROMPT_DIR.mkdir(parents=True, exist_ok=True)
+CURATED_VISION_DIR.mkdir(parents=True, exist_ok=True)
+CURATED_VISION_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_TEXT_ROWS = max(100, int(os.getenv("WHISPER_CURATED_TEXT_MAX_ROWS", "25000")))
 DEFAULT_IMAGE_PROMPT_ROWS = max(100, int(os.getenv("WHISPER_CURATED_IMAGE_PROMPT_MAX_ROWS", "50000")))
@@ -51,7 +60,7 @@ HF_DATASET_VIEWER_BASE_URL = os.getenv("HF_DATASET_VIEWER_BASE_URL", "https://da
 class CuratedDatasetSpec:
     id: str
     name: str
-    kind: str  # text or image_prompt
+    kind: str  # text, image_prompt, vision, or all
     source_type: str  # hf_dataset, csv_url, json_url, jsonl_url
     source: str
     config_name: str = ""
@@ -138,6 +147,26 @@ _STOPWORDS = {
     "a", "an", "and", "the", "of", "for", "with", "in", "on", "at", "to", "from",
     "into", "over", "under", "by", "is", "are", "be", "it", "this", "that", "or",
 }
+_SUPPORTED_IMPORT_KINDS = {"auto", "text", "image_prompt", "vision", "all", "both"}
+_IMAGE_VALUE_KEYS = (
+    "image_url",
+    "image",
+    "image_path",
+    "image_file",
+    "img_url",
+    "img",
+    "photo",
+    "picture",
+    "thumbnail",
+    "url",
+    "src",
+    "file",
+)
+_CURATED_KIND_DIRS = {
+    "text": CURATED_TEXT_DIR,
+    "image_prompt": CURATED_IMAGE_PROMPT_DIR,
+    "vision": CURATED_VISION_DIR,
+}
 
 
 def list_curated_specs() -> list[dict[str, Any]]:
@@ -178,8 +207,12 @@ def _save_manifest(manifest: dict[str, Any]) -> None:
 
 
 def _output_path(spec: CuratedDatasetSpec) -> Path:
-    base_dir = CURATED_TEXT_DIR if spec.kind == "text" else CURATED_IMAGE_PROMPT_DIR
-    return base_dir / f"{spec.id}.jsonl"
+    return _output_path_for_kind(spec.kind, spec.id)
+
+
+def _output_path_for_kind(kind: str, spec_id: str) -> Path:
+    base_dir = _CURATED_KIND_DIRS.get(kind, CURATED_TEXT_DIR)
+    return base_dir / f"{spec_id}.jsonl"
 
 
 def _slugify_identifier(value: str) -> str:
@@ -330,6 +363,126 @@ def _extract_image_prompt(record: dict[str, Any]) -> str:
         if prompt and len(prompt) >= 12:
             return prompt
     return ""
+
+
+def _extract_image_value(record: dict[str, Any]) -> Any | None:
+    for key in _IMAGE_VALUE_KEYS:
+        if key not in record:
+            continue
+        value = record.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, dict) and not value:
+            continue
+        return value
+    return None
+
+
+def _save_image_asset(spec_id: str, image_bytes: bytes, *, suffix: str = ".png") -> str:
+    if not image_bytes:
+        return ""
+    safe_suffix = suffix if suffix.startswith(".") else f".{suffix}"
+    digest = hashlib.sha1(image_bytes).hexdigest()
+    asset_dir = CURATED_VISION_ASSETS_DIR / _slugify_identifier(spec_id)
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    asset_path = asset_dir / f"{digest[:20]}{safe_suffix}"
+    if not asset_path.exists():
+        asset_path.write_bytes(image_bytes)
+    return str(asset_path.resolve())
+
+
+def _coerce_image_reference(spec_id: str, value: Any, *, persist_assets: bool = True) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return ""
+        lowered = candidate.lower()
+        if candidate.startswith(("http://", "https://")):
+            return candidate
+        if candidate.startswith("data:image/") and "," in candidate:
+            if not persist_assets:
+                return "__inline_image__"
+            header, encoded = candidate.split(",", 1)
+            extension = ".png"
+            if "/" in header and ";" in header:
+                extension = f".{header.split('/', 1)[1].split(';', 1)[0].strip() or 'png'}"
+            try:
+                import base64
+
+                return _save_image_asset(spec_id, base64.b64decode(encoded), suffix=extension)
+            except Exception:
+                return ""
+        path_candidate = Path(candidate)
+        if path_candidate.exists():
+            return str(path_candidate.resolve())
+        if lowered.startswith("/static/") or lowered.startswith("/uploads/"):
+            return candidate
+        return ""
+
+    if isinstance(value, (bytes, bytearray)):
+        if not persist_assets:
+            return "__inline_image__"
+        return _save_image_asset(spec_id, bytes(value))
+
+    if isinstance(value, dict):
+        for key in ("image_url", "url", "src", "path", "filename", "file_name"):
+            ref = _coerce_image_reference(spec_id, value.get(key), persist_assets=persist_assets)
+            if ref:
+                return ref
+        raw_bytes = value.get("bytes")
+        if raw_bytes is not None:
+            return _coerce_image_reference(spec_id, raw_bytes, persist_assets=persist_assets)
+        return ""
+
+    if hasattr(value, "save"):
+        if not persist_assets:
+            return "__inline_image__"
+        try:
+            buffer = io.BytesIO()
+            image_format = str(getattr(value, "format", "") or "PNG").upper()
+            value.save(buffer, format=image_format)
+            return _save_image_asset(spec_id, buffer.getvalue(), suffix=f".{image_format.lower()}")
+        except Exception:
+            return ""
+
+    return ""
+
+
+def _extract_vision_record(
+    record: dict[str, Any],
+    spec: CuratedDatasetSpec,
+    *,
+    prompt: str | None = None,
+    persist_assets: bool = True,
+) -> dict[str, Any] | None:
+    image_reference = _coerce_image_reference(spec.id, _extract_image_value(record), persist_assets=persist_assets)
+    if not image_reference:
+        return None
+
+    text_representation = str(prompt or _extract_image_prompt(record) or "").strip()
+    if not text_representation:
+        text_representation = f"Imported visual sample from {spec.source}"
+
+    payload: dict[str, Any] = {
+        "text": text_representation,
+        "source": spec.source,
+        "dataset_id": spec.id,
+        "config_name": spec.config_name,
+        "split": spec.split,
+        "metadata": {
+            "source_type": spec.source_type,
+        },
+    }
+    if image_reference.startswith(("http://", "https://", "/static/", "/uploads/")):
+        payload["image_url"] = image_reference
+    else:
+        payload["image_path"] = image_reference
+    return payload
 
 
 def _iter_dataset_rows(dataset: Any, max_rows: int) -> Iterator[dict[str, Any]]:
@@ -518,7 +671,7 @@ def _load_source_dataset(spec: CuratedDatasetSpec):
     raise ValueError(f"Unsupported source_type '{spec.source_type}'")
 
 
-def _detect_dataset_kind(spec: CuratedDatasetSpec, max_rows: int) -> str:
+def _detect_dataset_modalities(spec: CuratedDatasetSpec, max_rows: int) -> list[str]:
     row_limit = max(1, min(max_rows, 48))
     dataset = _load_source_dataset(spec)
     row_source: Iterator[dict[str, Any]]
@@ -529,6 +682,7 @@ def _detect_dataset_kind(spec: CuratedDatasetSpec, max_rows: int) -> str:
 
     text_score = 0
     image_prompt_score = 0
+    vision_score = 0
     for row in row_source:
         text_records = _extract_text_records(row, spec)
         if text_records:
@@ -536,10 +690,34 @@ def _detect_dataset_kind(spec: CuratedDatasetSpec, max_rows: int) -> str:
         prompt = _extract_image_prompt(row)
         if prompt:
             image_prompt_score += 1
+        if _extract_vision_record(row, spec, prompt=prompt, persist_assets=False):
+            vision_score += 1
 
-    if image_prompt_score > text_score:
-        return "image_prompt"
-    return "text"
+    detected: list[str] = []
+    if text_score > 0:
+        detected.append("text")
+    if image_prompt_score > 0:
+        detected.append("image_prompt")
+    if vision_score > 0:
+        detected.append("vision")
+    return detected or ["text"]
+
+
+def _resolve_requested_modalities(requested_kind: str, detected_modalities: list[str]) -> list[str]:
+    normalized = "all" if requested_kind == "both" else requested_kind
+    if normalized == "auto":
+        return detected_modalities
+    if normalized == "all":
+        return ["text", "image_prompt", "vision"]
+    if normalized in {"text", "image_prompt", "vision"}:
+        return [normalized]
+    raise ValueError("kind must be one of: auto, text, image_prompt, vision, all")
+
+
+def _resolved_kind_label(modalities: list[str]) -> str:
+    if len(modalities) == 1:
+        return modalities[0]
+    return "all"
 
 
 def _import_dataset_spec(
@@ -548,6 +726,7 @@ def _import_dataset_spec(
     max_rows: int | None = None,
     auto_sync: bool = False,
     requested_kind: str | None = None,
+    resolved_modalities: list[str] | None = None,
 ) -> dict[str, Any]:
     row_limit = max_rows or spec.default_max_rows
     dataset = _load_source_dataset(spec)
@@ -557,53 +736,93 @@ def _import_dataset_spec(
     else:
         row_source = _iter_dataset_rows(dataset, row_limit)
 
-    output_path = _output_path(spec)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    selected_modalities = resolved_modalities or [spec.kind]
+    output_paths = {kind: _output_path_for_kind(kind, spec.id) for kind in selected_modalities}
+    for path in output_paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
 
     imported_rows = 0
     skipped_rows = 0
+    counts_by_kind = {kind: 0 for kind in selected_modalities}
 
-    with output_path.open("w", encoding="utf-8") as handle:
+    with ExitStack() as stack:
+        handles = {
+            kind: stack.enter_context(path.open("w", encoding="utf-8"))
+            for kind, path in output_paths.items()
+        }
         for row in row_source:
-            if spec.kind == "text":
-                records = _extract_text_records(row, spec)
-            else:
-                prompt = _extract_image_prompt(row)
-                records = (
-                    [{
-                        "prompt": prompt,
-                        "source": spec.source,
-                        "dataset_id": spec.id,
-                    }]
-                    if prompt else
-                    []
+            wrote_any = False
+            prompt = _extract_image_prompt(row) if ("image_prompt" in handles or "vision" in handles) else ""
+
+            if "text" in handles:
+                text_records = _extract_text_records(row, spec)
+                for record in text_records:
+                    handles["text"].write(json.dumps(record, ensure_ascii=False) + "\n")
+                    counts_by_kind["text"] += 1
+                    imported_rows += 1
+                    wrote_any = True
+
+            if "image_prompt" in handles and prompt:
+                handles["image_prompt"].write(
+                    json.dumps(
+                        {
+                            "prompt": prompt,
+                            "source": spec.source,
+                            "dataset_id": spec.id,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-
-            if not records:
-                skipped_rows += 1
-                continue
-
-            for record in records:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                counts_by_kind["image_prompt"] += 1
                 imported_rows += 1
+                wrote_any = True
 
-    sync_result = None
-    if auto_sync and output_path.exists() and output_path.stat().st_size > 0 and hf_dataset_sync.is_configured():
-        sync_result = hf_dataset_sync.sync_path(output_path)
+            if "vision" in handles:
+                vision_record = _extract_vision_record(row, spec, prompt=prompt)
+                if vision_record:
+                    handles["vision"].write(json.dumps(vision_record, ensure_ascii=False) + "\n")
+                    counts_by_kind["vision"] += 1
+                    imported_rows += 1
+                    wrote_any = True
+
+            if not wrote_any:
+                skipped_rows += 1
+
+    sync_result: dict[str, Any] | None = None
+    size_by_kind: dict[str, int] = {}
+    for kind, path in output_paths.items():
+        if counts_by_kind.get(kind, 0) <= 0:
+            if path.exists():
+                path.unlink()
+            continue
+        size_by_kind[kind] = path.stat().st_size if path.exists() else 0
+
+    if auto_sync and hf_dataset_sync.is_configured():
+        sync_result = {}
+        for kind, path in output_paths.items():
+            if counts_by_kind.get(kind, 0) <= 0 or not path.exists() or path.stat().st_size <= 0:
+                continue
+            sync_result[kind] = hf_dataset_sync.sync_path(path)
 
     manifest = _load_manifest()
+    resolved_kind = _resolved_kind_label(selected_modalities)
     manifest[spec.id] = {
         "id": spec.id,
-        "kind": spec.kind,
-        "requested_kind": requested_kind or spec.kind,
+        "kind": resolved_kind,
+        "modalities": selected_modalities,
+        "requested_kind": requested_kind or resolved_kind,
         "source": spec.source,
         "source_type": spec.source_type,
         "config_name": spec.config_name,
         "split": spec.split,
         "rows_imported": imported_rows,
+        "rows_imported_by_kind": counts_by_kind,
         "rows_skipped": skipped_rows,
-        "output_path": str(output_path),
-        "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+        "output_paths": {kind: str(path) for kind, path in output_paths.items() if counts_by_kind.get(kind, 0) > 0},
+        "size_bytes_by_kind": size_by_kind,
+        "output_path": str(next(iter(output_paths.values()))) if len(output_paths) == 1 else None,
+        "size_bytes": sum(size_by_kind.values()),
         "auto_synced": bool(sync_result),
     }
     _save_manifest(manifest)
@@ -612,12 +831,16 @@ def _import_dataset_spec(
         "status": "imported",
         "dataset": asdict(spec),
         "rows_imported": imported_rows,
+        "rows_imported_by_kind": counts_by_kind,
         "rows_skipped": skipped_rows,
-        "output_path": str(output_path),
-        "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+        "output_paths": {kind: str(path) for kind, path in output_paths.items() if counts_by_kind.get(kind, 0) > 0},
+        "output_path": str(next(iter(output_paths.values()))) if len(output_paths) == 1 else None,
+        "size_bytes": sum(size_by_kind.values()),
+        "size_bytes_by_kind": size_by_kind,
         "sync": sync_result,
-        "requested_kind": requested_kind or spec.kind,
-        "resolved_kind": spec.kind,
+        "requested_kind": requested_kind or resolved_kind,
+        "resolved_kind": resolved_kind,
+        "resolved_modalities": selected_modalities,
     }
 
 
@@ -647,8 +870,8 @@ def import_hf_dataset(
     normalized_config = str(config_name or "").strip()
     normalized_split = str(split or "").strip() or "train"
     requested_kind = str(kind or "auto").strip().lower() or "auto"
-    if requested_kind not in {"auto", "text", "image_prompt"}:
-        raise ValueError("kind must be one of: auto, text, image_prompt")
+    if requested_kind not in _SUPPORTED_IMPORT_KINDS:
+        raise ValueError("kind must be one of: auto, text, image_prompt, vision, all")
 
     row_limit = max_rows or DEFAULT_TEXT_ROWS
     probe_spec = CuratedDatasetSpec(
@@ -662,7 +885,9 @@ def import_hf_dataset(
         default_max_rows=row_limit,
         description="User-supplied Hugging Face dataset probe",
     )
-    resolved_kind = requested_kind if requested_kind != "auto" else _detect_dataset_kind(probe_spec, row_limit)
+    detected_modalities = _detect_dataset_modalities(probe_spec, row_limit)
+    resolved_modalities = _resolve_requested_modalities(requested_kind, detected_modalities)
+    resolved_kind = _resolved_kind_label(resolved_modalities)
 
     output_id_parts = [
         "hf",
@@ -673,7 +898,7 @@ def import_hf_dataset(
         output_id_parts.append(_slugify_identifier(normalized_config))
     output_id_parts.append(_slugify_identifier(resolved_kind))
 
-    if max_rows is None and resolved_kind == "image_prompt":
+    if max_rows is None and "image_prompt" in resolved_modalities and "text" not in resolved_modalities:
         row_limit = DEFAULT_IMAGE_PROMPT_ROWS
 
     spec = CuratedDatasetSpec(
@@ -692,6 +917,7 @@ def import_hf_dataset(
         max_rows=max_rows,
         auto_sync=auto_sync,
         requested_kind=requested_kind,
+        resolved_modalities=resolved_modalities,
     )
 
 
@@ -733,13 +959,13 @@ def count_curated_text_records() -> int:
 
 def list_local_curated_files() -> list[dict[str, Any]]:
     files: list[dict[str, Any]] = []
-    for root in (CURATED_TEXT_DIR, CURATED_IMAGE_PROMPT_DIR):
+    for kind, root in (("text", CURATED_TEXT_DIR), ("image_prompt", CURATED_IMAGE_PROMPT_DIR), ("vision", CURATED_VISION_DIR)):
         for path in sorted(root.glob("*.jsonl")):
             files.append(
                 {
                     "name": path.name,
                     "path": str(path),
-                    "kind": "text" if root == CURATED_TEXT_DIR else "image_prompt",
+                    "kind": kind,
                     "size_bytes": path.stat().st_size,
                 }
             )

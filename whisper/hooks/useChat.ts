@@ -204,6 +204,30 @@ function buildConversationContext(historyMessages: Message[]) {
     return `Conversation memory summary:\n${summaryLines.map((line) => `- ${line}`).join('\n')}`;
 }
 
+function describeAgentProgress(task: {
+    status: string;
+    plan?: { tool: string; status: string }[];
+    toolResults?: { tool: string; summary?: string }[];
+}) {
+    const runningStep = task.plan?.find((step) => step.status === 'running');
+    if (runningStep) {
+        return `Whisper Agent is running ${runningStep.tool.replace(/_/g, ' ')}...`;
+    }
+
+    if (task.status === 'queued') return 'Whisper Agent is queued...';
+    if (task.status === 'cancelling') return 'Whisper Agent is cancelling...';
+    if (task.status === 'cancelled') return 'Whisper Agent task cancelled.';
+    if (task.status === 'failed') return 'Whisper Agent failed.';
+    if (task.status === 'completed') return 'Whisper Agent completed.';
+
+    const lastTool = task.toolResults?.[task.toolResults.length - 1];
+    if (lastTool?.tool) {
+        return `Whisper Agent finished ${lastTool.tool.replace(/_/g, ' ')}...`;
+    }
+
+    return 'Whisper Agent is working...';
+}
+
 async function buildKnowledgeContext(query: string) {
     const normalized = query.trim();
     if (!normalized) return '';
@@ -436,7 +460,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     }): Promise<{ text: string; imageUri?: string; metadata?: Message['metadata'] }> => {
         setProgressStatus('Whisper Agent is planning...');
 
-        const task = await agentMode.createTask({
+        let task = await agentMode.startTask({
             message: params.prompt,
             history: params.history,
             sessionId: agentSessionIdRef.current || undefined,
@@ -454,6 +478,49 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         });
 
         agentSessionIdRef.current = task.sessionId;
+        setProgressStatus(describeAgentProgress(task));
+
+        while (!agentMode.isTerminalStatus(task.status)) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            task = await agentMode.refreshTask(task.sessionId);
+            agentSessionIdRef.current = task.sessionId;
+            setProgressStatus(describeAgentProgress(task));
+        }
+        agentSessionIdRef.current = null;
+
+        if (task.status === 'cancelled') {
+            return {
+                text: task.answer || 'Whisper Agent task was cancelled.',
+                imageUri: task.imageUrl || undefined,
+                metadata: {
+                    model: `agent:${task.backend}`,
+                    agentSessionId: task.sessionId,
+                    agentBackend: task.backend,
+                    agentTools: task.toolResults.map((item) => item.tool),
+                    agentPlan: task.plan,
+                    citations: task.citations,
+                },
+            };
+        }
+
+        if (task.status === 'failed') {
+            const failureText = task.answer
+                || task.toolResults[task.toolResults.length - 1]?.summary
+                || 'Whisper Agent failed before it could finish the task.';
+            return {
+                text: failureText,
+                imageUri: task.imageUrl || undefined,
+                metadata: {
+                    model: `agent:${task.backend}`,
+                    agentSessionId: task.sessionId,
+                    agentBackend: task.backend,
+                    agentTools: task.toolResults.map((item) => item.tool),
+                    agentPlan: task.plan,
+                    citations: task.citations,
+                },
+            };
+        }
+
         setProgressStatus(task.imageUrl ? 'Whisper Agent completed with an image.' : 'Whisper Agent completed.');
 
         return {
@@ -838,24 +905,40 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
     }, [messages, saveToHistory]);
 
     const stopGeneration = useCallback(() => {
-        if (!abortControllerRef.current) return;
+        const currentAbortController = abortControllerRef.current;
+        const currentAgentSessionId = agentSessionIdRef.current;
 
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-        setIsStreaming(false);
-        setIsLoading(false);
+        if (currentAbortController) {
+            currentAbortController.abort();
+            abortControllerRef.current = null;
+            setIsStreaming(false);
+            setIsLoading(false);
 
-        if (streamingMessage.trim()) {
-            setMessages((previous) => [
-                ...previous,
-                {
-                    id: `msg-${Date.now()}`,
-                    text: `${streamingMessage} [stopped]`,
-                    isUser: false,
-                    timestamp: new Date(),
-                },
-            ]);
-            setStreamingMessage('');
+            if (streamingMessage.trim()) {
+                setMessages((previous) => [
+                    ...previous,
+                    {
+                        id: `msg-${Date.now()}`,
+                        text: `${streamingMessage} [stopped]`,
+                        isUser: false,
+                        timestamp: new Date(),
+                    },
+                ]);
+                setStreamingMessage('');
+            }
+            return;
+        }
+
+        if (currentAgentSessionId) {
+            setProgressStatus('Cancelling Whisper Agent...');
+            void agentMode.cancelTask(currentAgentSessionId)
+                .catch((error) => {
+                    console.error('Failed to cancel agent session:', error);
+                })
+                .finally(() => {
+                    setIsLoading(false);
+                    setProgressStatus('');
+                });
         }
     }, [streamingMessage]);
 

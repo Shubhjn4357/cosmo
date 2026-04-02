@@ -41,7 +41,7 @@ class HuggingFaceDatasetImportRequest(BaseModel):
     dataset_id: str
     config_name: Optional[str] = None
     split: Optional[str] = "train"
-    kind: Literal["auto", "text", "image_prompt"] = "auto"
+    kind: Literal["auto", "text", "image_prompt", "vision", "all", "both"] = "auto"
     max_rows: Optional[int] = None
     auto_sync: bool = False
 
@@ -201,6 +201,7 @@ async def import_huggingface_dataset(
         "status": "imported",
         "result": result,
         "rows_imported": int(result.get("rows_imported") or 0),
+        "rows_imported_by_kind": result.get("rows_imported_by_kind") or {},
     }
 
 

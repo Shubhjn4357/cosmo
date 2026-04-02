@@ -31,6 +31,7 @@ except ImportError:
 ensure_app_dirs()
 
 SYNC_STATE_PATH = DATA_ROOT / "runtime" / "hf_dataset_sync.json"
+DEFAULT_DATASET_REPO = "shubhjn/whisper-data"
 MANAGED_ROOT_FILENAMES = {
     "training_pairs.jsonl",
     "feedback.jsonl",
@@ -75,6 +76,8 @@ def _load_state() -> dict:
             logger.warning(f"Failed to parse HF sync state: {exc}")
 
     state["configured"] = is_configured()
+    state["read_configured"] = can_read()
+    state["write_configured"] = can_write()
     state["available"] = HF_HUB_AVAILABLE
     state["repo_id"] = get_repo_id()
     return state
@@ -94,16 +97,35 @@ def _update_state(**changes) -> dict:
 
 def get_repo_id() -> str | None:
     value = os.getenv("HF_DATASET_REPO", "").strip()
-    return value or None
+    if value:
+        return value
+    fallback = os.getenv("WHISPER_DEFAULT_HF_DATASET_REPO", DEFAULT_DATASET_REPO).strip()
+    return fallback or None
 
 
 def get_hf_token() -> str | None:
-    value = os.getenv("HF_TOKEN", "").strip()
-    return value or None
+    for env_name in (
+        "HF_TOKEN",
+        "HUGGINGFACE_API_KEY",
+        "HUGGING_FACE_HUB_TOKEN",
+        "HUGGINGFACEHUB_API_TOKEN",
+    ):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value
+    return None
 
 
 def is_configured() -> bool:
-    return bool(HF_HUB_AVAILABLE and get_repo_id() and get_hf_token())
+    return can_write()
+
+
+def can_read() -> bool:
+    return bool(HF_HUB_AVAILABLE and get_repo_id())
+
+
+def can_write() -> bool:
+    return bool(can_read() and get_hf_token())
 
 
 def status() -> dict:
@@ -144,14 +166,33 @@ def remote_candidates_for_local_path(local_path: Path | str) -> list[str]:
     return candidates
 
 
-def _client() -> HfApi:
+def _client(*, require_token: bool = True) -> HfApi:
     if not HF_HUB_AVAILABLE:
         raise RuntimeError("huggingface_hub is not installed")
     repo_id = get_repo_id()
     token = get_hf_token()
-    if not repo_id or not token:
-        raise RuntimeError("HF_DATASET_REPO and HF_TOKEN are required")
+    if not repo_id:
+        raise RuntimeError("HF_DATASET_REPO is required")
+    if require_token and not token:
+        raise RuntimeError("HF_TOKEN is required for dataset uploads")
     return HfApi(token=token)
+
+
+def list_remote_files(prefix: str | None = None) -> list[str]:
+    if not can_read():
+        raise RuntimeError("HF_DATASET_REPO is required")
+    files = _client(require_token=False).list_repo_files(
+        repo_id=get_repo_id(),
+        repo_type="dataset",
+        token=get_hf_token() or None,
+    )
+    _remember_file_list(files=files)
+    if not prefix:
+        return files
+    normalized = prefix.strip("/")
+    if not normalized:
+        return files
+    return [item for item in files if item == normalized or item.startswith(f"{normalized}/")]
 
 
 def _remember_file_list(*, uploaded: str | None = None, downloaded: str | None = None, files: list[str] | None = None):
@@ -170,7 +211,7 @@ def _remember_file_list(*, uploaded: str | None = None, downloaded: str | None =
 
 def validate_remote() -> dict:
     base = _load_state()
-    if not is_configured():
+    if not can_read():
         return {
             **base,
             "reachable": False,
@@ -178,8 +219,8 @@ def validate_remote() -> dict:
         }
 
     try:
-        api = _client()
-        files = api.list_repo_files(repo_id=get_repo_id(), repo_type="dataset", token=get_hf_token())
+        api = _client(require_token=False)
+        files = api.list_repo_files(repo_id=get_repo_id(), repo_type="dataset", token=get_hf_token() or None)
         _remember_file_list(files=files)
         state = _update_state(
             last_action="validate",
@@ -219,11 +260,11 @@ def sync_path(local_path: Path | str, remote_path: str | None = None) -> dict:
     path = Path(local_path)
     if not path.exists():
         raise FileNotFoundError(str(path))
-    if not is_configured():
-        raise RuntimeError("HF_DATASET_REPO and HF_TOKEN are required")
+    if not can_write():
+        raise RuntimeError("HF_DATASET_REPO and HF_TOKEN are required for uploads")
 
     remote_name = remote_path or remote_path_for_local_path(path)
-    api = _client()
+    api = _client(require_token=True)
     _ensure_repo(api)
     api.upload_file(
         path_or_fileobj=str(path),
@@ -258,44 +299,121 @@ def sync_paths(paths: Iterable[Path | str]) -> list[dict]:
     return results
 
 
-def download_to_path(local_path: Path | str, remote_candidates: list[str] | None = None) -> dict:
-    target = Path(local_path)
-    if not is_configured():
-        raise RuntimeError("HF_DATASET_REPO and HF_TOKEN are required")
+def sync_directory(
+    local_dir: Path | str,
+    remote_prefix: str | None = None,
+    *,
+    skip_suffixes: tuple[str, ...] = (".part", ".tmp", ".lock"),
+) -> dict:
+    root = Path(local_dir)
+    if not root.exists():
+        raise FileNotFoundError(str(root))
+    if root.is_file():
+        result = sync_path(root, remote_path=remote_prefix)
+        return {
+            "local_path": str(root),
+            "remote_prefix": result["remote_path"],
+            "file_count": 1,
+            "results": [result],
+        }
+
+    prefix = (remote_prefix or _relative_managed_path(root) or root.name).strip("/")
+    results: list[dict] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if any(path.name.endswith(suffix) for suffix in skip_suffixes):
+            continue
+        relative = path.relative_to(root).as_posix()
+        remote_path = f"{prefix}/{relative}" if prefix else relative
+        results.append(sync_path(path, remote_path=remote_path))
+
+    _update_state(
+        last_action="upload-directory",
+        last_sync_at=time.time(),
+        last_error=None,
+        last_success="upload-directory",
+        last_sync_count=len(results),
+    )
+    return {
+        "local_path": str(root),
+        "remote_prefix": prefix,
+        "file_count": len(results),
+        "results": results,
+    }
+
+
+def _download_remote_path(target: Path, remote_path: str) -> dict:
     if hf_hub_download is None:
         raise RuntimeError("huggingface_hub is not installed")
 
-    api = _client()
-    files = api.list_repo_files(repo_id=get_repo_id(), repo_type="dataset", token=get_hf_token())
-    _remember_file_list(files=files)
-
-    candidates = remote_candidates or remote_candidates_for_local_path(target)
-    matched = next((candidate for candidate in candidates if candidate in files), None)
-    if matched is None:
-        raise FileNotFoundError(f"No remote file found for {target.name}")
-
     downloaded_path = hf_hub_download(
         repo_id=get_repo_id(),
-        filename=matched,
+        filename=remote_path,
         repo_type="dataset",
-        token=get_hf_token(),
+        token=get_hf_token() or None,
     )
     downloaded = Path(downloaded_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     if downloaded.resolve() != target.resolve():
         target.write_bytes(downloaded.read_bytes())
 
-    _remember_file_list(downloaded=matched)
+    _remember_file_list(downloaded=remote_path)
+    return {
+        "local_path": str(target),
+        "remote_path": remote_path,
+        "size_bytes": target.stat().st_size if target.exists() else 0,
+        "repo_id": get_repo_id(),
+    }
+
+
+def download_to_path(local_path: Path | str, remote_candidates: list[str] | None = None) -> dict:
+    target = Path(local_path)
+    if not can_read():
+        raise RuntimeError("HF_DATASET_REPO is required")
+    files = list_remote_files()
+
+    candidates = remote_candidates or remote_candidates_for_local_path(target)
+    matched = next((candidate for candidate in candidates if candidate in files), None)
+    if matched is None:
+        raise FileNotFoundError(f"No remote file found for {target.name}")
+
+    result = _download_remote_path(target, matched)
     state = _update_state(
         last_action="download",
         last_download_at=time.time(),
         last_error=None,
         last_success="download",
     )
+    result["state"] = state
+    return result
+
+
+def download_directory(local_dir: Path | str, remote_prefix: str | None = None) -> dict:
+    target_root = Path(local_dir)
+    prefix = (remote_prefix or _relative_managed_path(target_root) or target_root.name).strip("/")
+    remote_files = list_remote_files(prefix)
+    normalized_prefix = f"{prefix}/" if prefix else ""
+
+    results: list[dict] = []
+    for remote_path in remote_files:
+        relative = remote_path[len(normalized_prefix):] if normalized_prefix and remote_path.startswith(normalized_prefix) else remote_path
+        if not relative:
+            relative = Path(remote_path).name
+        local_path = target_root / relative
+        results.append(_download_remote_path(local_path, remote_path))
+
+    state = _update_state(
+        last_action="download-directory",
+        last_download_at=time.time(),
+        last_error=None,
+        last_success="download-directory",
+        last_sync_count=len(results),
+    )
     return {
-        "local_path": str(target),
-        "remote_path": matched,
-        "size_bytes": target.stat().st_size if target.exists() else 0,
-        "repo_id": get_repo_id(),
+        "local_path": str(target_root),
+        "remote_prefix": prefix,
+        "file_count": len(results),
+        "results": results,
         "state": state,
     }

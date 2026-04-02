@@ -231,6 +231,22 @@ async def _startup(app: FastAPI):
         except Exception as exc:
             logger.warning(f"Approved model bootstrap skipped: {exc}")
 
+        try:
+            readiness = app_state.chat_runtime.readiness()
+            if readiness.get("can_load"):
+                async def _warm_chat_runtime():
+                    loaded = await asyncio.to_thread(app_state.chat_runtime.ensure_loaded)
+                    logger.info(
+                        "Warm chat runtime {}",
+                        "ready" if loaded else f"skipped ({app_state.chat_runtime.status().get('last_error')})",
+                    )
+
+                asyncio.create_task(_warm_chat_runtime())
+            else:
+                logger.info("Warm chat runtime deferred: {}", readiness.get("summary"))
+        except Exception as exc:
+            logger.warning(f"Warm chat runtime skipped: {exc}")
+
     logger.info(f"Server started in {time.time() - startup_start:.2f}s")
 
 

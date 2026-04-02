@@ -42,7 +42,7 @@ class TrainingConfig(BaseModel):
     learning_rate: float = 1e-4
     image_size: int = 64
     max_samples: Optional[int] = None
-    dataset: str = "shubhjn/whisper-trained-data"
+    dataset: str = "shubhjn/whisper-data"
 
 
 @router.post("/train/start")
@@ -372,7 +372,7 @@ async def schedule_auto_training():
         learning_rate=1e-4,
         image_size=64,
         max_samples=5000,  # Start with smaller dataset
-        dataset="shubhjn/whisper-trained-data"
+        dataset="shubhjn/whisper-data"
     )
     
     # Run training

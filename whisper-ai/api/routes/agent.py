@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from services.agent_runtime import (
     SUPPORTED_AGENT_BACKENDS,
     AgentRunRequestPayload,
+    cancel_agent_session,
     get_agent_session,
     list_agent_sessions,
     run_agent,
@@ -36,6 +37,7 @@ class AgentRunRequest(BaseModel):
     max_steps: int = 4
     max_tokens: int = 320
     user_id: Optional[str] = None
+    wait_for_completion: bool = False
 
 
 @router.post("/agent/run")
@@ -66,7 +68,11 @@ async def run_agent_route(request: AgentRunRequest):
         user_id=request.user_id,
     )
 
-    session = await run_agent(payload, get_app_state())
+    session = await run_agent(
+        payload,
+        get_app_state(),
+        wait_for_completion=request.wait_for_completion,
+    )
     return {
         "session_id": session["id"],
         "status": session.get("status"),
@@ -89,6 +95,14 @@ async def list_agent_sessions_route(limit: int = 20):
 @router.get("/agent/sessions/{session_id}")
 async def get_agent_session_route(session_id: str):
     session = get_agent_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Unknown agent session '{session_id}'")
+    return session
+
+
+@router.post("/agent/sessions/{session_id}/cancel")
+async def cancel_agent_session_route(session_id: str):
+    session = await cancel_agent_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail=f"Unknown agent session '{session_id}'")
     return session

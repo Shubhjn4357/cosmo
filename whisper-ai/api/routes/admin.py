@@ -110,10 +110,12 @@ def _self_learner_summary() -> dict[str, Any]:
     steps = int(training_state.get("steps") or 0)
     sequences = max(int(training_state.get("dataset_sequences") or 0), int(corpus_counts.get("total_sequences") or 0))
     chat_ready = readiness.get("can_load", False) and steps >= min_steps and sequences >= min_sequences
+    training_recommended = not (steps >= min_steps and sequences >= min_sequences)
 
     return {
         "ready": readiness.get("can_load", False),
         "chat_ready": chat_ready,
+        "training_recommended": training_recommended,
         "summary": readiness.get("summary"),
         "training_state": {
             **training_state,

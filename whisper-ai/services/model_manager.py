@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 from loguru import logger
 
+from services import hf_dataset_sync
 from services.approved_model_catalog import DEFAULT_TEXT_MODEL_ID, get_text_model
 from services.admin_state import get_model_enabled
 from services.runtime_manager import (
@@ -79,6 +80,12 @@ _DEFAULT_TEXT_MODEL = get_text_model(DEFAULT_TEXT_MODEL_ID)
 _DEFAULT_BALANCED_MODEL = get_text_model("qwen3-4b-q4km")
 _DEFAULT_REASONING_MODEL = get_text_model("deepseek-r1-distill-qwen-7b-q4km")
 _DEFAULT_COMPLEX_MODEL_ID = os.getenv("WHISPER_COMPLEX_TASK_MODEL_ID", "Qwen/Qwen3-Coder-Next")
+_DEFAULT_FAST_TRANSFORMERS_MODEL_ID = os.getenv("WHISPER_FAST_PROFILE_MODEL_ID", "Qwen/Qwen3-1.7B")
+_DEFAULT_BALANCED_TRANSFORMERS_MODEL_ID = os.getenv("WHISPER_BALANCED_PROFILE_MODEL_ID", "Qwen/Qwen3-4B")
+_DEFAULT_HEAVY_AIRLLM_MODEL_ID = os.getenv(
+    "WHISPER_HEAVY_PROFILE_MODEL_ID",
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+)
 
 if _DEFAULT_TEXT_MODEL is None or _DEFAULT_BALANCED_MODEL is None or _DEFAULT_REASONING_MODEL is None:
     raise RuntimeError("Approved model catalog defaults are missing")
@@ -90,7 +97,7 @@ RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
         name="Fast Coder",
         description="Small approved CPU-friendly profile for quick replies.",
         backend="transformers",
-        model_id="Qwen/Qwen3-1.7B",
+        model_id=_DEFAULT_FAST_TRANSFORMERS_MODEL_ID,
         recommended_for="Default coding chat on CPU",
         max_context_tokens=4096,
         max_new_tokens=384,
@@ -100,7 +107,7 @@ RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
         name="Balanced Coder",
         description="Higher-quality approved 4B profile for better responses on CPU.",
         backend="transformers",
-        model_id=_DEFAULT_BALANCED_MODEL.repo_id,
+        model_id=_DEFAULT_BALANCED_TRANSFORMERS_MODEL_ID,
         recommended_for="Higher-quality coding on CPU",
         max_context_tokens=4096,
         max_new_tokens=512,
@@ -123,8 +130,8 @@ RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
         name="Heavy AirLLM",
         description="Reasoning-oriented larger profile for stronger server responses.",
         backend="airllm",
-        model_id=_DEFAULT_REASONING_MODEL.repo_id,
-        airllm_model_id=_DEFAULT_REASONING_MODEL.repo_id,
+        model_id=_DEFAULT_HEAVY_AIRLLM_MODEL_ID,
+        airllm_model_id=_DEFAULT_HEAVY_AIRLLM_MODEL_ID,
         airllm_model_path=str(MODELS_DIR / "llm" / "heavy-airllm"),
         recommended_for="Upgraded hardware or experimental full-local tier",
         max_context_tokens=8192,
@@ -215,7 +222,7 @@ def _directory_size_bytes(path: Path) -> int:
 
 
 def _get_hf_token() -> Optional[str]:
-    return os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
+    return hf_dataset_sync.get_hf_token()
 
 
 def _get_repo_file_metadata(repo_id: str, filename: str) -> dict:
@@ -397,6 +404,18 @@ def _copy_with_progress(source: Path, target: Path, job_id: str):
     return total_bytes
 
 
+def _sync_profile_artifact(path: Path):
+    if not path.exists():
+        return
+    try:
+        if path.is_dir():
+            hf_dataset_sync.sync_directory(path)
+        else:
+            hf_dataset_sync.sync_path(path)
+    except Exception as exc:
+        logger.debug(f"Model artifact sync skipped for {path}: {exc}")
+
+
 def _download_profile_assets(job_id: str, profile: RuntimeProfile):
     hf_token = _get_hf_token()
 
@@ -431,6 +450,7 @@ def _download_profile_assets(job_id: str, profile: RuntimeProfile):
             )
             _mark_job(job_id, stage="copying to runtime store")
             copied_bytes = _copy_with_progress(Path(downloaded), target, job_id)
+            _sync_profile_artifact(target)
             _mark_job(
                 job_id,
                 status="completed",
@@ -450,6 +470,7 @@ def _download_profile_assets(job_id: str, profile: RuntimeProfile):
             local_dir=str(target_dir),
             local_dir_use_symlinks=False,
         )
+        _sync_profile_artifact(target_dir)
         total_bytes = _directory_size_bytes(target_dir)
         _mark_job(
             job_id,
@@ -532,6 +553,8 @@ def _poll_download_job(job: dict):
 
     if returncode == 0:
         final_bytes = _directory_size_bytes(artifact_path) if artifact_path is not None else 0
+        if artifact_path is not None and artifact_path.exists():
+            _sync_profile_artifact(artifact_path)
         _mark_job(
             job["id"],
             status="completed",
@@ -551,6 +574,34 @@ def _poll_download_job(job: dict):
 
 def queue_profile_download(profile_id: str) -> dict:
     profile = get_profile(profile_id)
+    status = _profile_status(profile)
+    if status["artifact_exists"]:
+        existing_completed = next(
+            (
+                job for job in DOWNLOAD_JOBS.values()
+                if job["profile_id"] == profile.id and job["status"] == "completed"
+            ),
+            None,
+        )
+        if existing_completed is not None:
+            return existing_completed
+        artifact_path = _profile_artifact_path(profile)
+        return {
+            "id": f"ready-{profile.id}",
+            "profile_id": profile.id,
+            "profile_name": profile.name,
+            "profile_backend": profile.backend,
+            "status": "completed",
+            "stage": "ready",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "error": None,
+            "output_path": str(artifact_path),
+            "bytes_downloaded": status["artifact_size_bytes"],
+            "total_bytes": status["artifact_size_bytes"],
+            "progress": 1.0,
+        }
+
     existing_job = next(
         (
             job for job in DOWNLOAD_JOBS.values()

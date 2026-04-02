@@ -79,3 +79,45 @@ def test_hf_sync_service_download_supports_root_and_dataset_paths(tmp_path, monk
     assert dataset_result["remote_path"] == "datasets/sample.jsonl"
     assert training_target.read_text(encoding="utf-8") == "remote:training_pairs.jsonl"
     assert dataset_target.read_text(encoding="utf-8") == "remote:datasets/sample.jsonl"
+
+
+def test_hf_sync_service_can_sync_and_restore_directories(tmp_path, monkeypatch):
+    state_path = tmp_path / "hf_sync_state.json"
+    monkeypatch.setenv("HF_DATASET_REPO", "demo/repo")
+    monkeypatch.setenv("HF_TOKEN", "demo-token")
+    monkeypatch.setattr(hf_dataset_sync, "SYNC_STATE_PATH", state_path)
+    monkeypatch.setattr(hf_dataset_sync, "HF_HUB_AVAILABLE", True)
+    monkeypatch.setattr(hf_dataset_sync, "HfApi", _FakeApi)
+
+    _FakeApi.remote_files = []
+    _FakeApi.uploaded_paths = []
+
+    models_dir = tmp_path / "models"
+    (models_dir / "catalog" / "text").mkdir(parents=True, exist_ok=True)
+    (models_dir / "catalog" / "text" / "model.gguf").write_text("gguf", encoding="utf-8")
+    (models_dir / "catalog" / "text" / "tokenizer.json").write_text("{}", encoding="utf-8")
+
+    upload_result = hf_dataset_sync.sync_directory(models_dir)
+
+    assert upload_result["remote_prefix"] == "models"
+    assert upload_result["file_count"] == 2
+    assert sorted(_FakeApi.uploaded_paths) == [
+        "models/catalog/text/model.gguf",
+        "models/catalog/text/tokenizer.json",
+    ]
+
+    def fake_download(*, filename: str, **kwargs):
+        cache_dir = tmp_path / "hf-cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        target = cache_dir / Path(filename).name
+        target.write_text(f"remote:{filename}", encoding="utf-8")
+        return str(target)
+
+    monkeypatch.setattr(hf_dataset_sync, "hf_hub_download", fake_download)
+
+    restore_dir = tmp_path / "restore-models"
+    download_result = hf_dataset_sync.download_directory(restore_dir, remote_prefix="models")
+
+    assert download_result["file_count"] == 2
+    assert (restore_dir / "catalog" / "text" / "model.gguf").read_text(encoding="utf-8") == "remote:models/catalog/text/model.gguf"
+    assert (restore_dir / "catalog" / "text" / "tokenizer.json").read_text(encoding="utf-8") == "remote:models/catalog/text/tokenizer.json"

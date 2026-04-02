@@ -10,7 +10,7 @@ from typing import Optional
 from loguru import logger
 
 from services import hf_dataset_sync
-from utils.app_paths import DATA_ROOT, ensure_app_dirs
+from utils.app_paths import DATA_ROOT, MODELS_DIR, ensure_app_dirs
 
 ensure_app_dirs()
 
@@ -54,16 +54,25 @@ PERSIST_FILES = [
     str(SELF_LEARNER_TOKENIZER_PATH),
     str(SELF_LEARNER_STATE_PATH),
 ]
+PERSIST_DIRECTORIES = [
+    str(MODELS_DIR),
+]
 
 
-def get_api():
+def get_api(*, for_write: bool = False):
     """Backward-compatible configuration check for startup persistence."""
-    if not hf_dataset_sync.is_configured():
-        if not get_hf_token():
-            logger.warning("HF_TOKEN not set. Data persistence disabled.")
-        if not get_repo_id():
-            logger.warning("HF_DATASET_REPO not set. Data persistence disabled.")
-        return None
+    if for_write:
+        if not hf_dataset_sync.can_write():
+            if not get_hf_token():
+                logger.warning("HF_TOKEN not set. Dataset upload persistence disabled.")
+            if not get_repo_id():
+                logger.warning("HF_DATASET_REPO not set. Dataset upload persistence disabled.")
+            return None
+    else:
+        if not hf_dataset_sync.can_read():
+            if not get_repo_id():
+                logger.warning("HF_DATASET_REPO not set. Dataset restore disabled.")
+            return None
     return object()
 
 
@@ -72,7 +81,7 @@ def restore_data():
     Restore training data from HuggingFace Dataset on startup.
     Called during server initialization.
     """
-    api = get_api()
+    api = get_api(for_write=False)
     if not api:
         logger.info("Data persistence not configured. Starting fresh.")
         return
@@ -89,6 +98,16 @@ def restore_data():
         except Exception as e:
             logger.debug(f"Could not restore {file_path}: {e}")
             # File might not exist yet, that's OK
+
+    for directory_path in PERSIST_DIRECTORIES:
+        try:
+            result = hf_dataset_sync.download_directory(directory_path)
+            if result["file_count"] > 0:
+                logger.info(
+                    f"Restored directory: {directory_path} ({result['file_count']} files) from prefix {result['remote_prefix']}"
+                )
+        except Exception as e:
+            logger.debug(f"Could not restore directory {directory_path}: {e}")
     
     logger.info("Data restoration complete.")
 
@@ -98,7 +117,7 @@ def backup_data():
     Backup training data to HuggingFace Dataset.
     Called periodically or on shutdown.
     """
-    api = get_api()
+    api = get_api(for_write=True)
     if not api:
         return
 
@@ -114,13 +133,25 @@ def backup_data():
             logger.info(f"Backed up: {file_path} to {result['remote_path']}")
         except Exception as e:
             logger.error(f"Failed to backup {file_path}: {e}")
+
+    for directory_path in PERSIST_DIRECTORIES:
+        try:
+            local_path = Path(directory_path)
+            if not local_path.exists():
+                continue
+            result = hf_dataset_sync.sync_directory(local_path)
+            logger.info(
+                f"Backed up directory: {directory_path} ({result['file_count']} files) to prefix {result['remote_prefix']}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to backup directory {directory_path}: {e}")
     
     logger.info("Data backup complete.")
 
 
 def backup_file(file_path: str):
     """Backup a single file immediately."""
-    api = get_api()
+    api = get_api(for_write=True)
     if not api:
         return
     

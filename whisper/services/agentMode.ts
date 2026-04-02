@@ -12,6 +12,8 @@ import {
 const ACTIVE_TASK_KEY = '@whisper_agent_active_task';
 const TASK_HISTORY_KEY = '@whisper_agent_task_history';
 const MAX_TASK_HISTORY = 20;
+const DEFAULT_POLL_INTERVAL_MS = 2000;
+const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export type WhisperAgentBackend = 'server' | 'self_learner' | 'cloud';
 
@@ -27,6 +29,8 @@ export interface WhisperAgentTask {
     citations: { source: string; score?: number; chunk?: number }[];
     updatedAt?: number;
 }
+
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 export interface WhisperAgentRequest {
     message: string;
@@ -97,6 +101,11 @@ class AgentModeService {
     }
 
     async think(request: WhisperAgentRequest): Promise<WhisperAgentTask> {
+        const task = await this.startTask(request);
+        return this.waitForTask(task.sessionId);
+    }
+
+    async startTask(request: WhisperAgentRequest): Promise<WhisperAgentTask> {
         const response = await whisperAPI.runAgent({
             message: request.message,
             history: request.history || [],
@@ -112,6 +121,7 @@ class AgentModeService {
             maxSteps: request.maxSteps || 4,
             maxTokens: request.maxTokens || 320,
             userId: request.userId,
+            waitForCompletion: false,
         });
 
         const task = toTask(response, request.message);
@@ -120,7 +130,7 @@ class AgentModeService {
     }
 
     async createTask(request: WhisperAgentRequest): Promise<WhisperAgentTask> {
-        return this.think(request);
+        return this.startTask(request);
     }
 
     async getCurrentTask(): Promise<WhisperAgentTask | null> {
@@ -139,6 +149,59 @@ class AgentModeService {
 
     async refreshTask(sessionId: string): Promise<WhisperAgentTask> {
         const response = await whisperAPI.getAgentSession(sessionId);
+        const task: WhisperAgentTask = {
+            sessionId: response.id,
+            prompt: response.goal || '',
+            status: response.status,
+            backend: (response.backend_resolved || 'server') as WhisperAgentBackend,
+            answer: response.answer || '',
+            imageUrl: response.image_url,
+            plan: response.plan || [],
+            toolResults: response.tool_results || [],
+            citations: response.citations || [],
+            updatedAt: response.updated_at,
+        };
+        await persistTask(task);
+        return task;
+    }
+
+    isTerminalStatus(status: string | undefined | null): boolean {
+        return TERMINAL_STATUSES.has(String(status || '').toLowerCase());
+    }
+
+    async waitForTask(
+        sessionId: string,
+        options: { timeoutMs?: number; pollIntervalMs?: number } = {}
+    ): Promise<WhisperAgentTask> {
+        const timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS;
+        const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+        const startedAt = Date.now();
+
+        let latest = await this.refreshTask(sessionId);
+        while (!this.isTerminalStatus(latest.status)) {
+            if (Date.now() - startedAt >= timeoutMs) {
+                return latest;
+            }
+            await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+            latest = await this.refreshTask(sessionId);
+        }
+        return latest;
+    }
+
+    async resumeActiveTask(): Promise<WhisperAgentTask | null> {
+        const task = await this.getCurrentTask();
+        if (!task) return null;
+        if (this.isTerminalStatus(task.status)) return task;
+        try {
+            return await this.refreshTask(task.sessionId);
+        } catch (error) {
+            console.error('Failed to resume active agent task:', error);
+            return task;
+        }
+    }
+
+    async cancelTask(sessionId: string): Promise<WhisperAgentTask> {
+        const response = await whisperAPI.cancelAgentSession(sessionId);
         const task: WhisperAgentTask = {
             sessionId: response.id,
             prompt: response.goal || '',

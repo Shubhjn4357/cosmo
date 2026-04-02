@@ -39,7 +39,7 @@ _LAST_AUTO_TRAIN_COUNT = 0
 
 
 def get_hf_dataset_repo() -> str:
-    return hf_dataset_sync.get_repo_id() or "shubhjn/whisper-trained-data"
+    return hf_dataset_sync.get_repo_id() or "shubhjn/whisper-data"
 
 
 def get_hf_token() -> str | None:

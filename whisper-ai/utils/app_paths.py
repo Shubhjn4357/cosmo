@@ -5,8 +5,15 @@ Application path helpers for local and HF Spaces deployments.
 from __future__ import annotations
 
 import os
+import uuid
 import warnings
 from pathlib import Path
+
+
+def _should_suppress_fallback_warning(original: Path, fallback: Path) -> bool:
+    original_str = str(original)
+    fallback_str = str(fallback)
+    return original_str.startswith("/data") and not fallback_str.startswith("/data")
 
 
 def _unique_paths(paths: list[Path]) -> list[Path]:
@@ -24,7 +31,7 @@ def _unique_paths(paths: list[Path]) -> list[Path]:
 def _ensure_writable_directory(path: Path) -> tuple[bool, str | None]:
     try:
         path.mkdir(parents=True, exist_ok=True)
-        probe = path / ".whisper-write-test"
+        probe = path / f".whisper-write-test-{uuid.uuid4().hex}"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink(missing_ok=True)
         return True, None
@@ -40,10 +47,11 @@ def _choose_writable_directory(label: str, candidates: list[Path]) -> Path:
         if ok:
             if errors:
                 first_path, first_reason = errors[0]
-                warnings.warn(
-                    f"{label} path '{first_path}' is not writable ({first_reason}); using '{path}' instead.",
-                    RuntimeWarning,
-                )
+                if not _should_suppress_fallback_warning(first_path, path):
+                    warnings.warn(
+                        f"{label} path '{first_path}' is not writable ({first_reason}); using '{path}' instead.",
+                        RuntimeWarning,
+                    )
             return path
         errors.append((path, reason or "unknown error"))
 
@@ -53,10 +61,14 @@ def _choose_writable_directory(label: str, candidates: list[Path]) -> Path:
 
 def _candidate_data_roots() -> list[Path]:
     configured = os.getenv("WHISPER_DATA_ROOT", "").strip()
+    persistent_volume = os.getenv("WHISPER_PERSISTENT_VOLUME_ROOT", "").strip()
+    use_persistent_volume = os.getenv("WHISPER_USE_PERSISTENT_VOLUME", "false").lower() == "true"
     candidates: list[Path] = []
     if configured:
         candidates.append(Path(configured))
-    if Path("/data").exists():
+    if persistent_volume:
+        candidates.append(Path(persistent_volume))
+    elif use_persistent_volume and Path("/data").exists():
         candidates.append(Path("/data/whisper"))
     candidates.extend([Path("data"), Path("/tmp/whisper")])
     return candidates
@@ -86,10 +98,11 @@ def _resolve_configured_file(env_name: str, default: Path) -> Path:
         if ok:
             if errors:
                 first_path, first_reason = errors[0]
-                warnings.warn(
-                    f"{env_name} path '{first_path}' is not writable ({first_reason}); using '{path}' instead.",
-                    RuntimeWarning,
-                )
+                if not _should_suppress_fallback_warning(first_path.parent, path.parent):
+                    warnings.warn(
+                        f"{env_name} path '{first_path}' is not writable ({first_reason}); using '{path}' instead.",
+                        RuntimeWarning,
+                    )
             return path
         errors.append((path, reason or "unknown error"))
 
@@ -102,13 +115,11 @@ DATASETS_DIR = _resolve_configured_directory("WHISPER_DATASET_DIR", DATA_ROOT / 
 DB_PATH = _resolve_configured_file("WHISPER_DB_PATH", DATA_ROOT / "db" / "whisper.db")
 UPLOADS_DIR = _resolve_configured_directory(
     "WHISPER_UPLOADS_DIR",
-    DATA_ROOT / "uploads" if DATA_ROOT != Path("data") else Path("uploads"),
-    extra_fallbacks=[DATA_ROOT / "uploads"],
+    DATA_ROOT / "uploads",
 )
 MODELS_DIR = _resolve_configured_directory(
     "WHISPER_MODELS_DIR",
-    DATA_ROOT / "models" if DATA_ROOT != Path("data") else Path("models"),
-    extra_fallbacks=[DATA_ROOT / "models"],
+    DATA_ROOT / "models",
 )
 RUNTIME_CONFIG_PATH = _resolve_configured_file(
     "WHISPER_RUNTIME_CONFIG",

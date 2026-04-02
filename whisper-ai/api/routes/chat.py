@@ -206,7 +206,7 @@ def _build_multimodal_fallback_text(
     visual_result: Optional[dict[str, Any]],
 ) -> str:
     lines = [
-        "Self-learner text generation is still warming up, but the multimodal path is active.",
+        "The self-learner text checkpoint is not loadable yet, but the multimodal path is active.",
     ]
 
     if image_context.get("has_image"):
@@ -579,6 +579,8 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
         learner_state.get("steps", 0) >= min_steps
         and learner_state.get("dataset_sequences", 0) >= min_sequences
     )
+    can_generate = bool(readiness.get("can_load", False))
+    training_recommended = not has_min_training
     image_context = await _prepare_self_learner_multimodal_context(request)
     wants_image_generation = _request_wants_image_generation(request)
     visual_result: Optional[dict[str, Any]] = None
@@ -608,7 +610,7 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
         knowledge_sources=knowledge_sources,
     )
 
-    if not has_min_training and not readiness.get("can_load", False):
+    if not can_generate:
         if _self_learner_text_fallback_enabled():
             try:
                 fallback_result = await _generate_self_learner_text_fallback(augmented_request, state, prompt)
@@ -661,7 +663,7 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
             )
         return ChatResponse(
             response=(
-                "Self-learner mode is online, but the built-in transformer is still warming up. "
+                "Self-learner mode is online, but the built-in transformer checkpoint is not loadable yet. "
                 f"Current progress: {learner_state.get('steps', 0)}/{min_steps} training steps and "
                 f"{learner_state.get('dataset_sequences', 0)}/{min_sequences} dataset sequences."
             ),
@@ -712,10 +714,10 @@ async def chat_self_learner(request: ChatRequest) -> ChatResponse:
                     logger.warning(f"Self-learner text fallback failed after low-quality output: {fallback_exc}")
             return ChatResponse(
                 response=(
-                    "Self-learner mode is online, but the built-in transformer still needs more training "
+                    "Self-learner mode is online, but the current checkpoint still needs more training "
                     "before it can answer reliably. Run a longer training pass or add more learned pairs."
-                    if has_min_training else
-                    "Self-learner mode loaded a low-training checkpoint, but it still needs more learned pairs "
+                    if not training_recommended else
+                    "Self-learner mode loaded an early-stage checkpoint, but it still needs more learned pairs "
                     "before it can answer reliably."
                 ),
                 tokens_used=0,
@@ -782,6 +784,10 @@ async def self_learner_status():
     thresholds = get_self_learner_chat_thresholds()
     min_steps = thresholds["min_steps"]
     min_sequences = thresholds["min_sequences"]
+    training_recommended = not (
+        learner_state.get("steps", 0) >= min_steps
+        and learner_state.get("dataset_sequences", 0) >= min_sequences
+    )
     chat_ready = (
         readiness.get("can_load", False)
         and learner_state.get("steps", 0) >= min_steps
@@ -790,6 +796,7 @@ async def self_learner_status():
     return {
         "ready": readiness.get("can_load", False),
         "chat_ready": chat_ready,
+        "training_recommended": training_recommended,
         "summary": readiness.get("summary"),
         "training_state": learner_state,
         "captured_pairs": learner_state.get("dataset_sequences", 0),

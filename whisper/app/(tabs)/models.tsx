@@ -134,7 +134,14 @@ export default function ModelsScreen() {
         try {
             const serverModels = await whisperAPI.getLLMModels();
             const approvedLocalModels = serverModels
-                .filter((model) => model.provider === 'downloadable' && model.supports_local !== false && !!model.download_url)
+                .filter((model) => {
+                    const provider = (model.provider || '').toLowerCase();
+                    return (
+                        !!model.download_url &&
+                        model.supports_local !== false &&
+                        (provider === 'downloadable' || provider === 'hybrid' || model.kind === 'text')
+                    );
+                })
                 .map(mapServerModelToLocalModel);
             setModels(approvedLocalModels);
             await checkDownloadedModels(approvedLocalModels);
@@ -375,8 +382,8 @@ export default function ModelsScreen() {
         );
     };
 
-    return (
-        <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    const renderListHeader = () => (
+        <>
             <View style={styles.header}>
                 <Text style={[styles.title, { color: theme.colors.text }]}>Local Models</Text>
                 <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>Download models to use offline without cloud tokens.</Text>
@@ -391,7 +398,19 @@ export default function ModelsScreen() {
                     </View>
                 </View>
             )}
-            {deviceResources && <View style={styles.section}><View style={[styles.deviceCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}><Text style={[styles.deviceTitle, { color: theme.colors.text }]}>Device Fit</Text><Text style={[styles.deviceSummary, { color: theme.colors.textSecondary }]}>{`${deviceResources.deviceType} profile | ${deviceResources.totalRam.toFixed(1)} GB RAM | target max ${deviceResources.maxModelSize.toFixed(1)} GB`}</Text><Text style={[styles.deviceMeta, { color: theme.colors.textMuted }]}>{`Available RAM ${deviceResources.availableRam.toFixed(1)} GB | thermal ${deviceResources.thermalState}`}</Text></View></View>}
+            {deviceResources && (
+                <View style={styles.section}>
+                    <View style={[styles.deviceCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
+                        <Text style={[styles.deviceTitle, { color: theme.colors.text }]}>Device Fit</Text>
+                        <Text style={[styles.deviceSummary, { color: theme.colors.textSecondary }]}>
+                            {`${deviceResources.deviceType} profile | ${deviceResources.totalRam.toFixed(1)} GB RAM | target max ${deviceResources.maxModelSize.toFixed(1)} GB`}
+                        </Text>
+                        <Text style={[styles.deviceMeta, { color: theme.colors.textMuted }]}>
+                            {`Available RAM ${deviceResources.availableRam.toFixed(1)} GB | thermal ${deviceResources.thermalState}`}
+                        </Text>
+                    </View>
+                </View>
+            )}
             <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>AI Modes</Text>
                 <Text style={[styles.sectionSubtitle, { color: theme.colors.textSecondary }]}>Switch between hosted Gemini, your Whisper server, the self-learner transformer, and on-device GGUF inference.</Text>
@@ -409,35 +428,41 @@ export default function ModelsScreen() {
                 </View>
             </View>
             <TouchableOpacity style={[styles.importButton, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }, !isModelStorageReady && styles.importButtonDisabled]} onPress={() => { void importModel(); }} disabled={!isModelStorageReady}><Ionicons name="cloud-upload-outline" size={20} color={theme.colors.primary} /><Text style={[styles.importText, { color: theme.colors.text }]}>Import Model from Storage</Text></TouchableOpacity>
-            {modelsLoading ? (
+            {modelsLoading && (
                 <View style={[styles.section, { alignItems: 'center' }]}>
                     <ActivityIndicator color={theme.colors.primary} />
                     <Text style={[styles.sectionSubtitle, { color: theme.colors.textSecondary }]}>
                         Loading approved model catalog...
                     </Text>
                 </View>
-            ) : (
-                <FlatList
-                    data={rankedModels}
-                    renderItem={renderModelCard}
-                    keyExtractor={(item) => item.id}
-                    style={styles.listView}
-                    contentContainerStyle={[
-                        styles.list,
-                        rankedModels.length === 0 && styles.listEmpty,
-                    ]}
-                    showsVerticalScrollIndicator={true}
-                    ListEmptyComponent={(
-                        <View style={[styles.emptyState, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
-                            <Ionicons name="cube-outline" size={32} color={theme.colors.textMuted} />
-                            <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>No downloadable models loaded</Text>
-                            <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
-                                The server catalog did not return any downloadable local chat models. Check your server connection or approved model API.
-                            </Text>
-                        </View>
-                    )}
-                />
             )}
+        </>
+    );
+
+    return (
+        <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+            <FlatList
+                data={modelsLoading ? [] : rankedModels}
+                renderItem={renderModelCard}
+                keyExtractor={(item) => item.id}
+                style={styles.listView}
+                contentContainerStyle={[
+                    styles.list,
+                    !modelsLoading && rankedModels.length === 0 && styles.listEmpty,
+                ]}
+                showsVerticalScrollIndicator={true}
+                ListHeaderComponent={renderListHeader}
+                ListFooterComponent={<View style={styles.listFooter} />}
+                ListEmptyComponent={modelsLoading ? null : (
+                    <View style={[styles.emptyState, { backgroundColor: theme.colors.surface, borderColor: theme.colors.surfaceBorder }]}>
+                        <Ionicons name="cube-outline" size={32} color={theme.colors.textMuted} />
+                        <Text style={[styles.emptyTitle, { color: theme.colors.text }]}>No downloadable models loaded</Text>
+                        <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
+                            The server catalog did not return any downloadable local chat models. Check your server connection or approved model API.
+                        </Text>
+                    </View>
+                )}
+            />
         </SafeAreaView>
     );
 }
@@ -466,6 +491,7 @@ const styles = StyleSheet.create({
     listView: { flex: 1 },
     list: { padding: spacing.lg, gap: spacing.md },
     listEmpty: { flexGrow: 1 },
+    listFooter: { height: spacing.xl },
     card: { padding: spacing.md, borderRadius: borderRadius.lg, borderWidth: 1 },
     cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: spacing.sm },
     modelInfo: { flex: 1 },

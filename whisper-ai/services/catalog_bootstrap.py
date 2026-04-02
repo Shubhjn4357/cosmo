@@ -18,6 +18,7 @@ from typing import Any
 from huggingface_hub import hf_hub_download
 from loguru import logger
 
+from services import hf_dataset_sync
 from services.approved_model_catalog import (
     ImageModelSpec,
     TextModelSpec,
@@ -59,7 +60,7 @@ def _bootstrap_enabled() -> bool:
 
 
 def _hf_token() -> str | None:
-    return os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
+    return hf_dataset_sync.get_hf_token()
 
 
 def _target_path(kind: str, model_id: str, filename: str) -> Path:
@@ -75,6 +76,15 @@ def _update_item(model_id: str, **updates):
     _STATE["items"].setdefault(model_id, {})
     _STATE["items"][model_id].update(updates)
     _STATE["updated_at"] = time.time()
+
+
+def _sync_artifact_to_dataset(path: Path):
+    if not path.exists():
+        return
+    try:
+        hf_dataset_sync.sync_path(path)
+    except Exception as exc:
+        logger.debug(f"Model artifact sync skipped for {path}: {exc}")
 
 
 def _serializable_items() -> list[dict[str, Any]]:
@@ -136,6 +146,7 @@ def _download(kind: str, spec: TextModelSpec | ImageModelSpec):
         temp_target.unlink()
     shutil.copy2(cached_path, temp_target)
     temp_target.replace(target)
+    _sync_artifact_to_dataset(target)
 
     _update_item(
         spec.id,

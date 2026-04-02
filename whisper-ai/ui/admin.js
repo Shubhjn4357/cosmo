@@ -464,7 +464,7 @@ function renderControlCenter(controlCenter) {
     ["Selected Profile", controlCenter?.runtime?.selected_profile || "custom"],
     ["Knowledge", String(controlCenter?.knowledge?.total_vectors || 0)],
     ["Uptime", formatDuration(controlCenter?.uptime_seconds)],
-    ["Self-Learner", selfLearner.chat_ready ? "chat-ready" : (selfLearner.ready ? "warming up" : "offline")],
+    ["Self-Learner", selfLearner.ready ? (selfLearner.training_recommended ? "early-stage" : "chat-ready") : "offline"],
   ];
 
   controlCenterBanner.innerHTML = "";

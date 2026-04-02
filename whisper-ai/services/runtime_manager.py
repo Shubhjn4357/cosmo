@@ -33,6 +33,20 @@ SELF_LEARNER_CHECKPOINT = SELF_LEARNER_DIR / "latest.pt"
 SELF_LEARNER_INT8_CHECKPOINT = SELF_LEARNER_DIR / "latest-int8.pt"
 SELF_LEARNER_TOKENIZER = SELF_LEARNER_DIR / "tokenizer.json"
 SELF_LEARNER_STATE = SELF_LEARNER_DIR / "state.json"
+DEFAULT_FAST_MODEL_ID = "Qwen/Qwen3-1.7B"
+DEFAULT_BALANCED_MODEL_ID = "Qwen/Qwen3-4B"
+DEFAULT_GGUF_MODEL_ID = "unsloth/Qwen3-1.7B-GGUF"
+DEFAULT_GGUF_FILENAME = "Qwen3-1.7B-Q4_K_M.gguf"
+DEFAULT_GGUF_MODEL_PATH = MODELS_DIR / "llm" / "gguf-coder" / DEFAULT_GGUF_FILENAME
+DEFAULT_AIRLLM_MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+DEFAULT_AIRLLM_MODEL_PATH = MODELS_DIR / "llm" / "heavy-airllm"
+LEGACY_MODEL_ID_MAP = {
+    "Qwen/Qwen2.5-Coder-0.5B-Instruct": DEFAULT_FAST_MODEL_ID,
+    "Qwen/Qwen2.5-1.5B-Instruct-GGUF": DEFAULT_GGUF_MODEL_ID,
+}
+LEGACY_GGUF_FILENAMES = {
+    "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+}
 
 
 def get_self_learner_chat_thresholds() -> dict[str, int]:
@@ -126,10 +140,22 @@ def airllm_import_diagnostics(reset_cache: bool = False) -> dict[str, Any]:
     return dict(diagnostics)
 
 
+def _normalize_model_id(model_id: str | None, *, fallback: str) -> str:
+    candidate = (model_id or "").strip()
+    if not candidate:
+        return fallback
+    return LEGACY_MODEL_ID_MAP.get(candidate, candidate)
+
+
+def _default_model_id_from_env() -> str:
+    configured = os.getenv("LOCAL_MODEL_ID", DEFAULT_FAST_MODEL_ID)
+    return _normalize_model_id(configured, fallback=DEFAULT_FAST_MODEL_ID)
+
+
 @dataclass
 class RuntimeConfig:
     backend: str = field(default_factory=lambda: os.getenv("LOCAL_CHAT_BACKEND", "auto").lower())
-    model_id: str = field(default_factory=lambda: os.getenv("LOCAL_MODEL_ID", "Qwen/Qwen2.5-Coder-0.5B-Instruct"))
+    model_id: str = field(default_factory=_default_model_id_from_env)
     gguf_model_path: str = field(default_factory=lambda: os.getenv("LOCAL_GGUF_MODEL_PATH", ""))
     airllm_model_id: str = field(default_factory=lambda: os.getenv("AIRLLM_MODEL_ID", ""))
     airllm_model_path: str = field(default_factory=lambda: os.getenv("LOCAL_AIRLLM_MODEL_PATH", ""))
@@ -187,12 +213,90 @@ def _default_self_learner_config() -> RuntimeConfig:
     )
 
 
+def _default_profile_config(profile_id: str) -> RuntimeConfig | None:
+    if profile_id == "fast-coder":
+        return RuntimeConfig(
+            backend="transformers",
+            model_id=DEFAULT_FAST_MODEL_ID,
+            max_context_tokens=4096,
+            max_new_tokens=384,
+        )
+    if profile_id == "balanced-coder":
+        return RuntimeConfig(
+            backend="transformers",
+            model_id=DEFAULT_BALANCED_MODEL_ID,
+            max_context_tokens=4096,
+            max_new_tokens=512,
+        )
+    if profile_id == "gguf-coder":
+        return RuntimeConfig(
+            backend="llama_cpp",
+            model_id=DEFAULT_GGUF_MODEL_ID,
+            gguf_model_path=str(DEFAULT_GGUF_MODEL_PATH),
+            max_context_tokens=8192,
+            max_new_tokens=512,
+        )
+    if profile_id == "heavy-airllm":
+        return RuntimeConfig(
+            backend="airllm",
+            model_id=DEFAULT_AIRLLM_MODEL_ID,
+            airllm_model_id=DEFAULT_AIRLLM_MODEL_ID,
+            airllm_model_path=str(DEFAULT_AIRLLM_MODEL_PATH),
+            max_context_tokens=8192,
+            max_new_tokens=768,
+        )
+    if profile_id == "self-learner-turbo":
+        return _default_self_learner_config()
+    return None
+
+
+def _looks_legacy_gguf_path(path_value: str | None) -> bool:
+    if not path_value:
+        return False
+    return Path(path_value).name.lower() in LEGACY_GGUF_FILENAMES
+
+
+def _migrate_runtime_state(config: RuntimeConfig, selected_profile: Optional[str]) -> tuple[RuntimeConfig, Optional[str], bool]:
+    original = asdict(config)
+    migrated = _clone_runtime_config(config)
+
+    profile_config = _default_profile_config(selected_profile or "")
+    if profile_config is not None:
+        profile_config.n_threads = migrated.n_threads
+        if selected_profile in {"fast-coder", "balanced-coder"}:
+            profile_config.device = migrated.device or profile_config.device
+            profile_config.allow_remote_code = migrated.allow_remote_code
+        migrated = profile_config
+    else:
+        migrated.model_id = _normalize_model_id(migrated.model_id, fallback=DEFAULT_FAST_MODEL_ID)
+        if _looks_legacy_gguf_path(migrated.gguf_model_path):
+            migrated.gguf_model_path = str(DEFAULT_GGUF_MODEL_PATH)
+            if migrated.backend == "llama_cpp":
+                migrated.model_id = DEFAULT_GGUF_MODEL_ID
+        if migrated.backend == "airllm":
+            migrated.model_id = _normalize_model_id(migrated.model_id, fallback=DEFAULT_AIRLLM_MODEL_ID)
+            migrated.airllm_model_id = _normalize_model_id(
+                migrated.airllm_model_id or migrated.model_id,
+                fallback=DEFAULT_AIRLLM_MODEL_ID,
+            )
+            if not (migrated.airllm_model_path or "").strip():
+                migrated.airllm_model_path = str(DEFAULT_AIRLLM_MODEL_PATH)
+        elif migrated.backend in {"auto", "transformers"}:
+            migrated.model_id = _normalize_model_id(migrated.model_id, fallback=DEFAULT_FAST_MODEL_ID)
+
+    changed = asdict(migrated) != original
+    return migrated, selected_profile, changed
+
+
 def _resolve_gguf_model_path(config: RuntimeConfig) -> Optional[Path]:
     configured = (config.gguf_model_path or "").strip()
     if configured:
         candidate = Path(configured)
         if candidate.exists():
             return candidate.resolve()
+
+    if DEFAULT_GGUF_MODEL_PATH.exists():
+        return DEFAULT_GGUF_MODEL_PATH.resolve()
 
     search_roots = []
     llm_root = MODELS_DIR / "llm"
@@ -304,7 +408,11 @@ def load_runtime_state() -> tuple[Optional[RuntimeConfig], Optional[str]]:
         raw = json.loads(RUNTIME_CONFIG_PATH.read_text(encoding="utf-8"))
         config_data = raw.get("config") or {}
         selected_profile = raw.get("selected_profile")
-        return RuntimeConfig(**config_data), selected_profile
+        config = RuntimeConfig(**config_data)
+        migrated_config, migrated_profile, changed = _migrate_runtime_state(config, selected_profile)
+        if changed:
+            save_runtime_state(migrated_config, migrated_profile)
+        return migrated_config, migrated_profile
     except Exception as exc:
         logger.warning(f"Failed to load runtime config: {exc}")
         return None, None
@@ -328,10 +436,22 @@ def save_runtime_state(config: RuntimeConfig, selected_profile: Optional[str] = 
 def resolve_runtime_choice(config: RuntimeConfig) -> Optional[ResolvedRuntimeChoice]:
     configured_backend = (config.backend or "").lower()
     if configured_backend != "auto":
+        resolved = _clone_runtime_config(config)
+        if configured_backend == "transformers":
+            resolved.model_id = _normalize_model_id(resolved.model_id, fallback=DEFAULT_FAST_MODEL_ID)
+        elif configured_backend == "airllm":
+            resolved.model_id = _normalize_model_id(resolved.model_id, fallback=DEFAULT_AIRLLM_MODEL_ID)
+            resolved.airllm_model_id = _normalize_model_id(
+                resolved.airllm_model_id or resolved.model_id,
+                fallback=DEFAULT_AIRLLM_MODEL_ID,
+            )
+            resolved.airllm_model_path = resolved.airllm_model_path or str(DEFAULT_AIRLLM_MODEL_PATH)
+        elif configured_backend == "llama_cpp" and not (resolved.gguf_model_path or "").strip():
+            resolved.gguf_model_path = str(DEFAULT_GGUF_MODEL_PATH)
         return ResolvedRuntimeChoice(
-            config=_clone_runtime_config(config),
+            config=resolved,
             backend=configured_backend,
-            model_id=config.airllm_model_path or config.airllm_model_id or config.model_id,
+            model_id=resolved.airllm_model_path or resolved.airllm_model_id or resolved.model_id,
             selected_profile="custom",
             reason=f"Configured backend: {configured_backend}",
         )
@@ -354,8 +474,9 @@ def resolve_runtime_choice(config: RuntimeConfig) -> Optional[ResolvedRuntimeCho
         resolved = _clone_runtime_config(config)
         resolved.backend = "transformers"
         if not resolved.model_id:
-            resolved.model_id = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
-        selected_profile = "fast-coder" if resolved.model_id == "Qwen/Qwen2.5-Coder-0.5B-Instruct" else "custom"
+            resolved.model_id = DEFAULT_FAST_MODEL_ID
+        resolved.model_id = _normalize_model_id(resolved.model_id, fallback=DEFAULT_FAST_MODEL_ID)
+        selected_profile = "fast-coder" if resolved.model_id == DEFAULT_FAST_MODEL_ID else "custom"
         return ResolvedRuntimeChoice(
             config=resolved,
             backend="transformers",
@@ -367,7 +488,11 @@ def resolve_runtime_choice(config: RuntimeConfig) -> Optional[ResolvedRuntimeCho
     if _package_available("airllm") and (config.airllm_model_id or config.model_id):
         resolved = _clone_runtime_config(config)
         resolved.backend = "airllm"
-        resolved.airllm_model_id = resolved.airllm_model_id or resolved.model_id
+        resolved.airllm_model_id = _normalize_model_id(
+            resolved.airllm_model_id or DEFAULT_AIRLLM_MODEL_ID,
+            fallback=DEFAULT_AIRLLM_MODEL_ID,
+        )
+        resolved.model_id = _normalize_model_id(resolved.model_id, fallback=DEFAULT_AIRLLM_MODEL_ID)
         resolved.airllm_model_path = resolved.airllm_model_path or str(_resolve_airllm_model_path(resolved) or "")
         return ResolvedRuntimeChoice(
             config=resolved,
