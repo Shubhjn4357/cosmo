@@ -19,6 +19,7 @@ FastAPI backend with:
 - Drizzle schema + migration tooling
 - Cloudflare Browser Rendering crawl integration
 - optional GGUF and AirLLM runtime paths
+- local-only MiMo, GLM-OCR, PersonaPlex, and BitNet endpoint/runtime adapters
 
 ## Hugging Face Space
 
@@ -72,24 +73,79 @@ Relevant env vars:
 
 - `WHISPER_POWER_PROFILE=low-power|balanced|performance`
 - `LOCAL_MODEL_THREADS=<int>`
+- `WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED=true|false`
+- `WHISPER_WARM_CHAT_RUNTIME_ENABLED=true|false`
 - `WHISPER_HF_KEEPALIVE_ENABLED=true|false`
 - `WHISPER_AUTO_COLLECTION_ENABLED=true|false`
 - `WHISPER_AUTO_RESEARCH_ENABLED=true|false`
 - `WHISPER_AUTO_TRAINING_ENABLED=true|false`
+- `WHISPER_BOOTSTRAP_APPROVED_MODELS=true|false`
 - `WHISPER_BOOTSTRAP_GGUF_RUNTIME=true|false`
 - `WHISPER_BOOTSTRAP_GGUF_DOWNLOAD=true|false`
 - `WHISPER_BOOTSTRAP_GGUF_INSTALL=true|false`
 
+### Local-Only Multimodal Runtimes
+
+The newer OCR, talking, and alternate-text backends are wired as local-only
+adapters. They do not use hosted Hugging Face inference.
+
+Supported local adapter env vars.
+These are optional overrides, not required defaults:
+
+- `LOCAL_MIMO_BASE_URL=http://127.0.0.1:8001`
+- `LOCAL_MIMO_MODEL_ID=XiaomiMiMo/MiMo-V2-Flash`
+- `LOCAL_MIMO_API_KEY=` if your local OpenAI-compatible server expects auth
+- `LOCAL_MIMO_COMMAND_TEMPLATE=` for a direct local command fallback
+- `LOCAL_GLM_OCR_BASE_URL=http://127.0.0.1:8002`
+- `LOCAL_GLM_OCR_MODEL_ID=zai-org/GLM-OCR`
+- `LOCAL_GLM_OCR_API_KEY=`
+- `LOCAL_GLM_OCR_COMMAND_TEMPLATE=`
+- `PERSONAPLEX_ENDPOINT_URL=http://127.0.0.1:8003`
+- `PERSONAPLEX_MODEL_ID=nvidia/personaplex-7b-v1`
+- `PERSONAPLEX_AUTH_TOKEN=`
+- `LOCAL_BITNET_MODEL_PATH=/data/whisper/models/llm/bitnet-cpu/ggml-model-i2_s.gguf`
+- `LOCAL_BITNET_REPO_PATH=/data/whisper/models/llm/bitnet.cpp`
+- `LOCAL_BITNET_ENTRYPOINT=` if `run_inference.py` lives elsewhere
+- `LOCAL_BITNET_COMMAND_TEMPLATE=` for a custom BitNet runner wrapper
+
+Auto-discovery behavior:
+
+- MiMo: if `LOCAL_MIMO_BASE_URL` is unset, the server probes `http://127.0.0.1:8001` and `http://localhost:8001`
+- GLM-OCR: if `LOCAL_GLM_OCR_BASE_URL` is unset, the server probes `http://127.0.0.1:8002` and `http://localhost:8002`
+- PersonaPlex: if `PERSONAPLEX_ENDPOINT_URL` is unset, the server probes `http://127.0.0.1:8003` and `http://localhost:8003`
+- BitNet: the runtime auto-discovers the model under the managed models directory and the repo under `data/models/llm/bitnet.cpp` or `.tools/bitnet.cpp`
+
+What each adapter expects:
+
+- MiMo: a local OpenAI-compatible `/v1/chat/completions` server or a local command template
+- GLM-OCR: a local OpenAI-compatible vision endpoint or a local OCR command template
+- PersonaPlex: a local audio endpoint reachable by `POST` multipart upload
+- BitNet: the Microsoft `bitnet.cpp` repo with `run_inference.py`, plus a local GGUF model file
+
+Useful routes:
+
+- `GET /api/models/ocr`
+- `GET /api/models/speech`
+- `GET /api/models/stack/status`
+- `POST /api/files/read` with form field `ocr_model_id=glm-ocr`
+- `POST /api/voice/chat`
+- `POST /api/voice/talk`
+
 `low-power` caps thread counts more aggressively and disables background
-collection, research, and auto-training unless you explicitly re-enable them.
+collection, research, auto-training, runtime warm-up, and model bootstraps
+unless you explicitly re-enable them.
 
 The Docker image sets:
 
+- `WHISPER_POWER_PROFILE=low-power`
 - `WHISPER_DATA_ROOT=/data/whisper`
 - `WHISPER_DB_PATH=/data/whisper/db/whisper.db`
 - `WHISPER_MODELS_DIR=/data/whisper/models`
 - `WHISPER_UPLOADS_DIR=/data/whisper/uploads`
 - `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`
+- `WHISPER_WARM_CHAT_RUNTIME_ENABLED=false`
+- `WHISPER_BOOTSTRAP_GGUF_RUNTIME=false`
+- `WHISPER_BOOTSTRAP_APPROVED_MODELS=false`
 
 If persistent storage is attached, local downloads and generated files can live there.
 If `/data` is not writable in the runtime, Whisper now falls back automatically
@@ -392,6 +448,7 @@ Configured in the admin API:
 - `balanced-coder`: larger transformers profile
 - `gguf-coder`: llama.cpp profile for downloaded GGUF weights
 - `heavy-airllm`: experimental larger local profile
+- `bitnet-cpu`: Microsoft BitNet via local `bitnet.cpp`
 
 The `heavy-airllm` profile now prefers a downloaded local snapshot directory
 when one exists under the managed model store. You can also point it explicitly
@@ -445,7 +502,8 @@ validation outcome instead of key presence alone.
 
 - On free HF CPU, `auto` is the practical default. It will use GGUF when a local artifact is ready and otherwise fall back to the fast transformers coder profile.
 - The Docker Space build now defaults `INSTALL_GGUF_RUNTIME=false` so the optional `llama-cpp-python` backend is not compiled on every deploy.
-- The Docker runtime sets `WHISPER_BOOTSTRAP_GGUF_RUNTIME=true`, so once the API is up it can download the GGUF asset and build `llama-cpp-python` in the background instead of blocking the image build.
+- The Docker runtime now starts in a low-power profile, exposes health first, and defers heavy runtime work until after the server is already serving requests.
+- If you want the Space to pre-warm the chat runtime or background-bootstrap models after startup, re-enable `WHISPER_WARM_CHAT_RUNTIME_ENABLED`, `WHISPER_BOOTSTRAP_GGUF_RUNTIME`, or `WHISPER_BOOTSTRAP_APPROVED_MODELS` in Space settings.
 - Background GGUF installs use `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`, so attached persistent storage can keep the compiled runtime between restarts.
 - Large fully local multimodal operation still needs stronger hardware.
 - If you still want GGUF compiled during the Docker build itself, set `INSTALL_GGUF_RUNTIME=true` and expect a much slower image build.

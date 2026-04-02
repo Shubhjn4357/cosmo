@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "798962557326",
+    "project_id": "whisper-ai-3ea0d",
+    "storage_bucket": "whisper-ai-3ea0d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:798962557326:android:63e41f5e41c19f82cd84df",
+        "android_client_info": {
+          "package_name": "com.whisper.ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBONvSqZJn60hwKT5xKq5EPB2-prsRGQAM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

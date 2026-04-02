@@ -31,9 +31,13 @@ AUTO_ID_TABLES = {
     "generated_images",
     "chats",
     "password_reset_tokens",
+    "autoresearch_projects",
+    "autoresearch_runs",
 }
 JSON_COLUMNS = {
     "chat_history": {"messages"},
+    "autoresearch_projects": {"editable_paths"},
+    "autoresearch_runs": {"changed_paths"},
 }
 BOOL_COLUMNS = {
     "profiles": {
@@ -46,6 +50,7 @@ BOOL_COLUMNS = {
     },
     "generated_images": {"is_local"},
     "token_usage": {"is_local"},
+    "autoresearch_runs": {"accepted"},
 }
 
 

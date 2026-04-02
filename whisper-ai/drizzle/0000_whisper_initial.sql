@@ -100,6 +100,50 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS autoresearch_projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    workspace_path TEXT NOT NULL,
+    editable_paths TEXT NOT NULL,
+    setup_command TEXT,
+    setup_completed_at TEXT,
+    experiment_command TEXT NOT NULL,
+    metric_pattern TEXT NOT NULL,
+    metric_goal TEXT DEFAULT 'min',
+    backend TEXT DEFAULT 'server',
+    agent_profile_id TEXT DEFAULT 'autonomous-researcher',
+    max_steps INTEGER DEFAULT 6,
+    max_tokens INTEGER DEFAULT 384,
+    baseline_metric REAL,
+    best_metric REAL,
+    best_run_id TEXT,
+    last_run_id TEXT,
+    status TEXT DEFAULT 'idle',
+    notes TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS autoresearch_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    session_id TEXT,
+    iteration INTEGER DEFAULT 1,
+    status TEXT DEFAULT 'queued',
+    hypothesis TEXT,
+    metric_value REAL,
+    accepted INTEGER DEFAULT 0,
+    summary TEXT,
+    stdout_tail TEXT,
+    stderr_tail TEXT,
+    changed_paths TEXT,
+    command_ran TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES autoresearch_projects(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
 CREATE INDEX IF NOT EXISTS idx_profiles_subscription_tier ON profiles(subscription_tier);
 CREATE INDEX IF NOT EXISTS idx_profiles_last_active ON profiles(last_active);
@@ -109,3 +153,6 @@ CREATE INDEX IF NOT EXISTS idx_token_purchases_user_id ON token_purchases(user_i
 CREATE INDEX IF NOT EXISTS idx_token_usage_user_id ON token_usage(user_id);
 CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id);
 CREATE INDEX IF NOT EXISTS idx_generated_images_user_id ON generated_images(user_id);
+CREATE INDEX IF NOT EXISTS idx_autoresearch_projects_status ON autoresearch_projects(status);
+CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_project_id ON autoresearch_runs(project_id);
+CREATE INDEX IF NOT EXISTS idx_autoresearch_runs_status ON autoresearch_runs(status);

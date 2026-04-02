@@ -22,10 +22,15 @@ from services import hf_dataset_sync
 from services.approved_model_catalog import DEFAULT_TEXT_MODEL_ID, get_text_model
 from services.admin_state import get_model_enabled
 from services.runtime_manager import (
+    DEFAULT_BITNET_FILENAME,
+    DEFAULT_BITNET_MODEL_ID,
+    DEFAULT_BITNET_MODEL_PATH,
+    DEFAULT_BITNET_REPO_PATH,
     RuntimeConfig,
     SELF_LEARNER_CHECKPOINT,
     SELF_LEARNER_INT8_CHECKPOINT,
     SELF_LEARNER_TOKENIZER,
+    _resolve_bitnet_runner,
     _resolve_llama_cli_path,
     airllm_import_diagnostics,
     validate_runtime_config,
@@ -51,6 +56,9 @@ class RuntimeProfile:
     gguf_model_path: str = ""
     airllm_model_id: str = ""
     airllm_model_path: str = ""
+    bitnet_model_path: str = ""
+    bitnet_repo_path: str = ""
+    bitnet_command_template: str = ""
     micro_checkpoint_path: str = ""
     micro_quantized_checkpoint_path: str = ""
     micro_tokenizer_path: str = ""
@@ -66,6 +74,9 @@ class RuntimeProfile:
             gguf_model_path=self.gguf_model_path,
             airllm_model_id=self.airllm_model_id,
             airllm_model_path=self.airllm_model_path,
+            bitnet_model_path=self.bitnet_model_path,
+            bitnet_repo_path=self.bitnet_repo_path,
+            bitnet_command_template=self.bitnet_command_template,
             micro_checkpoint_path=self.micro_checkpoint_path,
             micro_quantized_checkpoint_path=self.micro_quantized_checkpoint_path,
             micro_tokenizer_path=self.micro_tokenizer_path,
@@ -162,6 +173,21 @@ RUNTIME_PROFILES: Dict[str, RuntimeProfile] = {
         max_context_tokens=1024,
         max_new_tokens=384,
     ),
+    "bitnet-cpu": RuntimeProfile(
+        id="bitnet-cpu",
+        name="BitNet CPU",
+        description="Microsoft BitNet profile routed through a local bitnet.cpp runner.",
+        backend="bitnet_cpp",
+        model_id=DEFAULT_BITNET_MODEL_ID,
+        recommended_for="Ultra-efficient CPU chat when bitnet.cpp is installed locally",
+        repo_id=DEFAULT_BITNET_MODEL_ID,
+        filename=DEFAULT_BITNET_FILENAME,
+        bitnet_model_path=str(DEFAULT_BITNET_MODEL_PATH),
+        bitnet_repo_path=str(DEFAULT_BITNET_REPO_PATH),
+        bitnet_command_template=os.getenv("LOCAL_BITNET_COMMAND_TEMPLATE", ""),
+        max_context_tokens=4096,
+        max_new_tokens=384,
+    ),
 }
 
 DOWNLOAD_JOBS: Dict[str, Dict[str, Any]] = {}
@@ -179,6 +205,7 @@ def get_backend_availability() -> Dict[str, bool]:
         "transformers": _package_available("transformers"),
         "llama_cpp": _package_available("llama_cpp") or _resolve_llama_cli_path() is not None,
         "airllm": airllm_import_diagnostics().get("available", False),
+        "bitnet_cpp": _resolve_bitnet_runner(RuntimeConfig(backend="bitnet_cpp")) is not None,
         "micro_transformer": _package_available("torch"),
     }
 
@@ -251,6 +278,8 @@ def _get_repo_file_metadata(repo_id: str, filename: str) -> dict:
 def _profile_artifact_path(profile: RuntimeProfile) -> Path:
     if profile.backend == "llama_cpp" and profile.gguf_model_path:
         return Path(profile.gguf_model_path)
+    if profile.backend == "bitnet_cpp" and profile.bitnet_model_path:
+        return Path(profile.bitnet_model_path)
     if profile.backend == "airllm" and profile.airllm_model_path:
         return Path(profile.airllm_model_path)
     if profile.backend == "micro_transformer":
@@ -267,7 +296,7 @@ def _profile_artifact_path(profile: RuntimeProfile) -> Path:
 def _profile_status(profile: RuntimeProfile) -> dict:
     backends = get_backend_availability()
     backend_available = backends.get(profile.backend, False)
-    artifact_required = profile.backend in {"llama_cpp", "micro_transformer"}
+    artifact_required = profile.backend in {"llama_cpp", "bitnet_cpp", "micro_transformer"}
     artifact_optional = profile.backend == "airllm"
     artifact_path = _profile_artifact_path(profile)
     artifact_exists = artifact_path.exists()
@@ -277,7 +306,7 @@ def _profile_status(profile: RuntimeProfile) -> dict:
     tokenizer_path = Path(profile.micro_tokenizer_path) if profile.micro_tokenizer_path else None
     tokenizer_exists = bool(tokenizer_path and tokenizer_path.exists())
 
-    if profile.backend == "llama_cpp" and profile.repo_id and profile.filename:
+    if profile.backend in {"llama_cpp", "bitnet_cpp"} and profile.repo_id and profile.filename:
         metadata = _get_repo_file_metadata(profile.repo_id, profile.filename)
         expected_size_bytes = metadata.get("size_bytes")
 
@@ -285,11 +314,14 @@ def _profile_status(profile: RuntimeProfile) -> dict:
         package_name = {
             "llama_cpp": "llama-cpp-python or llama.cpp completion binary",
             "airllm": airllm_import_diagnostics().get("error") or "airllm",
+            "bitnet_cpp": "bitnet.cpp runner",
             "micro_transformer": "torch",
         }.get(profile.backend, profile.backend)
         status_reasons.append(f"Missing backend package: {package_name}")
     elif profile.backend == "llama_cpp" and _package_available("llama_cpp") is False and _resolve_llama_cli_path() is not None:
         status_reasons.append(f"Using llama.cpp binary fallback: {_resolve_llama_cli_path()}")
+    elif profile.backend == "bitnet_cpp" and backend_available:
+        status_reasons.append("bitnet.cpp runner is available")
     elif profile.backend == "airllm" and airllm_import_diagnostics().get("shimmed"):
         status_reasons.append("AirLLM BetterTransformer compatibility shim is active")
     elif profile.backend == "micro_transformer" and artifact_exists and tokenizer_exists:
@@ -301,6 +333,11 @@ def _profile_status(profile: RuntimeProfile) -> dict:
                 status_reasons.append("GGUF model path is not configured")
             elif not artifact_exists:
                 status_reasons.append("GGUF artifact has not been downloaded yet")
+        if profile.backend == "bitnet_cpp":
+            if not profile.bitnet_model_path:
+                status_reasons.append("BitNet model path is not configured")
+            elif not artifact_exists:
+                status_reasons.append("BitNet artifact has not been downloaded yet")
         if profile.backend == "micro_transformer":
             if not (profile.micro_quantized_checkpoint_path or profile.micro_checkpoint_path):
                 status_reasons.append("Self-learner checkpoint path is not configured")
@@ -421,8 +458,9 @@ def _download_profile_assets(job_id: str, profile: RuntimeProfile):
 
     _mark_job(job_id, status="running", stage="preparing")
     try:
-        if profile.backend == "llama_cpp" and profile.repo_id and profile.filename:
-            target = Path(profile.gguf_model_path)
+        if profile.backend in {"llama_cpp", "bitnet_cpp"} and profile.repo_id and profile.filename:
+            target_path = profile.gguf_model_path if profile.backend == "llama_cpp" else profile.bitnet_model_path
+            target = Path(target_path)
             target.parent.mkdir(parents=True, exist_ok=True)
             expected_size_bytes = _get_repo_file_metadata(profile.repo_id, profile.filename).get("size_bytes")
             if target.exists() and expected_size_bytes and target.stat().st_size == expected_size_bytes:
@@ -629,7 +667,7 @@ def queue_profile_download(profile_id: str) -> dict:
         "total_bytes": None,
         "progress": 0.0,
     }
-    if profile.backend == "llama_cpp":
+    if profile.backend in {"llama_cpp", "bitnet_cpp"}:
         thread = threading.Thread(target=_download_profile_assets, args=(job_id, profile), daemon=True)
         thread.start()
     else:

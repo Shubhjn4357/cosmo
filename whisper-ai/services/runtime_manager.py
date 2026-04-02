@@ -40,6 +40,10 @@ DEFAULT_GGUF_FILENAME = "Qwen3-1.7B-Q4_K_M.gguf"
 DEFAULT_GGUF_MODEL_PATH = MODELS_DIR / "llm" / "gguf-coder" / DEFAULT_GGUF_FILENAME
 DEFAULT_AIRLLM_MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 DEFAULT_AIRLLM_MODEL_PATH = MODELS_DIR / "llm" / "heavy-airllm"
+DEFAULT_BITNET_MODEL_ID = "microsoft/BitNet-b1.58-2B-4T-gguf"
+DEFAULT_BITNET_FILENAME = "ggml-model-i2_s.gguf"
+DEFAULT_BITNET_MODEL_PATH = MODELS_DIR / "llm" / "bitnet-cpu" / DEFAULT_BITNET_FILENAME
+DEFAULT_BITNET_REPO_PATH = MODELS_DIR / "llm" / "bitnet.cpp"
 LEGACY_MODEL_ID_MAP = {
     "Qwen/Qwen2.5-Coder-0.5B-Instruct": DEFAULT_FAST_MODEL_ID,
     "Qwen/Qwen2.5-1.5B-Instruct-GGUF": DEFAULT_GGUF_MODEL_ID,
@@ -159,6 +163,9 @@ class RuntimeConfig:
     gguf_model_path: str = field(default_factory=lambda: os.getenv("LOCAL_GGUF_MODEL_PATH", ""))
     airllm_model_id: str = field(default_factory=lambda: os.getenv("AIRLLM_MODEL_ID", ""))
     airllm_model_path: str = field(default_factory=lambda: os.getenv("LOCAL_AIRLLM_MODEL_PATH", ""))
+    bitnet_model_path: str = field(default_factory=lambda: os.getenv("LOCAL_BITNET_MODEL_PATH", ""))
+    bitnet_repo_path: str = field(default_factory=lambda: os.getenv("LOCAL_BITNET_REPO_PATH", ""))
+    bitnet_command_template: str = field(default_factory=lambda: os.getenv("LOCAL_BITNET_COMMAND_TEMPLATE", ""))
     max_context_tokens: int = field(default_factory=lambda: int(os.getenv("LOCAL_MAX_CONTEXT_TOKENS", "4096")))
     max_new_tokens: int = field(default_factory=lambda: int(os.getenv("LOCAL_MAX_NEW_TOKENS", "512")))
     device: str = field(default_factory=lambda: os.getenv("LOCAL_MODEL_DEVICE", "cpu"))
@@ -245,6 +252,16 @@ def _default_profile_config(profile_id: str) -> RuntimeConfig | None:
             max_context_tokens=8192,
             max_new_tokens=768,
         )
+    if profile_id == "bitnet-cpu":
+        return RuntimeConfig(
+            backend="bitnet_cpp",
+            model_id=DEFAULT_BITNET_MODEL_ID,
+            bitnet_model_path=str(DEFAULT_BITNET_MODEL_PATH),
+            bitnet_repo_path=str(DEFAULT_BITNET_REPO_PATH),
+            max_context_tokens=4096,
+            max_new_tokens=384,
+            device="cpu",
+        )
     if profile_id == "self-learner-turbo":
         return _default_self_learner_config()
     return None
@@ -281,6 +298,12 @@ def _migrate_runtime_state(config: RuntimeConfig, selected_profile: Optional[str
             )
             if not (migrated.airllm_model_path or "").strip():
                 migrated.airllm_model_path = str(DEFAULT_AIRLLM_MODEL_PATH)
+        elif migrated.backend == "bitnet_cpp":
+            migrated.model_id = migrated.model_id or DEFAULT_BITNET_MODEL_ID
+            if not (migrated.bitnet_model_path or "").strip():
+                migrated.bitnet_model_path = str(DEFAULT_BITNET_MODEL_PATH)
+            if not (migrated.bitnet_repo_path or "").strip():
+                migrated.bitnet_repo_path = str(DEFAULT_BITNET_REPO_PATH)
         elif migrated.backend in {"auto", "transformers"}:
             migrated.model_id = _normalize_model_id(migrated.model_id, fallback=DEFAULT_FAST_MODEL_ID)
 
@@ -367,6 +390,95 @@ def _resolve_airllm_model_path(config: RuntimeConfig) -> Optional[Path]:
     return None
 
 
+def _resolve_bitnet_model_path(config: RuntimeConfig) -> Optional[Path]:
+    configured = (config.bitnet_model_path or "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.exists():
+            return candidate.resolve()
+        return candidate
+
+    if DEFAULT_BITNET_MODEL_PATH.exists():
+        return DEFAULT_BITNET_MODEL_PATH.resolve()
+
+    search_roots = []
+    llm_root = MODELS_DIR / "llm"
+    if llm_root.exists():
+        search_roots.append(llm_root)
+    search_roots.append(MODELS_DIR)
+
+    for root in search_roots:
+        bitnet_files = sorted(
+            (
+                path.resolve()
+                for path in root.rglob("*.gguf")
+                if "bitnet" in path.as_posix().lower() or path.name.lower().startswith("ggml-model")
+            ),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        if bitnet_files:
+            return bitnet_files[0]
+
+    return Path(configured) if configured else None
+
+
+def _resolve_bitnet_repo_path(config: RuntimeConfig) -> Optional[Path]:
+    configured = (config.bitnet_repo_path or "").strip()
+    if configured:
+        candidate = Path(configured)
+        if candidate.exists():
+            return candidate.resolve()
+        return candidate
+
+    if DEFAULT_BITNET_REPO_PATH.exists():
+        return DEFAULT_BITNET_REPO_PATH.resolve()
+
+    candidates = [
+        MODELS_DIR / "llm" / "bitnet.cpp",
+        Path(".tools/bitnet.cpp"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return None
+
+
+def _resolve_bitnet_runner(config: RuntimeConfig) -> Optional[dict[str, str]]:
+    template = (config.bitnet_command_template or "").strip()
+    if template:
+        return {
+            "kind": "template",
+            "command_template": template,
+            "cwd": os.getenv("LOCAL_BITNET_COMMAND_CWD", "").strip(),
+        }
+
+    configured_entrypoint = os.getenv("LOCAL_BITNET_ENTRYPOINT", "").strip()
+    if configured_entrypoint:
+        candidate = Path(configured_entrypoint)
+        if candidate.exists() and candidate.suffix.lower() == ".py":
+            return {
+                "kind": "python_script",
+                "path": str(candidate.resolve()),
+                "cwd": str(candidate.resolve().parent),
+            }
+
+    repo_path = _resolve_bitnet_repo_path(config)
+    if repo_path is None:
+        return None
+
+    for candidate in (repo_path / "run_inference.py", repo_path / "utils" / "run_inference.py"):
+        if candidate.exists():
+            return {
+                "kind": "python_script",
+                "path": str(candidate.resolve()),
+                "cwd": str(repo_path),
+            }
+
+    return None
+
+
 def _resolve_micro_checkpoint_path(config: RuntimeConfig) -> Optional[Path]:
     quantized = (config.micro_quantized_checkpoint_path or "").strip()
     standard = (config.micro_checkpoint_path or "").strip()
@@ -446,12 +558,16 @@ def resolve_runtime_choice(config: RuntimeConfig) -> Optional[ResolvedRuntimeCho
                 fallback=DEFAULT_AIRLLM_MODEL_ID,
             )
             resolved.airllm_model_path = resolved.airllm_model_path or str(DEFAULT_AIRLLM_MODEL_PATH)
+        elif configured_backend == "bitnet_cpp":
+            resolved.model_id = resolved.model_id or DEFAULT_BITNET_MODEL_ID
+            resolved.bitnet_model_path = resolved.bitnet_model_path or str(DEFAULT_BITNET_MODEL_PATH)
+            resolved.bitnet_repo_path = resolved.bitnet_repo_path or str(DEFAULT_BITNET_REPO_PATH)
         elif configured_backend == "llama_cpp" and not (resolved.gguf_model_path or "").strip():
             resolved.gguf_model_path = str(DEFAULT_GGUF_MODEL_PATH)
         return ResolvedRuntimeChoice(
             config=resolved,
             backend=configured_backend,
-            model_id=resolved.airllm_model_path or resolved.airllm_model_id or resolved.model_id,
+            model_id=resolved.bitnet_model_path or resolved.airllm_model_path or resolved.airllm_model_id or resolved.model_id,
             selected_profile="custom",
             reason=f"Configured backend: {configured_backend}",
         )
@@ -468,6 +584,22 @@ def resolve_runtime_choice(config: RuntimeConfig) -> Optional[ResolvedRuntimeCho
             model_id=gguf_path.name,
             selected_profile="gguf-coder",
             reason="Auto selected GGUF runtime because a local GGUF artifact and llama backend are available",
+        )
+
+    bitnet_path = _resolve_bitnet_model_path(config)
+    bitnet_runner = _resolve_bitnet_runner(config)
+    if bitnet_path is not None and bitnet_path.exists() and bitnet_runner is not None:
+        resolved = _clone_runtime_config(config)
+        resolved.backend = "bitnet_cpp"
+        resolved.bitnet_model_path = str(bitnet_path)
+        if not resolved.bitnet_repo_path:
+            resolved.bitnet_repo_path = str(_resolve_bitnet_repo_path(config) or DEFAULT_BITNET_REPO_PATH)
+        return ResolvedRuntimeChoice(
+            config=resolved,
+            backend="bitnet_cpp",
+            model_id=bitnet_path.name,
+            selected_profile="bitnet-cpu",
+            reason="Auto selected BitNet because a local BitNet artifact and bitnet.cpp runner are available",
         )
 
     if _package_available("transformers"):
@@ -667,6 +799,27 @@ class ChatRuntimeManager:
         self._model = model
         self._tokenizer = tokenizer
 
+    def _load_bitnet_cpp(self):
+        model_path = _resolve_bitnet_model_path(self.config)
+        if model_path is None:
+            raise RuntimeError("BitNet model artifact was not found in the configured or default local search paths")
+        runner = _resolve_bitnet_runner(self.config)
+        if runner is None:
+            raise RuntimeError(
+                "BitNet runner was not found in the configured or default local search paths"
+            )
+
+        self.config.bitnet_model_path = str(model_path)
+        if not self.config.bitnet_repo_path:
+            self.config.bitnet_repo_path = str(_resolve_bitnet_repo_path(self.config) or "")
+
+        logger.info(f"Loading BitNet runtime: {model_path}")
+        self._model = {
+            "runner": runner,
+            "model_path": str(model_path),
+        }
+        self._backend_name = "bitnet_cpp"
+
     def _load_micro_transformer(self):
         import torch
 
@@ -711,7 +864,7 @@ class ChatRuntimeManager:
         artifact_required = backend == "llama_cpp"
         artifact_path = effective_config.gguf_model_path if artifact_required else ""
         artifact_exists = None
-        source_target = effective_config.airllm_model_id or effective_config.model_id
+        source_target = effective_config.bitnet_model_path or effective_config.airllm_model_id or effective_config.model_id
 
         if configured_backend == "auto":
             if resolved is None:
@@ -760,6 +913,25 @@ class ChatRuntimeManager:
                 messages.append(f"GGUF file not found: {artifact_path}")
             if llama_cli_path is not None:
                 messages.append(f"llama.cpp binary available at {llama_cli_path}")
+        elif backend == "bitnet_cpp":
+            runner = _resolve_bitnet_runner(effective_config)
+            resolved_bitnet = _resolve_bitnet_model_path(effective_config)
+            backend_available = runner is not None
+            artifact_required = True
+            artifact_path = str(resolved_bitnet or "")
+            artifact_exists = bool(resolved_bitnet and resolved_bitnet.exists())
+            source_target = str(resolved_bitnet or effective_config.model_id or DEFAULT_BITNET_MODEL_ID)
+            if not backend_available:
+                messages.append(
+                    "bitnet.cpp runner was not found in the configured or default local search paths"
+                )
+            else:
+                runner_label = runner.get("path") or runner.get("command_template") or "configured runner"
+                messages.append(f"BitNet runner available at {runner_label}")
+            if resolved_bitnet is None:
+                messages.append("BitNet model artifact was not found in the configured or default local search paths")
+            elif not artifact_exists:
+                messages.append(f"BitNet model file not found: {artifact_path}")
         elif backend == "airllm":
             diagnostics = airllm_import_diagnostics()
             backend_available = diagnostics["available"]
@@ -791,6 +963,7 @@ class ChatRuntimeManager:
                 message.startswith("llama.cpp binary available at")
                 or message.startswith("Auto selected")
                 or message.startswith("Configured backend:")
+                or message.startswith("BitNet runner available at")
                 or message.startswith("Local AirLLM snapshot available at")
                 or message.startswith("AirLLM will load from the Hugging Face Hub at runtime")
                 or message.startswith("AirLLM snapshot path not found:")
@@ -812,6 +985,9 @@ class ChatRuntimeManager:
             "artifact_exists": artifact_exists,
             "source_target": source_target,
             "llama_cli_path": str(_resolve_llama_cli_path()) if backend == "llama_cpp" and _resolve_llama_cli_path() else "",
+            "bitnet_runner": (_resolve_bitnet_runner(effective_config) or {}).get("path")
+            or (_resolve_bitnet_runner(effective_config) or {}).get("command_template")
+            or "",
             "messages": messages,
             "summary": "; ".join(blocking_messages) if blocking_messages else "Ready to load",
             "can_load": can_load,
@@ -850,6 +1026,13 @@ class ChatRuntimeManager:
                     try:
                         self.config = active_config
                         self._load_llama_cpp()
+                    finally:
+                        self.config = previous_config
+                elif backend == "bitnet_cpp":
+                    previous_config = self.config
+                    try:
+                        self.config = active_config
+                        self._load_bitnet_cpp()
                     finally:
                         self.config = previous_config
                 elif backend == "airllm":
@@ -925,9 +1108,17 @@ class ChatRuntimeManager:
             "resolved_backend": (self._resolved_config.backend if self._resolved_config is not None else resolved.backend if resolved else None),
             "active_backend": self._backend_name,
             "model_id": (
-                (self._resolved_config.airllm_model_id or self._resolved_config.model_id)
+                (
+                    self._resolved_config.bitnet_model_path
+                    or self._resolved_config.airllm_model_id
+                    or self._resolved_config.model_id
+                )
                 if self._resolved_config is not None
-                else (resolved.model_id if resolved is not None else (self.config.airllm_model_id or self.config.model_id))
+                else (
+                    resolved.model_id
+                    if resolved is not None
+                    else (self.config.bitnet_model_path or self.config.airllm_model_id or self.config.model_id)
+                )
             ),
             "loaded": self._loaded,
             "loaded_at": self._loaded_at,
@@ -1015,6 +1206,77 @@ class ChatRuntimeManager:
             return {
                 "text": text,
                 "model_used": os.path.basename(model_path) or "llama_cpp_cli",
+                "backend": self._backend_name,
+            }
+
+        if self._backend_name == "bitnet_cpp":
+            runner = self._model["runner"]
+            model_path = self._model["model_path"]
+            timeout_seconds = max(120, max_new_tokens * 5)
+
+            if runner["kind"] == "template":
+                command = runner["command_template"].format_map(
+                    {
+                        "python": sys.executable,
+                        "model_path": model_path,
+                        "prompt": prompt,
+                        "max_new_tokens": max_new_tokens,
+                        "max_context_tokens": self.config.max_context_tokens,
+                        "n_threads": self.config.n_threads,
+                        "temperature": temperature,
+                        "top_p": top_p,
+                    }
+                )
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    cwd=runner.get("cwd") or None,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="ignore",
+                    timeout=timeout_seconds,
+                )
+            elif runner["kind"] == "python_script":
+                command = [
+                    sys.executable,
+                    runner["path"],
+                    "-m",
+                    model_path,
+                    "-p",
+                    prompt,
+                    "-n",
+                    str(max_new_tokens),
+                    "-c",
+                    str(self.config.max_context_tokens),
+                    "-t",
+                    str(self.config.n_threads),
+                    "--temp",
+                    str(temperature),
+                    "--top-p",
+                    str(top_p),
+                ]
+                result = subprocess.run(
+                    command,
+                    cwd=runner.get("cwd") or None,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="ignore",
+                    timeout=timeout_seconds,
+                )
+            else:
+                raise RuntimeError(f"Unsupported BitNet runner kind: {runner['kind']}")
+
+            if result.returncode != 0:
+                stderr = result.stderr.strip() or result.stdout.strip()
+                raise RuntimeError(stderr or f"BitNet inference failed with exit code {result.returncode}")
+            text = result.stdout.strip()
+            if text.startswith(prompt):
+                text = text[len(prompt):].strip()
+            return {
+                "text": text,
+                "model_used": os.path.basename(model_path) or "bitnet_cpp",
                 "backend": self._backend_name,
             }
 
@@ -1120,6 +1382,7 @@ class ChatRuntimeManager:
 
 _runtime_manager: Optional[ChatRuntimeManager] = None
 _self_learner_runtime_manager: Optional[ChatRuntimeManager] = None
+_bitnet_runtime_manager: Optional[ChatRuntimeManager] = None
 
 
 def get_chat_runtime_manager() -> ChatRuntimeManager:
@@ -1135,3 +1398,11 @@ def get_self_learner_runtime_manager() -> ChatRuntimeManager:
         _self_learner_runtime_manager = ChatRuntimeManager(config=_default_self_learner_config())
         _self_learner_runtime_manager._selected_profile = "self-learner-turbo"
     return _self_learner_runtime_manager
+
+
+def get_bitnet_runtime_manager() -> ChatRuntimeManager:
+    global _bitnet_runtime_manager
+    if _bitnet_runtime_manager is None:
+        _bitnet_runtime_manager = ChatRuntimeManager(config=_default_profile_config("bitnet-cpu"))
+        _bitnet_runtime_manager._selected_profile = "bitnet-cpu"
+    return _bitnet_runtime_manager

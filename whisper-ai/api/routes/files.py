@@ -10,6 +10,17 @@ from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from loguru import logger
+from services.approved_model_catalog import (
+    DEFAULT_FALLBACK_OCR_MODEL_ID,
+    DEFAULT_OCR_MODEL_ID,
+    get_ocr_model,
+)
+from services.local_model_service import (
+    LocalModelError,
+    invoke_openai_compatible_ocr,
+    resolve_local_adapter,
+    run_local_command_template,
+)
 from utils.app_paths import UPLOADS_DIR
 
 
@@ -23,6 +34,8 @@ class FileReadResponse(BaseModel):
     pages: Optional[int] = None
     word_count: int
     characters: int
+    ocr_model_id: Optional[str] = None
+    ocr_backend: Optional[str] = None
 
 
 class FileAnalyzeRequest(BaseModel):
@@ -64,7 +77,7 @@ class FileReader:
         return cls.SUPPORTED_EXTENSIONS.get(ext, 'unknown')
     
     @classmethod
-    async def read(cls, filepath: Path, file_type: str) -> dict:
+    async def read(cls, filepath: Path, file_type: str, *, ocr_model_id: Optional[str] = None) -> dict:
         """Read file content based on type."""
         readers = {
             'pdf': cls._read_pdf,
@@ -78,7 +91,10 @@ class FileReader:
         reader = readers.get(file_type)
         if reader is None:
             raise ValueError(f"Unsupported file type: {file_type}")
-        
+
+        if file_type == 'image':
+            return await cls._read_image(filepath, ocr_model_id=ocr_model_id)
+
         return await reader(filepath)
     
     @classmethod
@@ -146,8 +162,59 @@ class FileReader:
             )
     
     @classmethod
-    async def _read_image(cls, filepath: Path) -> dict:
+    async def _read_image(cls, filepath: Path, ocr_model_id: Optional[str] = None) -> dict:
         """Read image with OCR."""
+        resolved_model_id = (ocr_model_id or DEFAULT_OCR_MODEL_ID).strip() or DEFAULT_OCR_MODEL_ID
+        selected_model = get_ocr_model(resolved_model_id)
+        if selected_model is None:
+            raise HTTPException(status_code=400, detail=f"Unknown OCR model: {resolved_model_id}")
+
+        if selected_model.id == "glm-ocr":
+            adapter = resolve_local_adapter("glm_ocr")
+            base_url = str(adapter.get("base_url") or "").strip()
+            command_template = str(adapter.get("command_template") or "").strip()
+            local_model_name = str(adapter.get("model_name") or selected_model.repo_id or "glm-ocr").strip()
+
+            if base_url:
+                try:
+                    result = await invoke_openai_compatible_ocr(
+                        base_url=base_url,
+                        model=local_model_name,
+                        image_bytes=filepath.read_bytes(),
+                        api_key=adapter.get("api_key"),
+                    )
+                    text = (result.get("text") or "").strip()
+                    if text:
+                        return {
+                            "content": text,
+                            "ocr_model_id": selected_model.id,
+                            "ocr_backend": result.get("backend") or "local_endpoint",
+                        }
+                except LocalModelError as exc:
+                    logger.warning(f"GLM-OCR local endpoint failed, falling back to Tesseract: {exc}")
+
+            if command_template:
+                try:
+                    result = await asyncio.to_thread(
+                        run_local_command_template,
+                        command_template=command_template,
+                        values={
+                            "image_path": str(filepath),
+                            "model": local_model_name,
+                            "prompt": "Extract all readable text from this image.",
+                        },
+                        cwd=str(adapter.get("command_cwd") or "").strip() or None,
+                    )
+                    text = (result.get("text") or "").strip()
+                    if text:
+                        return {
+                            "content": text,
+                            "ocr_model_id": selected_model.id,
+                            "ocr_backend": result.get("backend") or "local_command",
+                        }
+                except LocalModelError as exc:
+                    logger.warning(f"GLM-OCR local command failed, falling back to Tesseract: {exc}")
+
         try:
             import pytesseract
             from PIL import Image
@@ -155,7 +222,11 @@ class FileReader:
             img = Image.open(filepath)
             text = pytesseract.image_to_string(img)
             
-            return {"content": text}
+            return {
+                "content": text,
+                "ocr_model_id": DEFAULT_FALLBACK_OCR_MODEL_ID,
+                "ocr_backend": "pytesseract",
+            }
         except ImportError:
             raise HTTPException(
                 status_code=503,
@@ -180,7 +251,10 @@ class FileReader:
 
 
 @router.post("/files/read")
-async def read_file(file: UploadFile = File(...)) -> FileReadResponse:
+async def read_file(
+    file: UploadFile = File(...),
+    ocr_model_id: Optional[str] = Form(default=None),
+) -> FileReadResponse:
     """
     Extract text content from an uploaded file.
     
@@ -208,7 +282,7 @@ async def read_file(file: UploadFile = File(...)) -> FileReadResponse:
         temp_path.write_bytes(content)
         
         # Read file
-        result = await FileReader.read(temp_path, file_type)
+        result = await FileReader.read(temp_path, file_type, ocr_model_id=ocr_model_id)
         text_content = result["content"]
         
         return FileReadResponse(
@@ -216,7 +290,9 @@ async def read_file(file: UploadFile = File(...)) -> FileReadResponse:
             file_type=file_type,
             pages=result.get("pages"),
             word_count=len(text_content.split()),
-            characters=len(text_content)
+            characters=len(text_content),
+            ocr_model_id=result.get("ocr_model_id"),
+            ocr_backend=result.get("ocr_backend"),
         )
     
     finally:
@@ -228,7 +304,8 @@ async def read_file(file: UploadFile = File(...)) -> FileReadResponse:
 @router.post("/files/analyze")
 async def analyze_file(
     file: UploadFile = File(...),
-    question: str = Form(...)
+    question: str = Form(...),
+    ocr_model_id: Optional[str] = Form(default=None),
 ) -> FileAnalyzeResponse:
     """
     Upload a file and ask a question about its contents.
@@ -255,7 +332,7 @@ async def analyze_file(
         content = await file.read()
         temp_path.write_bytes(content)
         
-        result = await FileReader.read(temp_path, file_type)
+        result = await FileReader.read(temp_path, file_type, ocr_model_id=ocr_model_id)
         file_content = result["content"]
         
         # Create prompt with file content

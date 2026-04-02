@@ -26,6 +26,7 @@ from services.approved_model_catalog import (
     bootstrap_text_models,
 )
 from utils.app_paths import DATA_ROOT, MODELS_DIR, ensure_app_dirs
+from utils.system_tuning import env_flag_enabled
 
 ensure_app_dirs()
 
@@ -56,7 +57,14 @@ def _test_mode_enabled() -> bool:
 
 
 def _bootstrap_enabled() -> bool:
-    return _env_enabled("WHISPER_BOOTSTRAP_APPROVED_MODELS", True) and not _test_mode_enabled()
+    return (
+        env_flag_enabled(
+            "WHISPER_BOOTSTRAP_APPROVED_MODELS",
+            True,
+            disable_in_low_power=True,
+        )
+        and not _test_mode_enabled()
+    )
 
 
 def _hf_token() -> str | None:

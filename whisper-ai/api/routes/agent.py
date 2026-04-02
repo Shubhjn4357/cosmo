@@ -9,6 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from services.agent_profiles import get_agent_profile, list_agent_profiles
 from services.agent_runtime import (
     SUPPORTED_AGENT_BACKENDS,
     AgentRunRequestPayload,
@@ -37,6 +38,7 @@ class AgentRunRequest(BaseModel):
     max_steps: int = 4
     max_tokens: int = 320
     user_id: Optional[str] = None
+    profile_id: Optional[str] = None
     wait_for_completion: bool = False
 
 
@@ -50,6 +52,8 @@ async def run_agent_route(request: AgentRunRequest):
             status_code=400,
             detail=f"Unsupported backend '{request.backend}'. Available: {sorted(SUPPORTED_AGENT_BACKENDS)}",
         )
+    if request.profile_id and get_agent_profile(request.profile_id) is None:
+        raise HTTPException(status_code=400, detail=f"Unknown profile_id '{request.profile_id}'")
 
     payload = AgentRunRequestPayload(
         message=request.message,
@@ -66,6 +70,7 @@ async def run_agent_route(request: AgentRunRequest):
         max_steps=max(1, min(request.max_steps, 6)),
         max_tokens=max(64, min(request.max_tokens, 512)),
         user_id=request.user_id,
+        profile_id=request.profile_id,
     )
 
     session = await run_agent(
@@ -77,6 +82,7 @@ async def run_agent_route(request: AgentRunRequest):
         "session_id": session["id"],
         "status": session.get("status"),
         "backend": session.get("backend_resolved"),
+        "profile_id": session.get("profile_id"),
         "goal": session.get("goal"),
         "answer": session.get("answer", ""),
         "image_url": session.get("image_url"),
@@ -85,6 +91,11 @@ async def run_agent_route(request: AgentRunRequest):
         "citations": session.get("citations", []),
         "updated_at": session.get("updated_at"),
     }
+
+
+@router.get("/agent/profiles")
+async def list_agent_profiles_route():
+    return {"profiles": list_agent_profiles()}
 
 
 @router.get("/agent/sessions")

@@ -47,6 +47,8 @@ def _load_runtime_env() -> dict[str, str]:
         if current is not None:
             values[key] = current
 
+    prefer_process_env = os.getenv("WHISPER_TEST_MODE", "false").lower() == "true"
+
     # Prefer the checked-in `.env` file when present so local credential edits
     # take effect without needing to restart the server process.
     if ENV_FILE.exists():
@@ -54,6 +56,8 @@ def _load_runtime_env() -> dict[str, str]:
         for key in keys:
             current = file_values.get(key)
             if current not in (None, ""):
+                if prefer_process_env and key in values:
+                    continue
                 values[key] = str(current)
 
     return values

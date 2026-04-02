@@ -13,6 +13,29 @@ random_secret() {
   openssl rand -hex 16
 }
 
+gradle_common_args() {
+  local args=(--no-daemon)
+
+  if [[ -n "${ORG_GRADLE_PROJECT_reactNativeArchitectures:-}" ]]; then
+    args+=("-PreactNativeArchitectures=${ORG_GRADLE_PROJECT_reactNativeArchitectures}")
+  fi
+
+  printf '%s\n' "${args[@]}"
+}
+
+build_android_variant() {
+  local variant="$1"
+  mapfile -t args < <(gradle_common_args)
+  ./gradlew "${args[@]}" "$variant"
+}
+
+cleanup_android_intermediates() {
+  rm -rf \
+    "$ANDROID_DIR/app/.cxx" \
+    "$ANDROID_DIR/app/build" \
+    "$ANDROID_DIR/build"
+}
+
 write_local_properties() {
   local sdk_root=""
 
@@ -37,6 +60,10 @@ pushd "$ROOT_DIR" >/dev/null
 node scripts/ci/patch-expo-dev-launcher-android.js
 npx expo prebuild --platform android --clean --no-install
 write_local_properties
+
+if [[ -z "${ORG_GRADLE_PROJECT_reactNativeArchitectures:-}" && "${CI:-}" = "1" ]]; then
+  export ORG_GRADLE_PROJECT_reactNativeArchitectures="${WHISPER_ANDROID_CI_ABIS:-arm64-v8a}"
+fi
 
 mkdir -p "$ANDROID_SIGNING_DIR"
 rm -f "$ANDROID_SIGNING_DIR"/debug.keystore "$ANDROID_SIGNING_DIR"/release.keystore "$ANDROID_SIGNING_DIR"/key.properties
@@ -85,10 +112,18 @@ python3 scripts/ci/configure_android_signing.py "$ANDROID_DIR/app/build.gradle"
 chmod +x "$ANDROID_DIR/gradlew"
 
 pushd "$ANDROID_DIR" >/dev/null
-./gradlew --no-daemon clean app:assembleDebug app:assembleRelease
+mapfile -t args < <(gradle_common_args)
+./gradlew "${args[@]}" clean
+build_android_variant app:assembleDebug
 popd >/dev/null
 
 cp "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" "$ARTIFACT_DIR/whisper-debug.apk"
+cleanup_android_intermediates
+
+pushd "$ANDROID_DIR" >/dev/null
+build_android_variant app:assembleRelease
+popd >/dev/null
+
 cp "$ANDROID_DIR/app/build/outputs/apk/release/app-release.apk" "$ARTIFACT_DIR/whisper-release-signed.apk"
 cp "$ANDROID_SIGNING_DIR/debug.keystore" "$KEYSTORE_DIR/debug.keystore"
 cp "$ANDROID_SIGNING_DIR/release.keystore" "$KEYSTORE_DIR/release.keystore"

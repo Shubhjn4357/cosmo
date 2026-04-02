@@ -22,11 +22,21 @@ jobs:
     env:
       CI: "1"
       EXPO_NO_TELEMETRY: "1"
+      WHISPER_ANDROID_CI_ABIS: arm64-v8a
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Free runner disk space
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /opt/az || true
+          sudo docker system prune -af || true
+          df -h
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -43,6 +53,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: ''
 
       - name: Install mobile app dependencies
         working-directory: whisper

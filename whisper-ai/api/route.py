@@ -21,7 +21,7 @@ from loguru import logger
 load_dotenv()
 TEST_MODE = os.getenv("WHISPER_TEST_MODE", "false").lower() == "true"
 
-from utils.system_tuning import apply_process_tuning, get_power_profile
+from utils.system_tuning import apply_process_tuning, env_flag_enabled
 
 apply_process_tuning()
 
@@ -29,6 +29,7 @@ from api.routes import (
     admin,
     agent,
     analytics,
+    autoresearch,
     auth,
     characters,
     chat,
@@ -77,6 +78,9 @@ class AppState:
         self.training_process = None
         self.generator_process = None
         self.auto_training_task = None
+        self.post_start_task = None
+        self.knowledge_init_task = None
+        self.runtime_warm_task = None
         self.model_switch_enabled = False
         self.start_time = time.time()
         self.config = {}
@@ -125,12 +129,71 @@ def _initialize_knowledge_base():
 
 
 def _background_feature_enabled(env_name: str, default: bool = True) -> bool:
-    configured = os.getenv(env_name)
-    if configured is not None:
-        return configured.strip().lower() == "true"
-    if get_power_profile() == "low-power":
-        return False
-    return default
+    return env_flag_enabled(env_name, default, disable_in_low_power=True)
+
+
+def _warm_chat_runtime_enabled() -> bool:
+    return env_flag_enabled(
+        "WHISPER_WARM_CHAT_RUNTIME_ENABLED",
+        True,
+        disable_in_low_power=True,
+    )
+
+
+def _eager_knowledge_base_enabled() -> bool:
+    return env_flag_enabled("WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED", True)
+
+
+async def _run_post_start_initialization(app: FastAPI):
+    try:
+        await asyncio.to_thread(restore_data)
+    except Exception as exc:
+        logger.warning(f"Dataset restore skipped: {exc}")
+
+    try:
+        from services.runtime_manager import load_runtime_state
+
+        config, selected_profile = load_runtime_state()
+        if config is not None and app_state.chat_runtime is not None and not app_state.chat_runtime.is_ready():
+            app_state.chat_runtime.reconfigure(
+                config,
+                selected_profile=selected_profile or "custom",
+                persist=False,
+            )
+            logger.info("Runtime configuration refreshed from restored data")
+    except Exception as exc:
+        logger.warning(f"Runtime configuration refresh skipped: {exc}")
+
+    try:
+        from utils.verify_startup import run_verification
+
+        run_verification(app)
+    except Exception as exc:
+        logger.warning(f"Startup verification skipped: {exc}")
+
+    if _eager_knowledge_base_enabled():
+        try:
+            await asyncio.to_thread(_initialize_knowledge_base)
+        except Exception as exc:
+            logger.warning(f"Knowledge base initialization skipped: {exc}")
+    else:
+        logger.info("Knowledge base initialization disabled by configuration")
+
+    if _warm_chat_runtime_enabled():
+        try:
+            readiness = app_state.chat_runtime.readiness()
+            if readiness.get("can_load"):
+                loaded = await asyncio.to_thread(app_state.chat_runtime.ensure_loaded)
+                logger.info(
+                    "Warm chat runtime {}",
+                    "ready" if loaded else f"skipped ({app_state.chat_runtime.status().get('last_error')})",
+                )
+            else:
+                logger.info("Warm chat runtime deferred: {}", readiness.get("summary"))
+        except Exception as exc:
+            logger.warning(f"Warm chat runtime skipped: {exc}")
+    else:
+        logger.info("Warm chat runtime disabled by power profile/configuration")
 
 
 async def _startup(app: FastAPI):
@@ -149,12 +212,6 @@ async def _startup(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Database initialization skipped: {exc}")
 
-    if not TEST_MODE:
-        try:
-            restore_data()
-        except Exception as exc:
-            logger.warning(f"Dataset restore skipped: {exc}")
-
     hf_key = None
     if not TEST_MODE:
         try:
@@ -169,12 +226,9 @@ async def _startup(app: FastAPI):
             logger.info("HF keepalive disabled by configuration")
 
     app_state.chat_runtime = get_chat_runtime_manager()
-    if TEST_MODE:
-        app_state.embedder = None
-        app_state.vectordb = None
-        app_state.rag = None
-    else:
-        _initialize_knowledge_base()
+    app_state.embedder = None
+    app_state.vectordb = None
+    app_state.rag = None
 
     if not TEST_MODE:
         if _background_feature_enabled("WHISPER_AUTO_COLLECTION_ENABLED"):
@@ -206,13 +260,6 @@ async def _startup(app: FastAPI):
             logger.info("Auto-training scheduler disabled by power profile/configuration")
 
         try:
-            from utils.verify_startup import run_verification
-
-            run_verification(app)
-        except Exception as exc:
-            logger.warning(f"Startup verification skipped: {exc}")
-
-        try:
             bootstrap_status = start_gguf_runtime_bootstrap()
             logger.info(
                 "GGUF bootstrap status: {} ({})",
@@ -231,27 +278,30 @@ async def _startup(app: FastAPI):
         except Exception as exc:
             logger.warning(f"Approved model bootstrap skipped: {exc}")
 
-        try:
-            readiness = app_state.chat_runtime.readiness()
-            if readiness.get("can_load"):
-                async def _warm_chat_runtime():
-                    loaded = await asyncio.to_thread(app_state.chat_runtime.ensure_loaded)
-                    logger.info(
-                        "Warm chat runtime {}",
-                        "ready" if loaded else f"skipped ({app_state.chat_runtime.status().get('last_error')})",
-                    )
-
-                asyncio.create_task(_warm_chat_runtime())
-            else:
-                logger.info("Warm chat runtime deferred: {}", readiness.get("summary"))
-        except Exception as exc:
-            logger.warning(f"Warm chat runtime skipped: {exc}")
+        if app_state.post_start_task is None or app_state.post_start_task.done():
+            app_state.post_start_task = asyncio.create_task(_run_post_start_initialization(app))
+        logger.info("Post-start initialization scheduled in background")
 
     logger.info(f"Server started in {time.time() - startup_start:.2f}s")
 
 
 async def _shutdown():
     from services.hf_keepalive import get_keepalive, keepalive_enabled
+
+    for task_name, label in (
+        ("post_start_task", "Post-start initialization"),
+        ("runtime_warm_task", "Warm chat runtime"),
+        ("knowledge_init_task", "Knowledge base initialization"),
+    ):
+        task = getattr(app_state, task_name, None)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                logger.info(f"{label} stopped")
+            finally:
+                setattr(app_state, task_name, None)
 
     if app_state.auto_training_task is not None and not app_state.auto_training_task.done():
         app_state.auto_training_task.cancel()
@@ -322,6 +372,7 @@ app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
 app.include_router(chat.router, prefix="/api", tags=["Chat"])
 app.include_router(agent.router, prefix="/api", tags=["Agent"])
+app.include_router(autoresearch.router, prefix="/api", tags=["Autoresearch"])
 app.include_router(image.router, prefix="/api", tags=["Image"])
 app.include_router(files.router, prefix="/api", tags=["Files"])
 app.include_router(knowledge.router, prefix="/api", tags=["Knowledge"])
@@ -385,6 +436,7 @@ async def root():
                 "image_api": "/api/image/generate",
                 "datasets": "/api/datasets",
                 "research": "/api/research",
+                "autoresearch": "/api/autoresearch/projects",
                 "admin_ui": "/admin-ui",
                 "docs": "/docs",
             },

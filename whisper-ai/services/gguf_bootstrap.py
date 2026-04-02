@@ -23,6 +23,7 @@ from loguru import logger
 from services.model_manager import get_download_jobs, get_profile, queue_profile_download
 from services.runtime_manager import _resolve_llama_cli_path
 from utils.app_paths import DATA_ROOT, ensure_app_dirs
+from utils.system_tuning import env_flag_enabled
 
 ensure_app_dirs()
 
@@ -50,7 +51,14 @@ def _test_mode_enabled() -> bool:
 
 
 def _bootstrap_enabled() -> bool:
-    return _env_enabled("WHISPER_BOOTSTRAP_GGUF_RUNTIME", True) and not _test_mode_enabled()
+    return (
+        env_flag_enabled(
+            "WHISPER_BOOTSTRAP_GGUF_RUNTIME",
+            True,
+            disable_in_low_power=True,
+        )
+        and not _test_mode_enabled()
+    )
 
 
 def _download_enabled() -> bool:

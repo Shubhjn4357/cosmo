@@ -23,6 +23,20 @@ def get_power_profile(default: str = "balanced") -> PowerProfile:
     return value  # type: ignore[return-value]
 
 
+def env_flag_enabled(
+    name: str,
+    default: bool,
+    *,
+    disable_in_low_power: bool = False,
+) -> bool:
+    configured = os.getenv(name)
+    if configured is not None:
+        return configured.strip().lower() == "true"
+    if disable_in_low_power and get_power_profile() == "low-power":
+        return False
+    return default
+
+
 def recommended_thread_count(profile: PowerProfile | None = None, cpu_count: int | None = None) -> int:
     profile = profile or get_power_profile()
     cpu_count = max(1, cpu_count or (os.cpu_count() or 1))

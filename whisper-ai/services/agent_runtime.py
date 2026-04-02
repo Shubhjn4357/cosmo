@@ -24,6 +24,7 @@ from urllib import request as urllib_request
 
 from loguru import logger
 
+from services.agent_profiles import DEFAULT_AGENT_PROFILE_ID, get_agent_profile
 from utils.app_paths import DATA_ROOT, ensure_app_dirs
 
 ensure_app_dirs()
@@ -124,6 +125,8 @@ class AgentRunRequestPayload:
     max_steps: int
     max_tokens: int
     user_id: Optional[str]
+    profile_id: Optional[str] = None
+    workspace_scope_paths: Optional[list[str]] = None
 
 
 def _session_path(session_id: str) -> Path:
@@ -152,6 +155,25 @@ def _message_preview(text: str, max_chars: int = 160) -> str:
     if len(cleaned) <= max_chars:
         return cleaned
     return f"{cleaned[: max_chars - 3].rstrip()}..."
+
+
+def _agent_profile_payload(payload: AgentRunRequestPayload) -> dict[str, Any]:
+    profile = get_agent_profile(payload.profile_id or DEFAULT_AGENT_PROFILE_ID)
+    if profile is None:
+        return {
+            "id": DEFAULT_AGENT_PROFILE_ID,
+            "name": "Generalist",
+            "description": "",
+            "system_prompt": "",
+            "tags": [],
+        }
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "description": profile.description,
+        "system_prompt": profile.system_prompt,
+        "tags": list(profile.tags),
+    }
 
 
 def _extract_json_payload(text: str) -> Optional[Any]:
@@ -455,6 +477,7 @@ def _new_or_reset_session(
             "backend_resolved": backend,
             "history": payload.history,
             "system_prompt": payload.system_prompt,
+            "profile_id": payload.profile_id or DEFAULT_AGENT_PROFILE_ID,
             "context": payload.context,
             "answer": "",
             "image_url": None,
@@ -463,6 +486,7 @@ def _new_or_reset_session(
             "citations": [],
             "error": None,
             "workspace_root": str(WORKSPACE_ROOT),
+            "workspace_scope_paths": list(payload.workspace_scope_paths or []),
             "available_tools": [tool["name"] for tool in _available_tools(payload)],
             "current_tool": None,
             "current_step_index": 0,
@@ -549,6 +573,7 @@ def _build_action_prompt(
     tool_results: list[dict[str, Any]],
     available_tools: list[dict[str, Any]],
 ) -> str:
+    profile = _agent_profile_payload(payload)
     compact_results = [
         {
             "tool": item.get("tool"),
@@ -572,6 +597,9 @@ def _build_action_prompt(
             "Prefer read/search actions before write actions.",
         ],
         "workspace_root": str(WORKSPACE_ROOT),
+        "agent_profile": profile,
+        "system_instructions": payload.system_prompt or "",
+        "workspace_scope_paths": list(payload.workspace_scope_paths or []),
         "available_tools": available_tools,
         "previous_results": compact_results,
         "step_index": step_index + 1,
@@ -808,7 +836,7 @@ async def _decide_next_action(
     )
 
 
-def _resolve_workspace_path(raw_path: str) -> Path:
+def _resolve_workspace_path(raw_path: str, *, allowed_roots: Optional[list[Path]] = None) -> Path:
     candidate_text = str(raw_path or "").strip()
     if not candidate_text:
         raise ValueError("path is required")
@@ -817,13 +845,33 @@ def _resolve_workspace_path(raw_path: str) -> Path:
     if candidate.is_absolute():
         resolved = candidate.resolve()
     else:
-        resolved = (WORKSPACE_ROOT / candidate).resolve()
+        base_root = allowed_roots[0] if allowed_roots else WORKSPACE_ROOT
+        resolved = (base_root / candidate).resolve()
 
     workspace_root_text = str(WORKSPACE_ROOT)
     resolved_text = str(resolved)
     if resolved_text != workspace_root_text and not resolved_text.startswith(f"{workspace_root_text}{os.sep}"):
         raise ValueError(f"Path '{resolved}' is outside the workspace root")
+    if allowed_roots:
+        allowed = False
+        for root in allowed_roots:
+            root_text = str(root)
+            if resolved_text == root_text or resolved_text.startswith(f"{root_text}{os.sep}"):
+                allowed = True
+                break
+        if not allowed:
+            raise ValueError(f"Path '{resolved}' is outside the allowed workspace scope")
     return resolved
+
+
+def _payload_scope_roots(payload: AgentRunRequestPayload) -> list[Path]:
+    roots: list[Path] = []
+    for raw_path in payload.workspace_scope_paths or []:
+        try:
+            roots.append(_resolve_workspace_path(raw_path))
+        except Exception:
+            continue
+    return roots
 
 
 def _truncate_text(text: str, max_chars: int) -> str:
@@ -1197,8 +1245,8 @@ async def _execute_image_generate(payload: AgentRunRequestPayload, tool_input: d
     }
 
 
-async def _execute_list_directory(tool_input: dict[str, Any]) -> dict[str, Any]:
-    target = _resolve_workspace_path(str(tool_input.get("path") or "."))
+async def _execute_list_directory(payload: AgentRunRequestPayload, tool_input: dict[str, Any]) -> dict[str, Any]:
+    target = _resolve_workspace_path(str(tool_input.get("path") or "."), allowed_roots=_payload_scope_roots(payload))
     if not target.exists():
         raise FileNotFoundError(str(target))
     if not target.is_dir():
@@ -1257,12 +1305,15 @@ def _search_with_python(pattern: str, base_path: Path) -> list[str]:
     return matches
 
 
-async def _execute_search_files(tool_input: dict[str, Any]) -> dict[str, Any]:
+async def _execute_search_files(payload: AgentRunRequestPayload, tool_input: dict[str, Any]) -> dict[str, Any]:
     pattern = str(tool_input.get("pattern") or "").strip()
     if not pattern:
         raise ValueError("pattern is required")
 
-    base_path = _resolve_workspace_path(str(tool_input.get("path") or "."))
+    base_path = _resolve_workspace_path(
+        str(tool_input.get("path") or "."),
+        allowed_roots=_payload_scope_roots(payload),
+    )
     if base_path.is_file():
         base_path = base_path.parent
 
@@ -1283,8 +1334,11 @@ async def _execute_search_files(tool_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _execute_read_file(tool_input: dict[str, Any]) -> dict[str, Any]:
-    target = _resolve_workspace_path(str(tool_input.get("path") or ""))
+async def _execute_read_file(payload: AgentRunRequestPayload, tool_input: dict[str, Any]) -> dict[str, Any]:
+    target = _resolve_workspace_path(
+        str(tool_input.get("path") or ""),
+        allowed_roots=_payload_scope_roots(payload),
+    )
     if not target.exists():
         raise FileNotFoundError(str(target))
     if not target.is_file():
@@ -1309,10 +1363,13 @@ async def _execute_read_file(tool_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _execute_write_file(tool_input: dict[str, Any]) -> dict[str, Any]:
+async def _execute_write_file(payload: AgentRunRequestPayload, tool_input: dict[str, Any]) -> dict[str, Any]:
     if not WRITE_TOOLS_ENABLED:
         raise RuntimeError("workspace write tools are disabled")
-    target = _resolve_workspace_path(str(tool_input.get("path") or ""))
+    target = _resolve_workspace_path(
+        str(tool_input.get("path") or ""),
+        allowed_roots=_payload_scope_roots(payload),
+    )
     content = str(tool_input.get("content") or "")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
@@ -1323,10 +1380,13 @@ async def _execute_write_file(tool_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _execute_append_file(tool_input: dict[str, Any]) -> dict[str, Any]:
+async def _execute_append_file(payload: AgentRunRequestPayload, tool_input: dict[str, Any]) -> dict[str, Any]:
     if not WRITE_TOOLS_ENABLED:
         raise RuntimeError("workspace write tools are disabled")
-    target = _resolve_workspace_path(str(tool_input.get("path") or ""))
+    target = _resolve_workspace_path(
+        str(tool_input.get("path") or ""),
+        allowed_roots=_payload_scope_roots(payload),
+    )
     content = str(tool_input.get("content") or "")
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a", encoding="utf-8") as handle:
@@ -1343,15 +1403,24 @@ def _run_shell_command(command: str, cwd: Path, timeout_seconds: int) -> dict[st
         raise ValueError("command is required")
 
     shell_executable = shutil.which("bash") or shutil.which("sh")
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd),
-        shell=True,
-        executable=shell_executable,
-        capture_output=True,
-        text=True,
-        timeout=max(1, timeout_seconds),
-    )
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd.exe", "/d", "/s", "/c", command],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=max(1, timeout_seconds),
+        )
+    else:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd),
+            shell=True,
+            executable=shell_executable,
+            capture_output=True,
+            text=True,
+            timeout=max(1, timeout_seconds),
+        )
     stdout = completed.stdout or ""
     stderr = completed.stderr or ""
     combined = stdout.strip()
@@ -1366,14 +1435,14 @@ def _run_shell_command(command: str, cwd: Path, timeout_seconds: int) -> dict[st
     }
 
 
-async def _execute_run_command(tool_input: dict[str, Any]) -> dict[str, Any]:
+async def _execute_run_command(payload: AgentRunRequestPayload, tool_input: dict[str, Any]) -> dict[str, Any]:
     if not SHELL_TOOLS_ENABLED:
         raise RuntimeError("shell tools are disabled")
 
     command = str(tool_input.get("command") or "").strip()
     cwd_input = str(tool_input.get("cwd") or ".").strip() or "."
     timeout_seconds = int(tool_input.get("timeout_seconds") or DEFAULT_AGENT_TIMEOUT_SECONDS)
-    cwd = _resolve_workspace_path(cwd_input)
+    cwd = _resolve_workspace_path(cwd_input, allowed_roots=_payload_scope_roots(payload))
     if cwd.is_file():
         cwd = cwd.parent
     if not cwd.exists():
@@ -1467,17 +1536,17 @@ async def _execute_tool(
     if tool_name == "image_generate":
         return await _execute_image_generate(payload, tool_input)
     if tool_name == "list_directory":
-        return await _execute_list_directory(tool_input)
+        return await _execute_list_directory(payload, tool_input)
     if tool_name == "search_files":
-        return await _execute_search_files(tool_input)
+        return await _execute_search_files(payload, tool_input)
     if tool_name == "read_file":
-        return await _execute_read_file(tool_input)
+        return await _execute_read_file(payload, tool_input)
     if tool_name == "write_file":
-        return await _execute_write_file(tool_input)
+        return await _execute_write_file(payload, tool_input)
     if tool_name == "append_file":
-        return await _execute_append_file(tool_input)
+        return await _execute_append_file(payload, tool_input)
     if tool_name == "run_command":
-        return await _execute_run_command(tool_input)
+        return await _execute_run_command(payload, tool_input)
     if tool_name == "web_fetch":
         return await _execute_web_fetch(tool_input)
     raise ValueError(f"Unsupported tool '{tool_name}'")
@@ -1489,6 +1558,7 @@ def _build_final_prompt(
     tool_results: list[dict[str, Any]],
     citations: list[dict[str, Any]],
 ) -> str:
+    profile = _agent_profile_payload(payload)
     summarized_results = []
     for item in tool_results[-8:]:
         summarized_results.append(
@@ -1509,6 +1579,8 @@ def _build_final_prompt(
     instructions = {
         "task": payload.message,
         "context": payload.context,
+        "agent_profile": profile,
+        "system_instructions": payload.system_prompt or "",
         "roleplay_mode": payload.roleplay_mode,
         "nsfw_mode": payload.nsfw_mode,
         "tool_results": summarized_results,

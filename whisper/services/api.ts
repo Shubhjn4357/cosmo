@@ -31,6 +31,8 @@ export interface FileReadResponse {
     pages?: number;
     word_count: number;
     characters: number;
+    ocr_model_id?: string;
+    ocr_backend?: string;
 }
 
 export interface FileAnalyzeResponse {
@@ -73,6 +75,10 @@ export interface LLMModel {
     supports_server?: boolean;
     roles?: string[];
     auto_bootstrap?: boolean;
+    resolved_endpoint?: string;
+    endpoint_available?: boolean;
+    endpoint_reachable?: boolean;
+    endpoint_config_source?: string;
     artifact_path?: string;
     downloaded?: boolean;
     install_status?: string;
@@ -110,6 +116,82 @@ export interface ImageModel {
     eta?: number;
     filename?: string;
     repo_id?: string;
+}
+
+export interface OCRModel {
+    id: string;
+    name: string;
+    description: string;
+    provider: string;
+    repo_id?: string;
+    filename?: string;
+    size_mb?: number;
+    speed?: string;
+    download_url?: string;
+    recommended?: boolean;
+    supports_local?: boolean;
+    supports_server?: boolean;
+    auto_bootstrap?: boolean;
+    gated?: boolean;
+    endpoint_env?: string;
+    resolved_endpoint?: string;
+    endpoint_available?: boolean;
+    endpoint_reachable?: boolean;
+    endpoint_config_source?: string;
+    tags?: string[];
+    artifact_path?: string;
+    downloaded?: boolean;
+    install_status?: string;
+    install_error?: string | null;
+    size_bytes?: number;
+    kind?: string;
+}
+
+export interface SpeechModel {
+    id: string;
+    name: string;
+    description: string;
+    provider: string;
+    repo_id?: string;
+    capabilities?: string[];
+    filename?: string;
+    size_mb?: number;
+    speed?: string;
+    download_url?: string;
+    recommended?: boolean;
+    supports_local?: boolean;
+    supports_server?: boolean;
+    auto_bootstrap?: boolean;
+    gated?: boolean;
+    endpoint_env?: string;
+    resolved_endpoint?: string;
+    endpoint_available?: boolean;
+    endpoint_reachable?: boolean;
+    endpoint_config_source?: string;
+    voice_family?: string;
+    tags?: string[];
+    artifact_path?: string;
+    downloaded?: boolean;
+    install_status?: string;
+    install_error?: string | null;
+    size_bytes?: number;
+    kind?: string;
+}
+
+export interface VoiceChatResult {
+    success: boolean;
+    transcript: string;
+    response_text: string;
+    transcription_language?: string;
+    stt_model_id: string;
+    tts_model_id: string;
+    text_backend: string;
+    model_used?: string;
+    backend?: string;
+    talk_backend?: string;
+    audio?: string;
+    audio_format?: string;
+    metadata?: Record<string, any>;
 }
 
 export interface TrainingPair {
@@ -629,13 +711,18 @@ export class WhisperAPI {
         uri: string;
         name: string;
         type?: string;
-    }): Promise<FileReadResponse> {
+    }, options: {
+        ocrModelId?: string;
+    } = {}): Promise<FileReadResponse> {
         const formData = new FormData();
         formData.append('file', {
             uri: file.uri,
             name: file.name,
             type: file.type || 'application/octet-stream',
         } as any);
+        if (options?.ocrModelId) {
+            formData.append('ocr_model_id', options.ocrModelId);
+        }
 
         const response = await fetch(`${this.baseUrl}/api/files/read`, {
             method: 'POST',
@@ -717,7 +804,8 @@ export class WhisperAPI {
      */
     async analyzeFile(
         file: { uri: string; name: string; type?: string },
-        question: string
+        question: string,
+        options: { ocrModelId?: string } = {}
     ): Promise<FileAnalyzeResponse> {
         const formData = new FormData();
         formData.append('file', {
@@ -726,6 +814,9 @@ export class WhisperAPI {
             type: file.type || 'application/octet-stream',
         } as any);
         formData.append('question', question);
+        if (options.ocrModelId) {
+            formData.append('ocr_model_id', options.ocrModelId);
+        }
 
         const response = await fetch(`${this.baseUrl}/api/files/analyze`, {
             method: 'POST',
@@ -847,6 +938,77 @@ export class WhisperAPI {
         );
         if (!response.ok) {
             throw new Error(`Failed to get image models: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    async getOCRModels(): Promise<OCRModel[]> {
+        const response = await fetch(`${this.baseUrl}/api/models/ocr`);
+        if (!response.ok) {
+            throw new Error(`Failed to get OCR models: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    async getSpeechModels(): Promise<SpeechModel[]> {
+        const response = await fetch(`${this.baseUrl}/api/models/speech`);
+        if (!response.ok) {
+            throw new Error(`Failed to get speech models: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    async getModelStackStatus(): Promise<Record<string, any>> {
+        const response = await fetch(`${this.baseUrl}/api/models/stack/status`);
+        if (!response.ok) {
+            throw new Error(`Failed to get stack status: ${response.status}`);
+        }
+        return response.json();
+    }
+
+    async voiceChat(params: {
+        audioUri: string;
+        history?: { role: string; content: string }[];
+        context?: string;
+        systemPrompt?: string;
+        textBackend?: string;
+        sttModelId?: string;
+        ttsModelId?: string;
+        voice?: string;
+        speed?: number;
+        temperature?: number;
+        maxTokens?: number;
+        topP?: number;
+        includeAudio?: boolean;
+        useLocalStt?: boolean;
+    }): Promise<VoiceChatResult> {
+        const formData = new FormData();
+        formData.append('audio', {
+            uri: params.audioUri,
+            name: 'recording.wav',
+            type: 'audio/wav',
+        } as any);
+        formData.append('history_json', JSON.stringify(params.history || []));
+        if (params.context) formData.append('context', params.context);
+        if (params.systemPrompt) formData.append('system_prompt', params.systemPrompt);
+        formData.append('text_backend', params.textBackend || 'server');
+        formData.append('stt_model_id', params.sttModelId || 'openai-whisper-1');
+        formData.append('tts_model_id', params.ttsModelId || 'openai-tts-1');
+        formData.append('voice', params.voice || 'alloy');
+        formData.append('speed', String(params.speed || 1.0));
+        formData.append('temperature', String(params.temperature || 0.7));
+        formData.append('max_tokens', String(params.maxTokens || 256));
+        formData.append('top_p', String(params.topP || 0.9));
+        formData.append('include_audio', String(params.includeAudio !== false));
+        formData.append('use_local_stt', String(params.useLocalStt || false));
+
+        const response = await fetch(`${this.baseUrl}/api/voice/chat`, {
+            method: 'POST',
+            body: formData,
+        });
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.detail || `Voice chat failed: ${response.status}`);
         }
         return response.json();
     }
