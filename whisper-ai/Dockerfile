@@ -7,14 +7,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HOME=/home/user \
-    PYTHONUSERBASE=/app/data/runtime/python-user-base \
-    PATH=/app/data/runtime/python-user-base/bin:/home/user/.local/bin:$PATH \
-    HF_HOME=/app/data/runtime/huggingface \
-    HUGGINGFACE_HUB_CACHE=/app/data/runtime/huggingface/hub \
+    PYTHONUSERBASE=/data/whisper/runtime/python-user-base \
+    PATH=/data/whisper/runtime/python-user-base/bin:/home/user/.local/bin:$PATH \
+    HF_HOME=/data/whisper/runtime/huggingface \
+    HUGGINGFACE_HUB_CACHE=/data/whisper/runtime/huggingface/hub \
     HF_DATASET_REPO=shubhjn/whisper-data \
-    WHISPER_DATA_ROOT=/app/data \
-    WHISPER_MODELS_DIR=/app/data/models \
-    WHISPER_UPLOADS_DIR=/app/data/uploads \
+    WHISPER_DATA_ROOT=/data/whisper \
+    WHISPER_MODELS_DIR=/data/whisper/models \
+    WHISPER_UPLOADS_DIR=/data/whisper/uploads \
+    WHISPER_PERSISTENT_VOLUME_ROOT=/data/whisper \
+    WHISPER_USE_PERSISTENT_VOLUME=true \
     WHISPER_POWER_PROFILE=low-power \
     WHISPER_WARM_CHAT_RUNTIME_ENABLED=false \
     WHISPER_BOOTSTRAP_GGUF_RUNTIME=false \
@@ -55,8 +57,8 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
 
 COPY --chown=user:user . .
 
-RUN mkdir -p /app/data/models /app/data/uploads /app/data/runtime/huggingface && \
-    chown -R user:user /app
+RUN mkdir -p /data/whisper/models /data/whisper/uploads /data/whisper/runtime/huggingface && \
+    chown -R user:user /data /app
 
 USER user
 
