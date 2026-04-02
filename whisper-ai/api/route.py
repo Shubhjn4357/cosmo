@@ -24,44 +24,9 @@ TEST_MODE = os.getenv("WHISPER_TEST_MODE", "false").lower() == "true"
 from utils.system_tuning import apply_process_tuning, env_flag_enabled
 
 apply_process_tuning()
+SPACE_SAFE_MODE = env_flag_enabled("WHISPER_SPACE_SAFE_MODE", False)
 
-from api.routes import (
-    admin,
-    agent,
-    analytics,
-    autoresearch,
-    auth,
-    characters,
-    chat,
-    collect,
-    dashboard,
-    datasets,
-    faceswap,
-    feed,
-    files,
-    healthcheck,
-    horde,
-    huggingface,
-    image,
-    knowledge,
-    learn,
-    models,
-    ping,
-    profile,
-    research,
-    roleplay,
-    smart_mode,
-    train_vision,
-    tts,
-    ui,
-    upscale,
-    voice,
-)
-from knowledge.embedder import get_embedder
-from knowledge.rag import RAGSystem
-from services.runtime_manager import get_chat_runtime_manager
 from utils.app_paths import UPLOADS_DIR, ensure_app_dirs
-from utils.persistence import backup_data, restore_data
 
 
 class AppState:
@@ -107,9 +72,15 @@ def _runtime_status() -> dict:
     return app_state.chat_runtime.status()
 
 
+def _space_safe_mode_enabled() -> bool:
+    return SPACE_SAFE_MODE
+
+
 def _initialize_knowledge_base():
     try:
+        from knowledge.embedder import get_embedder
         from knowledge.vectordb import VectorDB, VectorDBConfig
+        from knowledge.rag import RAGSystem
 
         embedder = get_embedder()
         vectordb = VectorDB(VectorDBConfig(embedding_dim=embedder.dim))
@@ -146,6 +117,8 @@ def _eager_knowledge_base_enabled() -> bool:
 
 async def _run_post_start_initialization(app: FastAPI):
     try:
+        from utils.persistence import restore_data
+
         await asyncio.to_thread(restore_data)
     except Exception as exc:
         logger.warning(f"Dataset restore skipped: {exc}")
@@ -197,14 +170,25 @@ async def _run_post_start_initialization(app: FastAPI):
 
 
 async def _startup(app: FastAPI):
+    startup_start = time.time()
+    app_state.start_time = startup_start
+    logger.info("Whisper AI starting")
+
+    if _space_safe_mode_enabled():
+        app_state.chat_runtime = None
+        app_state.embedder = None
+        app_state.vectordb = None
+        app_state.rag = None
+        logger.warning("WHISPER_SPACE_SAFE_MODE enabled; skipping heavy startup and optional subsystems")
+        logger.info(f"Server started in {time.time() - startup_start:.2f}s")
+        return
+
+    from api.routes import collect, research
     from api.routes.profile import get_db_client
     from services.catalog_bootstrap import start_catalog_bootstrap
     from services.gguf_bootstrap import start_gguf_runtime_bootstrap
     from services.hf_keepalive import get_keepalive, keepalive_enabled
-
-    startup_start = time.time()
-    app_state.start_time = startup_start
-    logger.info("Whisper AI starting")
+    from services.runtime_manager import get_chat_runtime_manager
 
     try:
         get_db_client()
@@ -286,8 +270,6 @@ async def _startup(app: FastAPI):
 
 
 async def _shutdown():
-    from services.hf_keepalive import get_keepalive, keepalive_enabled
-
     for task_name, label in (
         ("post_start_task", "Post-start initialization"),
         ("runtime_warm_task", "Warm chat runtime"),
@@ -329,8 +311,16 @@ async def _shutdown():
         except Exception as exc:
             logger.error(f"Failed to save knowledge base: {exc}")
 
+    if _space_safe_mode_enabled():
+        return
+
+    from api.routes import collect, research
+    from services.hf_keepalive import get_keepalive, keepalive_enabled
+
     if not TEST_MODE:
         try:
+            from utils.persistence import backup_data
+
             backup_data()
         except Exception as exc:
             logger.warning(f"Dataset backup skipped: {exc}")
@@ -370,36 +360,77 @@ Path("ui").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
-app.include_router(chat.router, prefix="/api", tags=["Chat"])
-app.include_router(agent.router, prefix="/api", tags=["Agent"])
-app.include_router(autoresearch.router, prefix="/api", tags=["Autoresearch"])
-app.include_router(image.router, prefix="/api", tags=["Image"])
-app.include_router(files.router, prefix="/api", tags=["Files"])
-app.include_router(knowledge.router, prefix="/api", tags=["Knowledge"])
-app.include_router(auth.router, prefix="/api", tags=["Auth"])
-app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
-app.include_router(models.router, prefix="/api", tags=["Models"])
-app.include_router(profile.router, prefix="/api", tags=["Profile"])
-app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-app.include_router(dashboard.dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
-app.include_router(voice.router, prefix="/api", tags=["Voice"])
-app.include_router(faceswap.router, prefix="/api", tags=["FaceSwap"])
-app.include_router(upscale.router, prefix="/api", tags=["Upscale"])
-app.include_router(roleplay.router, prefix="/api", tags=["Roleplay"])
-app.include_router(horde.router, prefix="/api", tags=["Horde"])
-app.include_router(characters.router, prefix="/api", tags=["Characters"])
-app.include_router(tts.router, prefix="/api", tags=["TTS"])
-app.include_router(learn.router, prefix="/api", tags=["Learning"])
-app.include_router(feed.router, prefix="/api/feed", tags=["Data Feed"])
-app.include_router(huggingface.router, prefix="/api", tags=["HuggingFace"])
-app.include_router(smart_mode.router, prefix="/api", tags=["Smart Mode"])
-app.include_router(healthcheck.router, prefix="/api", tags=["Health"])
-app.include_router(ping.router, prefix="/api", tags=["Keepalive"])
-app.include_router(collect.router, prefix="/api/collect", tags=["Data Collection"])
-app.include_router(train_vision.router, tags=["Vision Training"])
-app.include_router(datasets.router, prefix="/api", tags=["Datasets"])
-app.include_router(research.router, prefix="/api", tags=["Research"])
-app.include_router(ui.router, tags=["UI"])
+
+def _register_full_routes(target_app: FastAPI):
+    from api.routes import (
+        admin,
+        agent,
+        analytics,
+        autoresearch,
+        auth,
+        characters,
+        chat,
+        collect,
+        dashboard,
+        datasets,
+        faceswap,
+        feed,
+        files,
+        healthcheck,
+        horde,
+        huggingface,
+        image,
+        knowledge,
+        learn,
+        models,
+        ping,
+        profile,
+        research,
+        roleplay,
+        smart_mode,
+        train_vision,
+        tts,
+        ui,
+        upscale,
+        voice,
+    )
+
+    target_app.include_router(chat.router, prefix="/api", tags=["Chat"])
+    target_app.include_router(agent.router, prefix="/api", tags=["Agent"])
+    target_app.include_router(autoresearch.router, prefix="/api", tags=["Autoresearch"])
+    target_app.include_router(image.router, prefix="/api", tags=["Image"])
+    target_app.include_router(files.router, prefix="/api", tags=["Files"])
+    target_app.include_router(knowledge.router, prefix="/api", tags=["Knowledge"])
+    target_app.include_router(auth.router, prefix="/api", tags=["Auth"])
+    target_app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
+    target_app.include_router(models.router, prefix="/api", tags=["Models"])
+    target_app.include_router(profile.router, prefix="/api", tags=["Profile"])
+    target_app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+    target_app.include_router(dashboard.dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
+    target_app.include_router(voice.router, prefix="/api", tags=["Voice"])
+    target_app.include_router(faceswap.router, prefix="/api", tags=["FaceSwap"])
+    target_app.include_router(upscale.router, prefix="/api", tags=["Upscale"])
+    target_app.include_router(roleplay.router, prefix="/api", tags=["Roleplay"])
+    target_app.include_router(horde.router, prefix="/api", tags=["Horde"])
+    target_app.include_router(characters.router, prefix="/api", tags=["Characters"])
+    target_app.include_router(tts.router, prefix="/api", tags=["TTS"])
+    target_app.include_router(learn.router, prefix="/api", tags=["Learning"])
+    target_app.include_router(feed.router, prefix="/api/feed", tags=["Data Feed"])
+    target_app.include_router(huggingface.router, prefix="/api", tags=["HuggingFace"])
+    target_app.include_router(smart_mode.router, prefix="/api", tags=["Smart Mode"])
+    target_app.include_router(healthcheck.router, prefix="/api", tags=["Health"])
+    target_app.include_router(ping.router, prefix="/api", tags=["Keepalive"])
+    target_app.include_router(collect.router, prefix="/api/collect", tags=["Data Collection"])
+    target_app.include_router(train_vision.router, tags=["Vision Training"])
+    target_app.include_router(datasets.router, prefix="/api", tags=["Datasets"])
+    target_app.include_router(research.router, prefix="/api", tags=["Research"])
+    target_app.include_router(ui.router, tags=["UI"])
+
+
+if not _space_safe_mode_enabled():
+    _register_full_routes(app)
+else:
+    logger.warning("WHISPER_SPACE_SAFE_MODE enabled; skipping heavy route registration")
 
 
 @app.middleware("http")
@@ -413,24 +444,30 @@ async def track_request_analytics(request, call_next):
         return response
     finally:
         path = request.url.path or ""
-        if path.startswith("/api"):
-            client_host = request.client.host if request.client else None
-            analytics.analytics.record_request(
-                time.time() - start,
-                endpoint=path,
-                client_id=client_host,
-                status_code=status_code,
-            )
+        if path.startswith("/api") and not _space_safe_mode_enabled():
+            try:
+                from api.routes import analytics
+
+                client_host = request.client.host if request.client else None
+                analytics.analytics.record_request(
+                    time.time() - start,
+                    endpoint=path,
+                    client_id=client_host,
+                    status_code=status_code,
+                )
+            except Exception as exc:
+                logger.debug(f"Request analytics skipped: {exc}")
 
 
 @app.get("/")
 async def root():
-    return JSONResponse(
-        content={
-            "status": "healthy",
-            "message": "Whisper AI is running",
-            "version": app.version,
-            "endpoints": {
+    endpoints = {
+        "health": "/api/health",
+        "docs": "/docs",
+    }
+    if not _space_safe_mode_enabled():
+        endpoints.update(
+            {
                 "chat_api": "/api/chat",
                 "chat_ui": "/chat",
                 "image_api": "/api/image/generate",
@@ -438,8 +475,16 @@ async def root():
                 "research": "/api/research",
                 "autoresearch": "/api/autoresearch/projects",
                 "admin_ui": "/admin-ui",
-                "docs": "/docs",
-            },
+            }
+        )
+
+    return JSONResponse(
+        content={
+            "status": "healthy",
+            "message": "Whisper AI is running",
+            "version": app.version,
+            "safe_mode": _space_safe_mode_enabled(),
+            "endpoints": endpoints,
         }
     )
 
@@ -451,6 +496,7 @@ async def health():
         content={
             "status": "ok",
             "service": "whisper-ai",
+            "safe_mode": _space_safe_mode_enabled(),
             "model_loaded": runtime.get("loaded", False),
             "backend": runtime.get("active_backend"),
             "uptime": int(time.time() - app_state.start_time),
@@ -466,6 +512,7 @@ async def api_health():
         content={
             "status": "ok",
             "service": "whisper-ai",
+            "safe_mode": _space_safe_mode_enabled(),
             "model_loaded": runtime.get("loaded", False),
             "backend": runtime.get("active_backend"),
             "runtime": runtime,
