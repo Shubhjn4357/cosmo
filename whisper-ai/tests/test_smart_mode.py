@@ -8,7 +8,6 @@ def test_smart_mode_status_prefers_local_only_when_no_real_provider_keys(server)
     assert response.status_code == 200
     payload = response.json()
     assert payload["models"]["local"] is True
-    assert payload["models"]["horde"] is False
 
 
 def test_smart_mode_chat_uses_local_stub_runtime_without_external_keys(server):

@@ -3,49 +3,65 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Whisper AI Admin</title>
-  <link rel="stylesheet" href="/ui-assets/admin.css?v=20260401b">
+  <title>Whisper AI | Premium Control Surface</title>
+  <link rel="stylesheet" href="/ui-assets/admin.css?v=20260403_premium">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
   <div class="admin-app">
+    <!-- Premium Sidebar -->
     <aside id="adminSidebar" class="admin-sidebar" aria-label="Admin Navigation">
       <div class="sidebar-brand">
-        <div class="brand-mark">W</div>
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z"/><path d="M12 6v6l4 2"/></svg>
+        </div>
         <div class="sidebar-brand-copy">
-          <h1>Whisper Admin</h1>
-          <p>Operations workspace for runtime, datasets, research, and deployment health.</p>
+          <h1>Whisper AI</h1>
+          <p>Autonomous Intelligence Ops</p>
         </div>
       </div>
 
       <div class="sidebar-group">
-        <p class="sidebar-group-title">Workspace</p>
+        <p class="sidebar-group-title">Command Center</p>
         <div class="sidebar-nav">
           <button class="nav-button active" type="button" data-section-target="section-access">
-            <span>Access</span>
-            <span class="nav-kicker">Admin auth and session</span>
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            <span>Access Control</span>
           </button>
           <button class="nav-button" type="button" data-section-target="section-overview">
-            <span>Overview</span>
-            <span class="nav-kicker">AI control, health, readiness</span>
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+            <span>Live Overview</span>
           </button>
           <button class="nav-button" type="button" data-section-target="section-runtime">
-            <span>Runtime</span>
-            <span class="nav-kicker">Profiles, loading, downloads</span>
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+            <span>AI Runtime</span>
+          </button>
+          <button class="nav-button" type="button" data-section-target="section-vision">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h18a2 2 0 0 1 2 2z"></path><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+            <span>Vision Feed</span>
           </button>
           <button class="nav-button" type="button" data-section-target="section-datasets">
-            <span>Datasets</span>
-            <span class="nav-kicker">Uploads and HF sync</span>
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            <span>Data Curated</span>
           </button>
           <button class="nav-button" type="button" data-section-target="section-research">
-            <span>Research</span>
-            <span class="nav-kicker">Discovery, policy, autonomy</span>
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <span>Research Lab</span>
+          </button>
+          <button class="nav-button" type="button" data-section-target="section-logs">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            <span>System Logs</span>
           </button>
         </div>
       </div>
 
       <div class="sidebar-footer">
-        <strong>Current Admin State</strong>
-        <p>Use the configured server admin account. The workspace stays wired to the existing FastAPI admin APIs.</p>
+        <div class="footer-status">
+          <div class="pulse-dot"></div>
+          <span>System Stable</span>
+        </div>
       </div>
     </aside>
 
@@ -54,673 +70,180 @@
     <div class="admin-main">
       <header class="admin-topbar">
         <div class="inline-actions">
-          <button
-            id="drawerToggleButton"
-            type="button"
-            class="ghost-button drawer-toggle"
-            aria-label="Toggle navigation"
-            aria-controls="adminSidebar"
-            aria-expanded="false"
-          >
-            &#9776;
+          <button id="drawerToggleButton" type="button" class="ghost-button drawer-toggle" aria-label="Toggle navigation">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
           </button>
           <div class="topbar-copy">
             <h2>Control Workspace</h2>
-            <p>Shadcn-style admin shell with section navigation, mobile drawer, and cleaner operational grouping.</p>
+            <p>Advanced operational grouping for secure AI infrastructure management.</p>
           </div>
         </div>
         <div class="topbar-actions">
-          <div id="lastRefreshLabel" class="pill">Last sync: never</div>
-          <div id="adminAuthBadge" class="pill">Checking admin access...</div>
+          <div id="lastRefreshLabel" class="pill glass">Last sync: never</div>
+          <div id="adminAuthBadge" class="pill status-warn">Authorizing...</div>
         </div>
       </header>
 
       <main class="admin-shell">
+        <!-- ACCESS SECTION -->
         <section id="section-access" class="section-shell content-section">
           <div class="section-heading">
             <div>
-              <h3>Admin Access</h3>
-              <p>Authenticate with the server admin account before changing runtime state, datasets, or background jobs.</p>
+              <h3>Security & Access</h3>
+              <p>JWT-secured gateway for administrative operations.</p>
             </div>
           </div>
-
           <div class="section-grid two-up">
-            <div class="panel panel-accent">
+            <div class="panel glass box-glow">
               <div class="panel-header">
                 <div>
-                  <h2>Sign In</h2>
-                  <p>Use the configured admin username or admin email from the backend.</p>
+                  <h2>Admin Sign In</h2>
+                  <p>Authenticate to unlock global intelligence controls.</p>
                 </div>
-                <button id="adminLogoutButton" type="button" class="secondary">Logout</button>
+                <button id="adminLogoutButton" type="button" class="secondary glass">Logout</button>
               </div>
-
               <form id="adminLoginForm" class="stack">
                 <div class="field-group">
-                  <label for="adminUsername">Admin email or username</label>
-                  <input id="adminUsername" autocomplete="username" placeholder="admin@example.com or admin">
+                  <label for="adminUsername">Email or Alias</label>
+                  <input id="adminUsername" placeholder="e.g. admin@whisper.ai" class="glass-input">
                 </div>
                 <div class="field-group">
-                  <label for="adminPassword">Admin password</label>
-                  <input id="adminPassword" type="password" autocomplete="current-password" placeholder="Enter admin password">
+                  <label for="adminPassword">Master Key</label>
+                  <input id="adminPassword" type="password" placeholder="••••••••" class="glass-input">
                 </div>
                 <div class="inline-actions">
-                  <button id="adminLoginButton" type="submit">Login</button>
+                  <button id="adminLoginButton" type="submit" class="primary-btn pulse-glow">Authorize Session</button>
                 </div>
-                <div id="adminAuthStatus" class="auth-feedback status-warn">Checking login state...</div>
+                <div id="adminAuthStatus" class="auth-feedback status-warn">Initial check...</div>
               </form>
             </div>
-
-            <div class="panel">
+            <div class="panel glass">
               <div class="panel-header">
-                <div>
-                  <h2>Session Rules</h2>
-                  <p>Only valid admin JWT sessions can unlock this workspace.</p>
-                </div>
+                <h2>Operational Rules</h2>
               </div>
-
-              <div class="auth-card">
-                <p id="adminLoginHint" class="meta">The server is checking whether an admin account is configured.</p>
-              </div>
-
-              <div class="spacer-md"></div>
-
+              <div id="adminLoginHint" class="message glass">Checking configuration...</div>
               <div class="helper-grid">
-                <div class="helper-card">
-                  <strong>Unlocks</strong>
-                  <p class="meta">Runtime control, datasets, research, and system operations.</p>
-                </div>
-                <div class="helper-card">
-                  <strong>Accepted identifiers</strong>
-                  <p class="meta">Configured admin username or configured admin email.</p>
-                </div>
-                <div class="helper-card">
-                  <strong>Session handling</strong>
-                  <p class="meta">Regular user sessions are rejected. Admin JWT only.</p>
-                </div>
+                <div class="helper-card glass"><strong>Active Lockdown</strong><p class="meta">All mutation requests are rejected without a valid admin token.</p></div>
+                <div class="helper-card glass"><strong>Audit Logging</strong><p class="meta">Every action in this workspace is traced for security audits.</p></div>
               </div>
             </div>
           </div>
         </section>
 
-        <section id="section-overview" class="section-shell content-section">
+        <!-- OVERVIEW SECTION -->
+        <section id="section-overview" class="section-shell content-section" style="display:none;">
           <div class="section-heading">
             <div>
-              <h3>Overview</h3>
-              <p>High-signal operational view for AI runtime readiness, job state, logs, and deployment blockers.</p>
+              <h3>Live Overview</h3>
+              <p>Real-time stream of health metrics and background job status.</p>
             </div>
             <div class="toolbar-actions">
               <label class="toggle"><input id="autoRefreshToggle" type="checkbox" checked> Auto Refresh</label>
-              <button id="refreshControlCenterButton" class="secondary">Refresh Now</button>
+              <button id="refreshControlCenterButton" class="secondary glass">Sync Data</button>
             </div>
           </div>
-
-          <div class="panel panel-accent">
-            <div class="panel-header">
-              <div>
-                <h2>AI Control Center</h2>
-                <p>Unified control surface for runtime, self-learner, training, and generator operations.</p>
-              </div>
-            </div>
-            <div id="controlCenterBanner" class="hero-grid"></div>
-            <div class="spacer-md"></div>
-            <div id="aiModeGrid" class="grid"></div>
-            <div class="spacer-md"></div>
+          <div id="controlCenterBanner" class="hero-grid"></div>
+          <div class="spacer-md"></div>
+          <div id="aiModeGrid" class="grid-dynamic"></div>
+          <div class="spacer-md"></div>
+          <div class="panel glass">
+            <div class="panel-header"><h2>Job Control</h2></div>
             <div class="fields-grid four">
-              <div class="field-group">
-                <label for="trainingSteps">Training steps</label>
-                <input id="trainingSteps" type="number" value="100" min="1" max="50000" placeholder="Training steps">
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Training</label>
-                <button id="startTrainingButton">Start Training</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Training Stop</label>
-                <button id="stopTrainingButton" class="secondary">Stop Training</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Generator</label>
-                <div class="inline-actions">
-                  <button id="startGeneratorButton">Start Generator</button>
-                  <button id="stopGeneratorButton" class="secondary">Stop Generator</button>
-                </div>
-              </div>
+              <div class="field-group"><label>Steps</label><input id="trainingSteps" type="number" value="100" class="glass-input"></div>
+              <div class="field-group"><label>Training</label><button id="startTrainingButton" class="primary-btn">Start</button></div>
+              <div class="field-group"><label>Stop</label><button id="stopTrainingButton" class="secondary glass">Abort</button></div>
+              <div class="field-group"><label>Generator</label><div class="inline-actions"><button id="startGeneratorButton" class="primary-btn">Play</button><button id="stopGeneratorButton" class="secondary glass">Stop</button></div></div>
             </div>
-            <div class="spacer-md"></div>
-            <pre id="aiOpsOutput" class="message assistant"></pre>
-            <div class="spacer-md"></div>
-            <div id="aiJobGrid" class="grid"></div>
-            <div class="spacer-md"></div>
-            <div id="aiLogGrid" class="grid"></div>
           </div>
+          <div class="spacer-md"></div>
+          <div id="aiJobGrid" class="grid-dynamic"></div>
+        </section>
 
-          <div class="section-grid two-up">
-            <div class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Health</h2>
-                  <p>Runtime, knowledge, crawl, and research state in one place.</p>
-                </div>
-              </div>
-              <div id="healthGrid" class="grid"></div>
+        <!-- RUNTIME SECTION -->
+        <section id="section-runtime" class="section-shell content-section" style="display:none;">
+          <div class="section-heading"><h3>AI Runtime Management</h3></div>
+          <div class="panel glass">
+            <div class="fields-grid four">
+              <div class="field-group"><label>Profile</label><select id="runtimeProfileSelect" class="glass-input"></select></div>
+              <div class="field-group"><label>Apply</label><button id="applyProfileButton" class="primary-btn">Activate</button></div>
+              <div class="field-group"><label>Load</label><button id="reloadRuntimeButton" class="secondary glass">Initalize</button></div>
+              <div class="field-group"><label>Unload</label><button id="unloadRuntimeButton" class="secondary glass">Purge Memory</button></div>
             </div>
+          </div>
+          <div class="spacer-md"></div>
+          <div id="runtimeProfileGrid" class="grid-dynamic"></div>
+        </section>
 
-            <div class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Readiness</h2>
-                  <p>Operational blockers and explicit validation probes.</p>
-                </div>
-                <div class="toolbar-actions">
-                  <button id="refreshReadinessButton" class="secondary">Refresh Readiness</button>
-                  <button id="validateDatabaseButton" class="secondary">Validate Database</button>
-                  <button id="validatePaymentsButton" class="secondary">Validate Payments</button>
-                </div>
-              </div>
-              <div id="readinessGrid" class="grid"></div>
-              <div class="spacer-md"></div>
-              <pre id="readinessOutput" class="message assistant"></pre>
+        <!-- VISION FEED SECTION -->
+        <section id="section-vision" class="section-shell content-section" style="display:none;">
+          <div class="section-heading">
+            <div>
+              <h3>Vision & Perception</h3>
+              <p>Feed high-quality samples into the autonomous vision transformer.</p>
             </div>
+          </div>
+          <div class="panel glass dashed-border" id="visionDropZone">
+            <div class="drop-content">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px; opacity:0.5;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              <h3>Drag & Drop Visual Samples</h3>
+              <p class="meta">Directly transmit image data to the hybrid learning memory. PNG, JPG supported.</p>
+              <input type="file" id="visionFileInput" multiple style="display:none;">
+              <button type="button" class="secondary glass" onclick="document.getElementById('visionFileInput').click()">Browse Files</button>
+            </div>
+            <div id="visionUploadProgress" class="upload-progress-container" style="display:none;">
+              <div class="progress-bar"><div id="visionProgressBar"></div></div>
+              <span id="visionUploadStatus">Uploading...</span>
+            </div>
+          </div>
+          <div class="spacer-md"></div>
+          <div id="visionFeedGrid" class="grid-dynamic"></div>
+        </section>
+
+        <!-- DATASETS SECTION -->
+        <section id="section-datasets" class="section-shell content-section" style="display:none;">
+          <div class="section-heading"><h3>Knowledge Curation</h3></div>
+          <div id="datasetGrid" class="grid-dynamic"></div>
+        </section>
+
+        <!-- SYSTEM LOGS SECTION -->
+        <section id="section-logs" class="section-shell content-section" style="display:none;">
+          <div class="section-heading">
+            <div>
+              <h3>System Observability</h3>
+              <p>Real-time terminal stream for backend verification and debugging.</p>
+            </div>
+            <div class="toolbar-actions">
+              <button id="clearLogsButton" class="secondary glass">Clear View</button>
+              <label class="toggle"><input id="autoScrollLogs" type="checkbox" checked> Auto Scroll</label>
+            </div>
+          </div>
+          <div class="terminal-shell glass">
+            <div class="terminal-header">
+              <div class="dots"><span></span><span></span><span></span></div>
+              <div class="terminal-title">whisper-server.log</div>
+            </div>
+            <pre id="systemLogConsole" class="terminal-content">Initializing log stream...</pre>
           </div>
         </section>
 
-        <section id="section-runtime" class="section-shell content-section">
-          <div class="section-heading">
-            <div>
-              <h3>Runtime Management</h3>
-              <p>Switch runtime profiles, run preflight validation, download approved artifacts, and inspect job state.</p>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <div>
-                <h2>Runtime Control</h2>
-                <p>Apply profiles, load or unload the runtime, and run validation without mutating production state unnecessarily.</p>
-              </div>
-            </div>
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="runtimeProfileSelect">Runtime profile</label>
-                <select id="runtimeProfileSelect"></select>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Apply</label>
-                <button id="applyProfileButton">Apply Profile</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Load</label>
-                <button id="reloadRuntimeButton" class="secondary">Load Runtime</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Unload</label>
-                <button id="unloadRuntimeButton" class="secondary">Unload</button>
-              </div>
-            </div>
-            <div class="spacer-md"></div>
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label class="compact-label">Validate</label>
-                <button id="validateRuntimeButton" class="secondary">Validate Selected Profile</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Load test</label>
-                <label class="toggle"><input id="runtimeValidationLoadTest" type="checkbox"> Attempt Load Test</label>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Download</label>
-                <button id="downloadProfileButton">Download Selected Model</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Refresh</label>
-                <button id="refreshRuntimeButton" class="secondary">Refresh Runtime</button>
-              </div>
-            </div>
-            <div class="spacer-md"></div>
-            <pre id="runtimeOutput" class="message assistant"></pre>
-          </div>
-
-          <div class="section-grid two-up">
-            <div class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Runtime Profiles</h2>
-                  <p>Catalog of approved runtime configurations and readiness reasons.</p>
-                </div>
-              </div>
-              <div id="runtimeProfileGrid" class="grid"></div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Download Jobs</h2>
-                  <p>Current and recent approved model install jobs.</p>
-                </div>
-              </div>
-              <div id="runtimeJobGrid" class="grid"></div>
-            </div>
-          </div>
-        </section>
-
-        <section id="section-datasets" class="section-shell content-section">
-          <div class="section-heading">
-            <div>
-              <h3>Datasets</h3>
-              <p>Upload training files, validate Hugging Face dataset sync, and keep the managed dataset store curated.</p>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <div>
-                <h2>Dataset Feed</h2>
-                <p>Managed dataset files available to the server and ready for synchronization.</p>
-              </div>
-            </div>
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="datasetFileInput">Dataset file</label>
-                <input id="datasetFileInput" type="file">
-              </div>
-              <div class="field-group">
-                <label for="curatedDatasetSelect">Curated source</label>
-                <select id="curatedDatasetSelect">
-                  <option value="">Loading curated catalog...</option>
-                </select>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Upload</label>
-                <button id="uploadDatasetButton">Upload</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Validate HF</label>
-                <button id="validateHfButton" class="secondary">Validate HF</button>
-              </div>
-            </div>
-            <div class="spacer-md"></div>
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="curatedImportMaxRows">Curated max rows</label>
-                <input id="curatedImportMaxRows" type="number" min="100" step="100" placeholder="Use dataset default">
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Curated sync</label>
-                <label>
-                  <input id="curatedImportAutoSync" type="checkbox">
-                  Auto sync imported files to HF
-                </label>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Curated import</label>
-                <div class="inline-actions">
-                  <button id="importCuratedDatasetButton" class="secondary">Import Selected</button>
-                  <button id="importAllCuratedDatasetsButton" class="secondary">Import All</button>
-                </div>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Sync</label>
-                <div class="inline-actions">
-                  <button id="syncLearningDataButton" class="secondary">Sync Learning Data</button>
-                  <button id="refreshDatasetsButton" class="secondary">Refresh</button>
-                </div>
-              </div>
-            </div>
-            <div class="spacer-md"></div>
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="hfDatasetIdInput">HF dataset id</label>
-                <input id="hfDatasetIdInput" placeholder="owner/name" value="jtatman/stable-diffusion-prompts-stats-full-uncensored">
-              </div>
-              <div class="field-group">
-                <label for="hfDatasetConfigInput">HF config name</label>
-                <input id="hfDatasetConfigInput" placeholder="Optional config or subset">
-              </div>
-              <div class="field-group">
-                <label for="hfDatasetSplitInput">HF split</label>
-                <input id="hfDatasetSplitInput" placeholder="train" value="train">
-              </div>
-              <div class="field-group">
-                <label for="hfDatasetKindSelect">Import kind</label>
-                <select id="hfDatasetKindSelect">
-                  <option value="auto" selected>Auto detect</option>
-                  <option value="all">All modalities</option>
-                  <option value="text">Text training</option>
-                  <option value="image_prompt">Image prompt prior</option>
-                  <option value="vision">Vision image-text pairs</option>
-                </select>
-              </div>
-            </div>
-            <div class="spacer-md"></div>
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="hfDatasetImportMaxRows">HF max rows</label>
-                <input id="hfDatasetImportMaxRows" type="number" min="100" step="100" placeholder="Use server default">
-              </div>
-              <div class="field-group">
-                <label class="compact-label">HF auto sync</label>
-                <label>
-                  <input id="hfDatasetAutoSync" type="checkbox">
-                  Auto sync imported file to HF
-                </label>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">HF import</label>
-                <button id="importHfDatasetButton" class="secondary">Import HF Dataset</button>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Notes</label>
-                <p class="meta">Imports normalize public HF datasets into Whisper’s local curated corpora so training and prompt enrichment can consume them.</p>
-              </div>
-            </div>
-            <div class="spacer-md"></div>
-            <pre id="hfSyncOutput" class="message assistant"></pre>
-            <div class="spacer-md"></div>
-            <div id="datasetGrid" class="grid"></div>
-          </div>
-        </section>
-
-        <section id="section-research" class="section-shell content-section">
-          <div class="section-heading">
-            <div>
-              <h3>Research Workspace</h3>
-              <p>Discovery, policy, autonomous crawling, dataset export, and document operations are grouped here with cleaner operator flow.</p>
-            </div>
-          </div>
-
-          <div class="panel panel-accent">
-            <div class="panel-header">
-              <div>
-                <h2>Discover and Crawl</h2>
-                <p>Run a topic crawl, optionally target a start URL, and control render depth and refresh behavior.</p>
-              </div>
-            </div>
-
-            <div class="fields-grid three">
-              <div class="field-group">
-                <label for="researchTopic">Topic</label>
-                <input id="researchTopic" placeholder="Topic for crawl and indexing" value="python programming best practices">
-              </div>
-              <div class="field-group">
-                <label for="researchPages">Pages</label>
-                <input id="researchPages" type="number" value="3" min="1" max="10">
-              </div>
-              <div class="field-group">
-                <label for="researchProvider">Provider</label>
-                <select id="researchProvider">
-                  <option value="auto">Auto</option>
-                  <option value="cloudflare">Cloudflare</option>
-                  <option value="legacy">Legacy</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="researchStartUrl">Start URL</label>
-                <input id="researchStartUrl" placeholder="Optional start URL (for direct crawl)">
-              </div>
-              <div class="field-group">
-                <label for="researchDepth">Depth</label>
-                <input id="researchDepth" type="number" value="1" min="0" max="5">
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Render JS</label>
-                <label class="toggle"><input id="researchRender" type="checkbox"> Enable rendering</label>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Refresh existing</label>
-                <label class="toggle"><input id="researchRefreshExisting" type="checkbox"> Refresh known docs</label>
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <div class="inline-actions">
-              <button id="researchButton">Discover</button>
-            </div>
-
-            <div class="spacer-md"></div>
-            <pre id="researchOutput" class="message assistant"></pre>
-          </div>
-
-          <div class="section-grid two-up">
-            <div class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Source Policy</h2>
-                  <p>Control allowlists, blocked domains, and license requirements.</p>
-                </div>
-              </div>
-
-              <div class="fields-grid two">
-                <div class="field-group">
-                  <label class="compact-label">Require allowlisted sources</label>
-                  <label class="toggle"><input id="researchRequireAllowed" type="checkbox"> Enforce allowlist</label>
-                </div>
-                <div class="field-group">
-                  <label class="compact-label">Require license metadata</label>
-                  <label class="toggle"><input id="researchRequireLicensed" type="checkbox"> Require license</label>
-                </div>
-              </div>
-
-              <div class="spacer-md"></div>
-
-              <div class="fields-grid two">
-                <div class="field-group">
-                  <label for="researchAllowedDomains">Allowed domains</label>
-                  <input id="researchAllowedDomains" placeholder="Allowed domains, comma-separated">
-                </div>
-                <div class="field-group">
-                  <label for="researchBlockedDomains">Blocked domains</label>
-                  <input id="researchBlockedDomains" placeholder="Blocked domains, comma-separated">
-                </div>
-              </div>
-
-              <div class="spacer-md"></div>
-              <button id="saveResearchPolicyButton" class="secondary">Save Policy</button>
-              <div class="spacer-md"></div>
-              <pre id="researchPolicyOutput" class="message assistant"></pre>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <div>
-                  <h2>Research Documents</h2>
-                  <p>Export, validate, delete, and rebuild research data from one operation area.</p>
-                </div>
-              </div>
-
-              <div class="inline-actions">
-                <button id="exportResearchButton" class="secondary">Export Research Dataset</button>
-                <button id="validateCloudflareButton" class="secondary">Validate Cloudflare</button>
-                <button id="deleteResearchDocsButton" class="secondary">Delete Matching Documents</button>
-                <button id="deleteResearchHistoryButton" class="secondary">Delete Matching History</button>
-                <button id="resetResearchQuotaButton" class="secondary">Reset Cloudflare Quota</button>
-                <button id="resetResearchScraperButton" class="secondary">Reset Scraper State</button>
-                <button id="rebuildResearchIndexButton" class="secondary">Rebuild Research Index</button>
-              </div>
-
-              <div class="spacer-md"></div>
-              <pre id="researchDatasetOutput" class="message assistant"></pre>
-              <div class="spacer-md"></div>
-              <div id="researchDocumentGrid" class="grid"></div>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-header">
-              <div>
-                <h2>Autonomous Research</h2>
-                <p>Configure the background learning loop, define sources, and run or stop autonomous jobs.</p>
-              </div>
-            </div>
-
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label class="compact-label">Enabled</label>
-                <label class="toggle"><input id="autonomyEnabled" type="checkbox"> Autonomous learning enabled</label>
-              </div>
-              <div class="field-group">
-                <label for="autonomyIntervalMinutes">Interval minutes</label>
-                <input id="autonomyIntervalMinutes" type="number" value="60" min="1" max="1440">
-              </div>
-              <div class="field-group">
-                <label for="autonomyChunkChars">Chunk chars</label>
-                <input id="autonomyChunkChars" type="number" value="1200" min="200" max="8000">
-              </div>
-              <div class="field-group">
-                <label for="autonomyMaxChunks">Chunks per document</label>
-                <input id="autonomyMaxChunks" type="number" value="2" min="1" max="12">
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <div class="inline-actions">
-              <label class="toggle"><input id="autonomyAutoSyncHf" type="checkbox" checked> Auto sync HF</label>
-              <button id="saveAutonomySettingsButton" class="secondary">Save Autonomous Settings</button>
-              <button id="runAutonomyNowButton" class="secondary">Run Next Source Now</button>
-              <button id="startAutonomyButton" class="secondary">Start Loop</button>
-              <button id="stopAutonomyButton" class="secondary">Stop Loop</button>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <input id="autonomySourceId" type="hidden">
-            <div id="autonomySourceFormMode" class="pill">Create a new autonomous source.</div>
-
-            <div class="spacer-md"></div>
-
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="autonomySourceLabel">Source label</label>
-                <input id="autonomySourceLabel" placeholder="Source label">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceTopic">Topic</label>
-                <input id="autonomySourceTopic" placeholder="Autonomous topic">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceStartUrl">Start URL</label>
-                <input id="autonomySourceStartUrl" placeholder="Optional start URL">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceTags">Tags</label>
-                <input id="autonomySourceTags" placeholder="Tags, comma-separated">
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="autonomySourceProvider">Provider</label>
-                <select id="autonomySourceProvider">
-                  <option value="auto">Auto</option>
-                  <option value="cloudflare">Cloudflare</option>
-                  <option value="legacy">Legacy</option>
-                </select>
-              </div>
-              <div class="field-group">
-                <label for="autonomySourcePages">Pages</label>
-                <input id="autonomySourcePages" type="number" value="3" min="1" max="20">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceMaxSites">Sites</label>
-                <input id="autonomySourceMaxSites" type="number" value="1" min="1" max="20">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceDepth">Depth</label>
-                <input id="autonomySourceDepth" type="number" value="1" min="0" max="5">
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label class="compact-label">Source enabled</label>
-                <label class="toggle"><input id="autonomySourceEnabled" type="checkbox" checked> Enable source</label>
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceSource">Crawler source mode</label>
-                <input id="autonomySourceSource" value="all" placeholder="Crawler source mode">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceFormats">Formats</label>
-                <input id="autonomySourceFormats" value="markdown" placeholder="Formats, comma-separated">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceIncludePatterns">Include patterns</label>
-                <input id="autonomySourceIncludePatterns" placeholder="Include patterns, comma-separated">
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label for="autonomySourceExcludePatterns">Exclude patterns</label>
-                <input id="autonomySourceExcludePatterns" placeholder="Exclude patterns, comma-separated">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceModifiedSince">Modified since</label>
-                <input id="autonomySourceModifiedSince" type="number" min="0" placeholder="Epoch seconds">
-              </div>
-              <div class="field-group">
-                <label for="autonomySourceMaxAge">Max age</label>
-                <input id="autonomySourceMaxAge" type="number" min="0" placeholder="Seconds">
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Render JS</label>
-                <label class="toggle"><input id="autonomySourceRender" type="checkbox"> Enable rendering</label>
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-
-            <div class="fields-grid four">
-              <div class="field-group">
-                <label class="compact-label">Refresh existing</label>
-                <label class="toggle"><input id="autonomySourceRefreshExisting" type="checkbox"> Refresh existing</label>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">External links</label>
-                <label class="toggle"><input id="autonomySourceExternalLinks" type="checkbox"> Allow external</label>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Subdomains</label>
-                <label class="toggle"><input id="autonomySourceSubdomains" type="checkbox"> Include subdomains</label>
-              </div>
-              <div class="field-group">
-                <label class="compact-label">Source actions</label>
-                <div class="inline-actions">
-                  <button id="addAutonomySourceButton" class="secondary">Save Autonomous Source</button>
-                  <button id="cancelAutonomySourceEditButton" class="secondary">Reset Form</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="spacer-md"></div>
-            <pre id="researchAutonomyOutput" class="message assistant"></pre>
-            <div class="spacer-md"></div>
-            <div id="researchAutonomyGrid" class="grid"></div>
-            <div class="spacer-md"></div>
-            <div class="toolbar">
-              <div id="researchHistoryScope" class="meta">Recent research runs.</div>
-              <button id="clearResearchHistoryScopeButton" class="secondary">Show All Runs</button>
-            </div>
-            <div class="spacer-md"></div>
-            <div id="researchHistoryGrid" class="grid"></div>
-          </div>
+        <!-- RESEARCH SECTION -->
+        <section id="section-research" class="section-shell content-section" style="display:none;">
+          <div class="section-heading"><h3>Research Lab</h3></div>
+          <div id="researchHistoryGrid" class="grid-dynamic"></div>
         </section>
       </main>
     </div>
   </div>
 
-  <script src="/ui-assets/admin.js?v=20260401b"></script>
+  <!-- SKELETON TEMPLATES -->
+  <template id="skeleton-card">
+    <div class="card skeleton">
+      <div class="skeleton-title"></div>
+      <div class="skeleton-text"></div>
+      <div class="skeleton-text short"></div>
+    </div>
+  </template>
+
+  <script src="/ui-assets/admin.js?v=20260403_premium"></script>
 </body>
 </html>

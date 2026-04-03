@@ -42,7 +42,6 @@ def _register_api_routes(app: FastAPI):
         feed,
         files,
         healthcheck,
-        horde,
         huggingface,
         image,
         knowledge,
@@ -74,7 +73,6 @@ def _register_api_routes(app: FastAPI):
     app.include_router(voice.router, prefix="/api", tags=["Voice"])
     app.include_router(faceswap.router, prefix="/api", tags=["FaceSwap"])
     app.include_router(roleplay.router, prefix="/api", tags=["Roleplay"])
-    app.include_router(horde.router, prefix="/api", tags=["Horde"])
     app.include_router(characters.router, prefix="/api", tags=["Characters"])
     app.include_router(tts.router, prefix="/api", tags=["TTS"])
     app.include_router(learn.router, prefix="/api", tags=["Learning"])

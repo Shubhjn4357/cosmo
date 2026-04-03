@@ -127,15 +127,10 @@ projected = vision_model.encode_vision(clip_embedding)
 
 ## 🎨 Current Generation Method
 
-**For now, use AI Horde** (in your app):
-- High quality
-- Free and unlimited
-- Works immediately
-
-**Vision decoder**:
-- Learning in background
-- Will improve over time
-- Future independence
+**Local Vision Decoder**:
+- **Learning in background**: Each image collected adds to the model's knowledge.
+- **Improving over time**: As CLIP embeddings accumulate, shapes and colors will refine.
+- **Future independence**: Developing a fully local, CPU-friendly generation path.
 
 ## 📈 How to Track Progress
 
@@ -153,4 +148,4 @@ Over time, as knowledge grows, generation will improve!
 
 ---
 
-**Bottom line**: Your model has image generation capability now, but it needs time and data to learn. Use AI Horde for actual generation while this learns in the background! 🚀
+**Bottom line**: Your model has autonomous image generation capability now. It starts small and needs time/data to learn, but it is fully independent and runs entirely on your CPU! 🚀

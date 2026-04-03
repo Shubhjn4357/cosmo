@@ -1,16 +1,20 @@
 """
 Whisper AI - Admin Dashboard API Routes.
+Comprehensively expanded for vision data management, real-time logs, and advanced analytics.
 """
 
 import json
 import time
-from pathlib import Path
-
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from typing import Any, Optional
 import os
+import uuid
+from pathlib import Path
+from io import BytesIO
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
+from typing import Any, Optional, List, Dict
 from loguru import logger
+from PIL import Image
 
 from .auth import verify_admin_token
 from services.google_auth import google_auth_status
@@ -28,7 +32,7 @@ from services.turso_db import DB_PATH, libsql, validate_database_connection
 blocked_ips_storage = []
 router = APIRouter()
 
-SMART_PROVIDER_IDS = {"gemini", "huggingface", "horde", "local"}
+SMART_PROVIDER_IDS = {"gemini", "huggingface", "local"}
 
 
 def _count_total_profiles(db_client) -> int:
@@ -67,14 +71,22 @@ def _safe_json_file(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _tail_text_file(path: Path, max_chars: int = 1600) -> str:
+def _tail_text_file(path: Path, max_chars: int = 4000) -> str:
     if not path.exists():
         return ""
     try:
-        text = path.read_text(encoding="utf-8", errors="ignore").strip()
-    except Exception:
+        # Better tailing logic for large files
+        file_size = path.stat().st_size
+        if file_size == 0:
+            return ""
+        
+        with open(path, "rb") as f:
+            if file_size > max_chars:
+                f.seek(-max_chars, 2)
+            return f.read().decode("utf-8", errors="ignore").strip()
+    except Exception as exc:
+        logger.debug(f"Tail failed for {path}: {exc}")
         return ""
-    return text[-max_chars:] if len(text) > max_chars else text
 
 
 def _collect_dataset_payload() -> dict[str, Any]:
@@ -126,8 +138,8 @@ def _self_learner_summary() -> dict[str, Any]:
         "thresholds": {
             "min_steps": min_steps,
             "min_sequences": min_sequences,
-            "step_progress": min(1.0, steps / min_steps),
-            "sequence_progress": min(1.0, sequences / min_sequences),
+            "step_progress": min(1.0, steps / min_steps) if min_steps > 0 else 1.0,
+            "sequence_progress": min(1.0, sequences / min_sequences) if min_sequences > 0 else 1.0,
         },
         "artifacts": {
             "checkpoint": str(SELF_LEARNER_CHECKPOINT),
@@ -173,7 +185,6 @@ def _ai_mode_cards(
             ("gemini", bool(os.getenv("GEMINI_API_KEY", "").strip())),
             ("huggingface", bool(get_hf_token())),
             ("openai", bool(os.getenv("OPENAI_API_KEY", "").strip())),
-            ("horde", bool(os.getenv("AI_HORDE_API_KEY", "").strip())),
         )
         if configured
     ]
@@ -761,6 +772,7 @@ async def ban_user(
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+
 # ============================================================================
 # MODELS MANAGEMENT
 # ============================================================================
@@ -779,7 +791,6 @@ async def get_models(payload: dict = Depends(verify_admin_token)):
     smart_service = SmartModeService(
         gemini_key=os.getenv("GEMINI_API_KEY"),
         hf_key=os.getenv("HF_TOKEN"),
-        horde_key=os.getenv("HORDE_API_KEY"),
     )
     smart_status = await smart_service.get_model_status()
     request_stats = request_analytics.get_stats()
@@ -890,6 +901,52 @@ async def toggle_model(
 
 
 # ============================================================================
+# VISION & DATA UPLOAD
+# ============================================================================
+
+@router.post("/vision/upload")
+async def upload_vision_sample(
+    file: UploadFile = File(...),
+    text: str = "",
+    payload: dict = Depends(verify_admin_token)
+):
+    """Directly upload an image to the vision learning feed"""
+    from api.routes.feed import store_vision_data
+    
+    try:
+        content = await file.read()
+        image = Image.open(BytesIO(content))
+        
+        # Determine text representation if missing
+        final_text = text.strip() or f"High-quality {image.format} capture ({image.width}x{image.height})"
+        
+        # Placeholder embedding logic (will be replaced by model generation if trained)
+        # For now, we store with the raw bytes and allow the collector to encode
+        stored = store_vision_data(
+            embedding=[0.0] * 512, # Placeholder, encoded on next reinforcement
+            text_representation=final_text,
+            source="admin-upload",
+            preview_bytes=content,
+            metadata={
+                "filename": file.filename,
+                "width": image.width,
+                "height": image.height,
+                "format": image.format,
+                "manual_upload": True
+            }
+        )
+        
+        return {
+            "success": True,
+            "message": "Image uploaded to vision feed",
+            "entry": stored["entry"]
+        }
+    except Exception as e:
+        logger.error(f"Vision upload failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ============================================================================
 # ANALYTICS
 # ============================================================================
 
@@ -904,10 +961,10 @@ async def get_analytics(payload: dict = Depends(verify_admin_token)):
     total_users = _count_total_profiles(db_client)
 
     feature_rows = [
-        {"name": "Chat", "usage": daily["totals"]["chat_requests"], "color": "#6366f1"},
-        {"name": "Image Gen", "usage": daily["totals"]["image_requests"], "color": "#8b5cf6"},
+        {"name": "Chat", "usage": daily["totals"]["chat_requests"], "color": "#8b5cf6"},
+        {"name": "Image Gen", "usage": daily["totals"]["image_requests"], "color": "#d946ef"},
         {"name": "Knowledge", "usage": daily["totals"]["knowledge_added"], "color": "#10b981"},
-        {"name": "Errors", "usage": daily["totals"]["errors"], "color": "#ef4444"},
+        {"name": "Errors", "usage": daily["totals"]["errors"], "color": "#f43f5e"},
     ]
 
     return {
@@ -931,8 +988,30 @@ async def get_analytics(payload: dict = Depends(verify_admin_token)):
 
 
 # ============================================================================
-# SYSTEM CONTROL
+# SYSTEM CONTROL & LOGS
 # ============================================================================
+
+@router.get("/system/logs")
+async def get_system_logs(
+    lines: int = 500,
+    payload: dict = Depends(verify_admin_token)
+):
+    """Fetch the latest global app logs"""
+    # Look for the main loguru log file
+    log_files = sorted(LOGS_DIR.glob("*.log"), key=os.path.getmtime, reverse=True)
+    if not log_files:
+        return {"success": False, "error": "No log files found"}
+    
+    latest_log = log_files[0]
+    tail = _tail_text_file(latest_log, max_chars=lines * 200) # Approx 200 chars per line
+    
+    return {
+        "success": True,
+        "filename": latest_log.name,
+        "tail": tail,
+        "timestamp": time.time()
+    }
+
 
 @router.post("/system/training/start")
 async def start_training(payload: dict = Depends(verify_admin_token), steps: int = 100):

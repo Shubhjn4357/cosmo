@@ -50,10 +50,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --chown=user:user requirements.txt requirements-space.txt requirements-optional.txt ./
 
-# CRITICAL: Pin numpy<2 FIRST before any other install.
+# CRITICAL: Pin numpy<2 and setuptools<70 FIRST before any other install.
+# setuptools 70+ removals of pkg_resources break older source packages like openai-whisper on Python 3.12.
 # cv2, torch, pandas, sklearn all use numpy 1.x ABI.
-# Installing numpy 2.x causes AttributeError: _ARRAY_API not found and crashes app startup.
-RUN python -m pip install --upgrade pip setuptools wheel && \
+RUN python -m pip install "pip>=24.0" "setuptools<70.0.0" wheel && \
     pip install --no-cache-dir "numpy>=1.24.0,<2.0.0" && \
     pip install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 && \
     pip install --no-cache-dir -r requirements-space.txt && \

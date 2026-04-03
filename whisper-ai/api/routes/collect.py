@@ -496,7 +496,7 @@ async def _run_collection(request: DataCollectionRequest) -> Dict:
         collection_stats["text_collected"] += len(texts)
 
     if request.source_type in {"images", "both"}:
-        images = await collect_images_from_sources(min(request.count, 5))
+        images = await collect_images_from_sources(min(request.count, 20))
         results["images"] = images
         collection_stats["images_collected"] += len(images)
 
@@ -604,7 +604,7 @@ async def auto_collect_loop():
         try:
             await asyncio.sleep(interval_seconds)
             logger.info("Auto-collecting public data")
-            await _run_collection(DataCollectionRequest(source_type="both", count=3, auto_feed=True))
+            await _run_collection(DataCollectionRequest(source_type="both", count=10, auto_feed=True))
             await learn_from_collected_data()
         except Exception as exc:
             logger.error(f"Auto-collection failed: {exc}")
@@ -628,7 +628,7 @@ async def learn_from_collected_data():
             return
 
         learned_count = 0
-        for item in vision_data_store[-50:]:
+        for item in vision_data_store[-200:]:
             try:
                 hybrid_model.add_vision_embedding(
                     item["embedding"],

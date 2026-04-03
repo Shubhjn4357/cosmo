@@ -28,7 +28,7 @@ class SmartChatResponse(BaseModel):
 async def smart_chat(request: SmartChatRequest) -> SmartChatResponse:
     """
     Smart Mode: Races multiple AI providers and returns best response
-    Providers: Gemini, HuggingFace, AI Horde, Local LLM
+    Providers: Gemini, HuggingFace, Local LLM
     """
     from services.smart_mode_service import SmartModeService
     db_client = None
@@ -43,7 +43,6 @@ async def smart_chat(request: SmartChatRequest) -> SmartChatResponse:
     # Initialize Smart Mode with all available keys
     gemini_key = os.getenv('GEMINI_API_KEY')
     hf_key = os.getenv('HF_TOKEN')
-    horde_key = os.getenv('HORDE_API_KEY')
     
     # Get user's custom HF key if they have one
     user_hf_key = None
@@ -60,7 +59,6 @@ async def smart_chat(request: SmartChatRequest) -> SmartChatResponse:
     smart_service = SmartModeService(
         gemini_key=gemini_key,
         hf_key=hf_key,
-        horde_key=horde_key,
         user_hf_key=user_hf_key
     )
     
@@ -91,9 +89,8 @@ async def get_smart_mode_status():
     
     gemini_key = os.getenv('GEMINI_API_KEY')
     hf_key = os.getenv('HF_TOKEN')
-    horde_key = os.getenv('HORDE_API_KEY')
     
-    smart_service = SmartModeService(gemini_key=gemini_key, hf_key=hf_key, horde_key=horde_key)
+    smart_service = SmartModeService(gemini_key=gemini_key, hf_key=hf_key)
     
     statuses = await smart_service.get_model_status()
     

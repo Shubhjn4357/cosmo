@@ -742,6 +742,17 @@ class ChatRuntimeManager:
             low_cpu_mem_usage=True,
         )
         model.to(self.config.device)
+        
+        # Apply dynamic quantization on CPU to reduce memory footprint
+        if self.config.device == "cpu":
+            try:
+                logger.info("Applying dynamic quantization to transformers model (CPU)")
+                model = torch.quantization.quantize_dynamic(
+                    model, {torch.nn.Linear}, dtype=torch.qint8
+                )
+            except Exception as e:
+                logger.warning(f"Dynamic quantization failed: {e}")
+                
         model.eval()
 
         self._backend_name = "transformers"
