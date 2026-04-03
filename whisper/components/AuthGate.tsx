@@ -74,12 +74,6 @@ export function AuthGate({ children, feature, onAuthRequired }: AuthGateProps) {
                     <View style={styles.benefitRow}>
                         <Ionicons name="checkmark-circle" size={20} color={theme.colors.success} />
                         <Text style={[styles.benefitText, { color: theme.colors.text }]}>
-                            Face swap & upscale
-                        </Text>
-                    </View>
-                    <View style={styles.benefitRow}>
-                        <Ionicons name="checkmark-circle" size={20} color={theme.colors.success} />
-                        <Text style={[styles.benefitText, { color: theme.colors.text }]}>
                             AI character roleplay
                         </Text>
                     </View>

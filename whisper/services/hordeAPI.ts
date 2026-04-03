@@ -215,36 +215,6 @@ class HordeAPI {
       };
     }
   }
-
-  /**
-   * Upscale an image
-   */
-  async upscaleImage(imageUrl: string, scale: number = 4): Promise<{
-    success: boolean;
-    upscaled_url: string;
-    scale: number;
-    method: string;
-  }> {
-    try {
-      const baseUrl = whisperAPI.getBaseUrl();
-      const response = await fetch(`${baseUrl}/api/upscale`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_url: imageUrl, scale }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        const errorMessage = error.detail || error.message || JSON.stringify(error);
-        throw new Error(errorMessage);
-      }
-
-      return await response.json();
-    } catch (error: any) {
-      console.error('Upscale failed:', error);
-      throw new Error(error.message || 'Upscale failed');
-    }
-  }
 }
 
 // Export singleton instance

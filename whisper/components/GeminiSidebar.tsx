@@ -30,7 +30,6 @@ const NAV_ITEMS = [
     { id: 'index', label: 'Chat', icon: 'chatbubbles-outline', activeIcon: 'chatbubbles', route: '/(tabs)' },
     { id: 'image', label: 'Create', icon: 'sparkles-outline', activeIcon: 'sparkles', route: '/(tabs)/image' },
     { id: 'roleplay', label: 'Roleplay', icon: 'people-outline', activeIcon: 'people', route: '/(tabs)/roleplay' },
-    { id: 'upscale', label: 'Upscale', icon: 'scan-outline', activeIcon: 'scan', route: '/(tabs)/upscale' },
     { id: 'faceswap', label: 'Face Swap', icon: 'camera-reverse-outline', activeIcon: 'camera-reverse', route: '/(tabs)/faceswap' },
     { id: 'models', label: 'Models', icon: 'cube-outline', activeIcon: 'cube', route: '/(tabs)/models' },
     { id: 'settings', label: 'Settings', icon: 'settings-outline', activeIcon: 'settings', route: '/(tabs)/settings' },

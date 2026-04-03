@@ -40,12 +40,6 @@ export default function TabLayout() {
                 }}
             />
             <Tabs.Screen
-                name="upscale"
-                options={{
-                    title: 'Upscale',
-                }}
-            />
-            <Tabs.Screen
                 name="models"
                 options={{
                     title: 'Models',

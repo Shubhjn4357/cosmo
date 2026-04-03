@@ -32,7 +32,6 @@ class TokenPricing:
     CLOUD_FILE_ANALYSIS = 0.5
     CLOUD_VOICE = 0.2
     CLOUD_FACESWAP = 3.0
-    CLOUD_UPSCALE = 2.0
     CLOUD_ROLEPLAY = 0.3
     
     # Smart Mode - Pro only

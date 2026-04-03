@@ -347,28 +347,7 @@ class HordeClient:
             logger.error(f"Chat failed: {e}")
             raise
     
-    async def upscale_image(
-        self,
-        image_url: str,
-        scale: int = 4
-    ) -> Dict[str, Any]:
-        """
-        Upscale image using AI Horde post-processing
-        
-        Args:
-            image_url: URL of image to upscale
-            scale: Upscale factor (2 or 4)
-            
-        Returns:
-            Dict with upscaled image URL
-        """
-        # Note: AI Horde upscaling is done via post_processing in generate request
-        # For standalone upscaling, we'd need to re-generate with post_processing
-        # This is a simplified version - fallback to local upscaling is handled separately
-        
-        raise NotImplementedError(
-            "AI Horde standalone upscaling requires re-generation. Use local upscaling service."
-        )
+   
 
 
 # Singleton instance
