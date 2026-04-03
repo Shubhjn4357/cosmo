@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --chown=user:user requirements.txt requirements-space.txt requirements-optional.txt ./
 
-RUN python -m pip install --upgrade pip setuptools wheel && \
+RUN python -m pip install --upgrade pip setuptools wheel "numpy<2" && \
     pip install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 && \
     pip install --no-cache-dir -r requirements-space.txt && \
     python -c "import datasets, torchvision, tqdm, fitz, pytesseract, docx, openpyxl, edge_tts; import shutil; assert shutil.which('tesseract'), 'tesseract binary missing'" && \
