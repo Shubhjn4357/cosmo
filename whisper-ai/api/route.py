@@ -307,6 +307,9 @@ async def _run_post_start_initialization(app: FastAPI):
 
 
 async def _startup(app: FastAPI):
+    print(">>> LIFESPAN STARTUP PROBE: Whisper AI Lifespan Triggered <<<", flush=True)
+    _log_system_resources()
+    
     from api.routes.profile import get_db_client
     from services.catalog_bootstrap import start_catalog_bootstrap
     from services.gguf_bootstrap import start_gguf_runtime_bootstrap
@@ -314,7 +317,7 @@ async def _startup(app: FastAPI):
 
     startup_start = time.time()
     app_state.start_time = startup_start
-    logger.info("Whisper AI starting")
+    logger.info("Whisper AI starting - Lifespan Hook Active")
 
     try:
         get_db_client()

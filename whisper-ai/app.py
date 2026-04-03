@@ -1,9 +1,14 @@
-"""
-Whisper AI - Entry Point
-Main script to run the API server.
-"""
-
 import os
+import sys
+
+# Force absolute line buffering for Hugging Face streaming logs
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+print(">>> STDOUT PROBE: Whisper AI Entry Point Loading... <<<", flush=True)
 
 import uvicorn
 from loguru import logger

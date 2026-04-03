@@ -85,4 +85,4 @@ EXPOSE 7860
 HEALTHCHECK --interval=45s --timeout=30s --start-period=180s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/api/health', timeout=10)" || exit 1
 
-CMD ["/bin/bash", "-c", "echo '>>> Booting Whisper AI Container (HF Space) <<<' && python app.py"]
+CMD ["python", "app.py"]
