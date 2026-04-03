@@ -42,15 +42,24 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Create subtree commit for whisper-ai
-        id: subtree
+      - name: Build clean whisper-ai deployment repo
+        id: deployment_repo
         run: |
           set -euo pipefail
-          split_sha="$(git subtree split --prefix=whisper-ai HEAD)"
-          echo "sha=$split_sha" >> "$GITHUB_OUTPUT"
+          repo_dir="$(mktemp -d)"
+          cp -a whisper-ai/. "$repo_dir/"
+          (
+            cd "$repo_dir"
+            git init -b main
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "Deploy whisper-ai from ${GITHUB_SHA}"
+          )
+          echo "path=$repo_dir" >> "$GITHUB_OUTPUT"
 
       - name: Resolve whisper-ai Space URL
-        id: whisper-ai-space
+        id: whisper_ai_space
         run: |
           set -euo pipefail
           space_url="$(grep -E '^HF_SPACE_ID=' whisper-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
@@ -63,8 +72,8 @@ jobs:
       - name: Push to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          SUBTREE_SHA: ${{ steps.subtree.outputs.sha }}
-          WHISPER_AI_SPACE_URL: ${{ steps.whisper-ai-space.outputs.url }}
+          DEPLOYMENT_REPO_PATH: ${{ steps.deployment_repo.outputs.path }}
+          WHISPER_AI_SPACE_URL: ${{ steps.whisper_ai_space.outputs.url }}
         run: |
           set -euo pipefail
           space_host="${WHISPER_AI_SPACE_URL#https://}"
@@ -77,4 +86,6 @@ jobs:
             echo "Could not derive Hugging Face repo from $WHISPER_AI_SPACE_URL" >&2
             exit 1
           fi
-          git push --force "https://${space_owner}:${HF_TOKEN}@huggingface.co/spaces/${space_owner}/${space_name}" "${SUBTREE_SHA}:main"
+          cd "$DEPLOYMENT_REPO_PATH"
+          git remote add origin "https://${space_owner}:${HF_TOKEN}@huggingface.co/spaces/${space_owner}/${space_name}"
+          git push --force origin HEAD:main
