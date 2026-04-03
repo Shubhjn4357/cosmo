@@ -433,7 +433,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ensure_app_dirs()
+
 Path("ui").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")

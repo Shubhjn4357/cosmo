@@ -13,7 +13,7 @@ from services import hf_dataset_sync
 from utils.app_paths import DATA_ROOT, MODELS_DIR, ensure_app_dirs
 from utils.system_tuning import env_flag_enabled
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 TRAINING_PAIRS_PATH = DATA_ROOT / "training_pairs.jsonl"
 FEEDBACK_PATH = DATA_ROOT / "feedback.jsonl"

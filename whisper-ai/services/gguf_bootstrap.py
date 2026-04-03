@@ -25,7 +25,7 @@ from services.runtime_manager import _resolve_llama_cli_path
 from utils.app_paths import DATA_ROOT, ensure_app_dirs
 from utils.system_tuning import env_flag_enabled
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_LOG_DIR = DATA_ROOT / "runtime" / "logs"

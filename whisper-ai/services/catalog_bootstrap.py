@@ -28,7 +28,7 @@ from services.approved_model_catalog import (
 from utils.app_paths import DATA_ROOT, MODELS_DIR, ensure_app_dirs
 from utils.system_tuning import env_flag_enabled
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 CATALOG_DIR = MODELS_DIR / "catalog"
 CATALOG_STATUS_DIR = DATA_ROOT / "runtime" / "catalog_bootstrap"

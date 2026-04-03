@@ -37,7 +37,7 @@ from services.runtime_manager import (
 )
 from utils.app_paths import DATA_ROOT, MODELS_DIR, ensure_app_dirs
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 DOWNLOAD_COPY_CHUNK_BYTES = 8 * 1024 * 1024
 DOWNLOAD_PROGRESS_STEP_BYTES = 32 * 1024 * 1024

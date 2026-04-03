@@ -28,7 +28,7 @@ except ImportError:
     HF_HUB_AVAILABLE = False
 
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 SYNC_STATE_PATH = DATA_ROOT / "runtime" / "hf_dataset_sync.json"
 MANAGED_ROOT_FILENAMES = {

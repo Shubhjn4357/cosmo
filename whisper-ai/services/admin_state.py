@@ -10,7 +10,7 @@ from typing import Any
 
 from utils.app_paths import DATA_ROOT, ensure_app_dirs
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 ADMIN_MODEL_STATE_PATH = DATA_ROOT / "admin_model_state.json"
 

@@ -27,7 +27,7 @@ from loguru import logger
 from services.agent_profiles import DEFAULT_AGENT_PROFILE_ID, get_agent_profile
 from utils.app_paths import DATA_ROOT, ensure_app_dirs
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 AGENT_SESSION_DIR = DATA_ROOT / "agent_sessions"
 AGENT_SESSION_DIR.mkdir(parents=True, exist_ok=True)

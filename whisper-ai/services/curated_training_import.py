@@ -38,7 +38,7 @@ except Exception:  # pragma: no cover - import guard
     DATASETS_AVAILABLE = False
 
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 CURATED_ROOT = DATASETS_DIR / "curated"
 CURATED_TEXT_DIR = CURATED_ROOT / "text"

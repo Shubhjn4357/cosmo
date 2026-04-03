@@ -12,7 +12,7 @@ from typing import Any
 
 from utils.app_paths import DATA_ROOT, ensure_app_dirs
 
-ensure_app_dirs()
+# ensure_app_dirs() - Moved to app.py
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOGS_DIR = DATA_ROOT / "logs"
