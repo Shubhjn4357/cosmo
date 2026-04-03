@@ -57,8 +57,6 @@ from api.routes import (
     upscale,
     voice,
 )
-from knowledge.embedder import get_embedder
-from knowledge.rag import RAGSystem
 from services.runtime_manager import get_chat_runtime_manager
 from utils.app_paths import UPLOADS_DIR, ensure_app_dirs
 from utils.persistence import backup_data, restore_data
@@ -109,6 +107,8 @@ def _runtime_status() -> dict:
 
 def _initialize_knowledge_base():
     try:
+        from knowledge.embedder import get_embedder
+        from knowledge.rag import RAGSystem
         from knowledge.vectordb import VectorDB, VectorDBConfig
 
         embedder = get_embedder()

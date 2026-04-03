@@ -12,12 +12,15 @@ from typing import List
 import numpy as np
 from loguru import logger
 
+SENTENCE_TRANSFORMERS_AVAILABLE = False
+SENTENCE_TRANSFORMERS_IMPORT_ERROR = None
+
 try:
     from sentence_transformers import SentenceTransformer
 
     SENTENCE_TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
+except Exception as exc:
+    SENTENCE_TRANSFORMERS_IMPORT_ERROR = exc
     SentenceTransformer = None
 
 
@@ -63,7 +66,10 @@ class SentenceEmbedder:
             except Exception as exc:
                 logger.warning("Failed to load sentence-transformers: {}", exc)
         else:
-            logger.warning("sentence-transformers not installed, using fallback embedder")
+            logger.warning(
+                "sentence-transformers unavailable, using fallback embedder: {}",
+                SENTENCE_TRANSFORMERS_IMPORT_ERROR or "package not installed",
+            )
 
     def _prepare_text(self, text: str) -> str:
         value = " ".join(str(text or "").split())
