@@ -31,7 +31,7 @@ aiohttp==3.9.3
 # Voice & TTS
 edge-tts==6.1.10
 pyttsx3==2.90
-openai-whisper==20240930
+openai-whisper>=20240930
 
 # Utilities
 psutil==5.9.8
@@ -46,4 +46,4 @@ bitsandbytes==0.42.0
 sentencepiece==0.2.0
 
 # Database & Sync
-libsql-client>=0.4.0
+libsql>=0.1.10
