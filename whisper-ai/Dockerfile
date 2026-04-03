@@ -82,11 +82,5 @@ ENV WHISPER_STARTUP_VERIFICATION_ENABLED=true
 USER user
 EXPOSE 7860
 
-# Diagnostics-First Execution Form
-CMD bash -c "echo '>>> BOOTING WHISPER AI CONTAINER <<<'; \
-    echo 'User Context: '$(id); \
-    echo 'Workdir: '$(pwd); \
-    echo 'Files: '$(ls -F); \
-    python -c 'import sys; print(\"Python Path: \", sys.path)'; \
-    echo '>>> Launching Application <<<'; \
-    python app.py"
+# Diagnostics are now managed internally by app.py with a 5s grace period
+CMD ["python", "app.py"]

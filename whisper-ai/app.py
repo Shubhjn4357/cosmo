@@ -1,14 +1,28 @@
 import os
 import sys
+import time
 
-# Force absolute line buffering for Hugging Face streaming logs
+# Total stream synchronization
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
+# 5s Startup Grace Period for HF Log Aggregator
+print(">>> INITIALIZING LOG AGGREGATION GRACE PERIOD (5s) <<<", flush=True)
+time.sleep(5)
+print(">>> BOOT PROBE: SYSTEM OK <<<", flush=True)
+
+# Environment Diagnostics
+print(f">>> CONTEXT: UID={os.getuid()}, CWD={os.getcwd()}, PATH={os.getenv('PATH')[:100]}...", flush=True)
+sys.stdout.flush()
+
 try:
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
-except Exception:
-    pass
-
-print(">>> STDOUT PROBE: Whisper AI Entry Point Loading... <<<", flush=True)
+    print(">>> IMPORTING LIBS <<<", flush=True)
+    import uvicorn
+    from loguru import logger
+    print(">>> LIBS OK <<<", flush=True)
+except Exception as e:
+    print(f"FATAL: CORE IMPORT FAILURE: {e}", file=sys.stderr, flush=True)
+    sys.exit(1)
 sys.stdout.flush()
 
 try:
