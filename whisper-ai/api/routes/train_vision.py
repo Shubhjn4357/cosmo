@@ -9,7 +9,7 @@ from typing import Optional, Dict
 from loguru import logger
 from pathlib import Path
 import asyncio
-import torch
+# import torch (deferred)
 
 router = APIRouter(prefix="/api/vision", tags=["vision-training"])
 
@@ -143,6 +143,7 @@ async def get_model_stats():
         
         # Try to load and get parameter count
         try:
+            import torch
             checkpoint = torch.load(model_path, map_location='cpu')
             if 'config' in checkpoint:
                 stats["config"] = checkpoint['config']
@@ -220,6 +221,7 @@ async def run_training(config: TrainingConfig):
         from model.vision_decoder import create_vision_aware_model
         from model.tokenizer import WhisperTokenizer, create_pretrained_tokenizer
         
+        import torch
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         logger.info(f"Training on {device}")
         
