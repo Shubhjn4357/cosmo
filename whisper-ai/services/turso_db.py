@@ -315,11 +315,13 @@ class TursoClient:
         turso_token = os.getenv("TURSO_AUTH_TOKEN", "").strip()
 
         if turso_url and libsql is not None:
-            logger.info("Connecting to Turso with local replica at {}", local_db_path)
+            logger.info("Database Mode: Turso Remote (Local Replica: {})", local_db_path)
+            logger.info("Connecting to Turso URL: {}...", turso_url[:15] + "...")
             connection = libsql.connect(local_db_path, sync_url=turso_url, auth_token=turso_token or None)
         else:
             if turso_url and libsql is None:
                 logger.warning("TURSO_DATABASE_URL is set but libsql is not installed; using local sqlite fallback")
+            logger.info("Database Mode: Local SQLite ({})", local_db_path)
             connection = sqlite3.connect(local_db_path, check_same_thread=False)
 
         try:
@@ -351,7 +353,9 @@ class TursoClient:
     def _sync(self):
         if self._connection is not None and hasattr(self._connection, "sync"):
             try:
+                logger.info("Initiating remote database synchronization...")
                 self._connection.sync()
+                logger.info("Remote database synchronization successful.")
             except Exception as exc:
                 logger.warning("Turso sync failed: {}", exc)
 

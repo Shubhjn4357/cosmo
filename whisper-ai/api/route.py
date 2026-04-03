@@ -21,9 +21,16 @@ from loguru import logger
 load_dotenv()
 TEST_MODE = os.getenv("WHISPER_TEST_MODE", "false").lower() == "true"
 
-from utils.system_tuning import apply_process_tuning, env_flag_enabled
-
 apply_process_tuning()
+
+def _log_system_resources():
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        cpu_count = os.cpu_count() or 1
+        logger.info(f"System Resources: RAM={mem.total / (1024**3):.1f}GB (Used: {mem.percent}%), CPUs={cpu_count}")
+    except Exception:
+        pass
 
 # Lazy-loaded router registration to improve startup time and memory footprint on restricted hardware
 def _register_api_routes(app: FastAPI):
@@ -188,8 +195,10 @@ def _startup_verification_enabled() -> bool:
 async def _run_post_start_initialization(app: FastAPI):
     # Stabilize HF Deployments by deliberately delaying heavy boot sequences
     # until AFTER the server is bound and serving HTTP 200 OK /health checks.
-    logger.info("Sleeping 15s to allow health-checks to pass before eager loading...")
-    await asyncio.sleep(15)
+    logger.info("Initializing 15s health-check grace period (Heartbeat: 3s)...")
+    for i in range(5):
+        logger.info(f"Startup Heartbeat [{i+1}/5] - Service ready for traffic, background boot deferred.")
+        await asyncio.sleep(3)
     logger.info("Waking up to resume eager initialization.")
 
     from services.catalog_bootstrap import start_catalog_bootstrap
@@ -327,18 +336,18 @@ async def _startup(app: FastAPI):
             logger.info("HF keepalive disabled by configuration")
 
     app_state.chat_runtime = get_chat_runtime_manager()
+    logger.info("Chat runtime manager initialized")
     app_state.embedder = None
     app_state.vectordb = None
     app_state.rag = None
-
-    
 
     if not TEST_MODE:
         if app_state.post_start_task is None or app_state.post_start_task.done():
             app_state.post_start_task = asyncio.create_task(_run_post_start_initialization(app))
         logger.info("Post-start initialization scheduled in background")
 
-    logger.info(f"Server started in {time.time() - startup_start:.2f}s")
+    duration = time.time() - startup_start
+    logger.info(f"Server bootstrap complete in {duration:.2f}s. Ready for traffic on :7860.")
 
 
 async def _shutdown():

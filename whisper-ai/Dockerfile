@@ -3,11 +3,12 @@ FROM python:3.12-slim
 ARG DEBIAN_FRONTEND=noninteractive
 ARG INSTALL_GGUF_RUNTIME=false
 ARG INSTALL_AIRLLM=false
-ARG INSTALL_EMBEDDING_RUNTIME=false
+ARG INSTALL_EMBEDDING_RUNTIME=true
 ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
     PIP_NO_CACHE_DIR=1 \
     HOME=/home/user \
     PYTHONUSERBASE=/data/whisper/runtime/python-user-base \
@@ -76,7 +77,7 @@ RUN mkdir -p /data/whisper/models /data/whisper/uploads /data/whisper/runtime/hu
 
 # Whisper AI - Deployment Stability
 ENV WHISPER_POWER_PROFILE=low-power
-ENV WHISPER_STARTUP_VERIFICATION_ENABLED=false
+ENV WHISPER_STARTUP_VERIFICATION_ENABLED=true
 
 USER user
 EXPOSE 7860
@@ -84,4 +85,4 @@ EXPOSE 7860
 HEALTHCHECK --interval=45s --timeout=30s --start-period=180s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/api/health', timeout=10)" || exit 1
 
-CMD ["python", "app.py"]
+CMD ["/bin/bash", "-c", "echo '>>> Booting Whisper AI Container (HF Space) <<<' && python app.py"]
