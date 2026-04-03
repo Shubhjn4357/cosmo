@@ -25,37 +25,69 @@ from utils.system_tuning import apply_process_tuning, env_flag_enabled
 
 apply_process_tuning()
 
-from api.routes import (
-    admin,
-    agent,
-    analytics,
-    autoresearch,
-    auth,
-    characters,
-    chat,
-    collect,
-    dashboard,
-    datasets,
-    faceswap,
-    feed,
-    files,
-    healthcheck,
-    horde,
-    huggingface,
-    image,
-    knowledge,
-    learn,
-    models,
-    ping,
-    profile,
-    research,
-    roleplay,
-    smart_mode,
-    train_vision,
-    tts,
-    ui,
-    voice,
-)
+# Lazy-loaded router registration to improve startup time and memory footprint on restricted hardware
+def _register_api_routes(app: FastAPI):
+    from api.routes import (
+        admin,
+        agent,
+        analytics,
+        autoresearch,
+        auth,
+        characters,
+        chat,
+        collect,
+        dashboard,
+        datasets,
+        faceswap,
+        feed,
+        files,
+        healthcheck,
+        horde,
+        huggingface,
+        image,
+        knowledge,
+        learn,
+        models,
+        ping,
+        profile,
+        research,
+        roleplay,
+        smart_mode,
+        train_vision,
+        tts,
+        ui,
+        voice,
+    )
+    
+    app.include_router(chat.router, prefix="/api", tags=["Chat"])
+    app.include_router(agent.router, prefix="/api", tags=["Agent"])
+    app.include_router(autoresearch.router, prefix="/api", tags=["Autoresearch"])
+    app.include_router(image.router, prefix="/api", tags=["Image"])
+    app.include_router(files.router, prefix="/api", tags=["Files"])
+    app.include_router(knowledge.router, prefix="/api", tags=["Knowledge"])
+    app.include_router(auth.router, prefix="/api", tags=["Auth"])
+    app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
+    app.include_router(models.router, prefix="/api", tags=["Models"])
+    app.include_router(profile.router, prefix="/api", tags=["Profile"])
+    app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+    app.include_router(dashboard.dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
+    app.include_router(voice.router, prefix="/api", tags=["Voice"])
+    app.include_router(faceswap.router, prefix="/api", tags=["FaceSwap"])
+    app.include_router(roleplay.router, prefix="/api", tags=["Roleplay"])
+    app.include_router(horde.router, prefix="/api", tags=["Horde"])
+    app.include_router(characters.router, prefix="/api", tags=["Characters"])
+    app.include_router(tts.router, prefix="/api", tags=["TTS"])
+    app.include_router(learn.router, prefix="/api", tags=["Learning"])
+    app.include_router(feed.router, prefix="/api/feed", tags=["Data Feed"])
+    app.include_router(huggingface.router, prefix="/api", tags=["HuggingFace"])
+    app.include_router(smart_mode.router, prefix="/api", tags=["Smart Mode"])
+    app.include_router(healthcheck.router, prefix="/api", tags=["Health"])
+    app.include_router(ping.router, prefix="/api", tags=["Keepalive"])
+    app.include_router(collect.router, prefix="/api/collect", tags=["Data Collection"])
+    app.include_router(train_vision.router, tags=["Vision Training"])
+    app.include_router(datasets.router, prefix="/api", tags=["Datasets"])
+    app.include_router(research.router, prefix="/api", tags=["Research"])
+    app.include_router(ui.router, tags=["UI"])
 from services.runtime_manager import get_chat_runtime_manager
 from utils.app_paths import UPLOADS_DIR, ensure_app_dirs
 from utils.persistence import backup_data, restore_data
@@ -396,35 +428,8 @@ Path("ui").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
-app.include_router(chat.router, prefix="/api", tags=["Chat"])
-app.include_router(agent.router, prefix="/api", tags=["Agent"])
-app.include_router(autoresearch.router, prefix="/api", tags=["Autoresearch"])
-app.include_router(image.router, prefix="/api", tags=["Image"])
-app.include_router(files.router, prefix="/api", tags=["Files"])
-app.include_router(knowledge.router, prefix="/api", tags=["Knowledge"])
-app.include_router(auth.router, prefix="/api", tags=["Auth"])
-app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
-app.include_router(models.router, prefix="/api", tags=["Models"])
-app.include_router(profile.router, prefix="/api", tags=["Profile"])
-app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-app.include_router(dashboard.dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
-app.include_router(voice.router, prefix="/api", tags=["Voice"])
-app.include_router(faceswap.router, prefix="/api", tags=["FaceSwap"])
-app.include_router(roleplay.router, prefix="/api", tags=["Roleplay"])
-app.include_router(horde.router, prefix="/api", tags=["Horde"])
-app.include_router(characters.router, prefix="/api", tags=["Characters"])
-app.include_router(tts.router, prefix="/api", tags=["TTS"])
-app.include_router(learn.router, prefix="/api", tags=["Learning"])
-app.include_router(feed.router, prefix="/api/feed", tags=["Data Feed"])
-app.include_router(huggingface.router, prefix="/api", tags=["HuggingFace"])
-app.include_router(smart_mode.router, prefix="/api", tags=["Smart Mode"])
-app.include_router(healthcheck.router, prefix="/api", tags=["Health"])
-app.include_router(ping.router, prefix="/api", tags=["Keepalive"])
-app.include_router(collect.router, prefix="/api/collect", tags=["Data Collection"])
-app.include_router(train_vision.router, tags=["Vision Training"])
-app.include_router(datasets.router, prefix="/api", tags=["Datasets"])
-app.include_router(research.router, prefix="/api", tags=["Research"])
-app.include_router(ui.router, tags=["UI"])
+# Register all routes lazily
+_register_api_routes(app)
 
 
 @app.middleware("http")

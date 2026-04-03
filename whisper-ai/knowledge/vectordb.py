@@ -88,6 +88,7 @@ class VectorDB:
     
     def save(self):
         """Save index and metadata to disk."""
+        # Lazy imports for faiss handled within methods
         faiss.write_index(self.index, str(self.index_path))
         
         with open(self.metadata_path, 'w', encoding='utf-8') as f:

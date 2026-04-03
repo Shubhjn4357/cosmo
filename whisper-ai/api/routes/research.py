@@ -15,8 +15,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 from .auth import verify_admin_token
-from knowledge.google_search import GoogleSearchIntegration, SearchConfig
-from knowledge.scraper import ContentProcessor, ScraperConfig, WebScraper
+# Lazy imports for knowledge components moved into getters
 from services.cloudflare_crawl import CRAWLER
 from services.research_autonomy import (
     add_autonomy_source,
@@ -55,19 +54,43 @@ AUTO_RESEARCH_RUNTIME = {
     "completed_cycles": 0,
 }
 
-SEARCH = GoogleSearchIntegration(SearchConfig())
-SCRAPER = WebScraper(
-    ScraperConfig(
-        seed_urls=["https://en.wikipedia.org/wiki/Main_Page"],
-        max_pages_per_session=int(os.getenv("AUTO_CRAWL_MAX_PAGES", "5")),
-        sleep_between_requests=float(os.getenv("AUTO_CRAWL_DELAY_SECONDS", "1.0")),
-    ),
-    storage_path=str(DATA_ROOT / "raw"),
-)
-PROCESSOR = ContentProcessor(output_dir=str(DATA_ROOT / "processed"))
+_SEARCH = None
+_SCRAPER = None
+_PROCESSOR = None
 
-RESEARCH_STATS = summarize_research_runs()
-RESEARCH_STATS.update(summarize_research_documents())
+def get_search():
+    global _SEARCH
+    if _SEARCH is None:
+        from knowledge.google_search import GoogleSearchIntegration, SearchConfig
+        _SEARCH = GoogleSearchIntegration(SearchConfig())
+    return _SEARCH
+
+def get_scraper():
+    global _SCRAPER
+    if _SCRAPER is None:
+        from knowledge.scraper import ScraperConfig, WebScraper
+        _SCRAPER = WebScraper(
+            ScraperConfig(
+                seed_urls=["https://en.wikipedia.org/wiki/Main_Page"],
+                max_pages_per_session=int(os.getenv("AUTO_CRAWL_MAX_PAGES", "5")),
+                sleep_between_requests=float(os.getenv("AUTO_CRAWL_DELAY_SECONDS", "1.0")),
+            ),
+            storage_path=str(DATA_ROOT / "raw"),
+        )
+    return _SCRAPER
+
+def get_processor():
+    global _PROCESSOR
+    if _PROCESSOR is None:
+        from knowledge.scraper import ContentProcessor
+        _PROCESSOR = ContentProcessor(output_dir=str(DATA_ROOT / "processed"))
+    return _PROCESSOR
+
+# Move stats calculation to a lazy getter as well
+def get_research_stats_summary():
+    stats = summarize_research_runs()
+    stats.update(summarize_research_documents())
+    return stats
 
 
 class DiscoverRequest(BaseModel):
@@ -212,8 +235,8 @@ async def _mirror_documents_into_learning(documents: List[dict[str, Any]]) -> di
 
 
 def _refresh_research_stats():
-    RESEARCH_STATS.update(summarize_research_runs())
-    RESEARCH_STATS.update(summarize_research_documents())
+    # Update stats locally if needed, or simply use the summary directly in the endpoint
+    pass
 
 
 def get_background_research_status() -> dict[str, Any]:
@@ -355,8 +378,9 @@ def _cloudflare_documents(topic: str, crawl_url: str, crawl_result: dict[str, An
 
 def _legacy_documents(topic: str, results: List[Any]) -> List[dict[str, Any]]:
     documents: List[dict[str, Any]] = []
+    processor = get_processor()
     for result in results:
-        text = PROCESSOR._clean_text(f"{result.title}\n\n{result.text}") if result.text else ""
+        text = processor._clean_text(f"{result.title}\n\n{result.text}") if result.text else ""
         if len(text) <= 100:
             continue
         documents.append(
@@ -519,7 +543,8 @@ async def _discover_with_legacy_scraper(
         pages_crawled = len(documents)
     else:
         allowed_domains = sorted({decision.get("domain") for decision in SOURCE_POLICY.filter_urls(urls)[1] if decision.get("allowed") and decision.get("domain")})
-        SCRAPER.prepare_session(
+        scraper = get_scraper()
+        scraper.prepare_session(
             urls,
             allowed_domains=allowed_domains,
             blocked_domains=SOURCE_POLICY.status()["blocked_domains"],
@@ -527,7 +552,7 @@ async def _discover_with_legacy_scraper(
             force_urls=urls if request.refresh_existing else None,
             allow_duplicate_content=request.refresh_existing,
         )
-        results = await SCRAPER.crawl_session(max_pages=request.max_pages)
+        results = await scraper.crawl_session(max_pages=request.max_pages)
         documents = _legacy_documents(request.topic, results)
         pages_crawled = len(results)
     append_research_documents(documents)
@@ -574,7 +599,8 @@ async def _discover_with_legacy_scraper(
 
 
 async def _discover_and_ingest(request: DiscoverRequest, *, autonomy_source: Optional[dict[str, Any]] = None) -> dict:
-    candidate_urls = [request.start_url] if request.start_url else await SEARCH.search_query(request.topic)
+    search = get_search()
+    candidate_urls = [request.start_url] if request.start_url else await search.search_query(request.topic)
     candidate_urls = [url for url in candidate_urls if url][: max(1, request.max_sites if request.provider == "cloudflare" else request.max_pages)]
     accepted_urls, decisions, policy_summary = _policy_filter_urls(candidate_urls)
     if not accepted_urls:
@@ -657,7 +683,8 @@ async def _discover_and_ingest(request: DiscoverRequest, *, autonomy_source: Opt
 async def discover_knowledge(request: DiscoverRequest, payload: dict = Depends(verify_admin_token)):
     try:
         if request.search_only:
-            urls = [url for url in await SEARCH.search_query(request.topic) if url]
+            search = get_search()
+            urls = [url for url in await search.search_query(request.topic) if url]
             accepted_urls, decisions, policy_summary = _policy_filter_urls(urls)
             return {
                 "topic": request.topic,
@@ -717,9 +744,10 @@ async def discover_knowledge(request: DiscoverRequest, payload: dict = Depends(v
 
 @router.get("/stats")
 async def get_research_stats():
+    stats = get_research_stats_summary()
     return {
-        **RESEARCH_STATS,
-        "scraper": SCRAPER.get_stats(),
+        **stats,
+        "scraper": get_scraper().get_stats(),
         "cloudflare": CRAWLER.status(),
         "policy": SOURCE_POLICY.status(),
         "autonomy": get_background_research_status(),

@@ -74,11 +74,14 @@ COPY --chown=user:user . .
 RUN mkdir -p /data/whisper/models /data/whisper/uploads /data/whisper/runtime/huggingface && \
     chown -R user:user /data /app
 
-USER user
+# Whisper AI - Deployment Stability
+ENV WHISPER_POWER_PROFILE=low-power
+ENV WHISPER_STARTUP_VERIFICATION_ENABLED=false
 
+USER user
 EXPOSE 7860
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/api/health', timeout=5)"
+HEALTHCHECK --interval=45s --timeout=30s --start-period=180s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/api/health', timeout=10)" || exit 1
 
 CMD ["python", "app.py"]

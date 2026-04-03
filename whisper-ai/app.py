@@ -12,6 +12,15 @@ logger.info("Importing API routes...")
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "7860"))
+    
+    # HF Space optimization: default to low-power if running on HF
+    if os.getenv("SPACE_ID") or os.getenv("HUGGINGFACE_SPACES"):
+        logger.info("Hugging Face Space detected. Applying low-power defaults.")
+        os.environ.setdefault("WHISPER_POWER_PROFILE", "low-power")
+        os.environ.setdefault("WHISPER_STARTUP_VERIFICATION_ENABLED", "false")
+        os.environ.setdefault("WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED", "false")
+        os.environ.setdefault("WHISPER_WARM_CHAT_RUNTIME_ENABLED", "false")
+
     ensure_app_dirs()
     logger.info("Starting Whisper AI server...")
     logger.info(f"Server starting on http://{host}:{port}")
