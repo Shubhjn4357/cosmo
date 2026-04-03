@@ -54,7 +54,6 @@ from api.routes import (
     train_vision,
     tts,
     ui,
-    upscale,
     voice,
 )
 from services.runtime_manager import get_chat_runtime_manager
