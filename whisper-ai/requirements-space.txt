@@ -11,7 +11,7 @@ python-multipart==0.0.9
 
 # AI/ML Core (Pinned for stability)
 numpy<2.0.0
-torch==2.2.1 --index-url https://download.pytorch.org/whl/cpu
+torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
 transformers==4.38.1
 tokenizers==0.15.2
 accelerate==0.27.2
