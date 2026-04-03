@@ -567,6 +567,15 @@ def main():
                 logger.info(f"Synced {len(synced)} self-learner artifacts to {hf_dataset_sync.get_repo_id()}")
         except Exception as exc:
             logger.warning(f"HF sync for self-learner artifacts failed: {exc}")
+
+        try:
+            from services import hf_model_sync
+            if hf_model_sync.is_configured():
+                success = hf_model_sync.push_checkpoints(checkpoint_path.parent)
+                if success:
+                    logger.info("Successfully published latest self-learner phase to HF Model Hub.")
+        except Exception as exc:
+            logger.warning(f"HF Model Hub publish failed: {exc}")
         
         # Cleanup memory
         gc.collect()

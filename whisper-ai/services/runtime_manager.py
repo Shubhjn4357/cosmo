@@ -827,6 +827,15 @@ class ChatRuntimeManager:
         from model.tokenizer import WhisperTokenizer
         from model.transformer import MicroTransformer
 
+        try:
+            from services.hf_model_sync import is_configured as is_hf_configured, pull_latest_checkpoint
+            if is_hf_configured():
+                checkpoint_dir = Path(os.getenv("WHISPER_SELF_LEARNER_DIR", str(DATA_ROOT / "checkpoints")))
+                logger.info("Checking Hugging Face Model Hub for latest checkpoints...")
+                pull_latest_checkpoint(checkpoint_dir)
+        except Exception as exc:
+            logger.warning(f"HF Model Hub pull skipped/failed during boot: {exc}")
+
         checkpoint_path = _resolve_micro_checkpoint_path(self.config)
         tokenizer_path = _resolve_micro_tokenizer_path(self.config)
 

@@ -145,6 +145,63 @@ def _eager_knowledge_base_enabled() -> bool:
 
 
 async def _run_post_start_initialization(app: FastAPI):
+    # Stabilize HF Deployments by deliberately delaying heavy boot sequences
+    # until AFTER the server is bound and serving HTTP 200 OK /health checks.
+    logger.info("Sleeping 15s to allow health-checks to pass before eager loading...")
+    await asyncio.sleep(15)
+    logger.info("Waking up to resume eager initialization.")
+
+    from services.catalog_bootstrap import start_catalog_bootstrap
+    from services.gguf_bootstrap import start_gguf_runtime_bootstrap
+    
+    if not TEST_MODE:
+        if _background_feature_enabled("WHISPER_AUTO_COLLECTION_ENABLED"):
+            try:
+                await collect.start_auto_collection_task()
+            except Exception as exc:
+                logger.warning(f"Auto-collection scheduler unavailable: {exc}")
+        else:
+            logger.info("Auto-collection scheduler disabled by power profile/configuration")
+
+        if _background_feature_enabled("WHISPER_AUTO_RESEARCH_ENABLED"):
+            try:
+                await research.start_background_research_task()
+            except Exception as exc:
+                logger.warning(f"Auto research scheduler unavailable: {exc}")
+        else:
+            logger.info("Auto research scheduler disabled by power profile/configuration")
+
+        if _background_feature_enabled("WHISPER_AUTO_TRAINING_ENABLED"):
+            try:
+                from api.routes.train_vision import schedule_auto_training
+
+                if app_state.auto_training_task is None or app_state.auto_training_task.done():
+                    app_state.auto_training_task = asyncio.create_task(schedule_auto_training())
+                logger.info("Auto-training scheduler initialized")
+            except Exception as exc:
+                logger.warning(f"Auto-training scheduler unavailable: {exc}")
+        else:
+            logger.info("Auto-training scheduler disabled by power profile/configuration")
+
+        try:
+            bootstrap_status = start_gguf_runtime_bootstrap()
+            logger.info(
+                "GGUF bootstrap status: {} ({})",
+                bootstrap_status.get("status"),
+                bootstrap_status.get("stage"),
+            )
+        except Exception as exc:
+            logger.warning(f"GGUF runtime bootstrap skipped: {exc}")
+
+        try:
+            catalog_status = start_catalog_bootstrap()
+            logger.info(
+                "Approved model bootstrap status: {}",
+                catalog_status.get("status"),
+            )
+        except Exception as exc:
+            logger.warning(f"Approved model bootstrap skipped: {exc}")
+
     try:
         await asyncio.to_thread(restore_data)
     except Exception as exc:
@@ -230,54 +287,9 @@ async def _startup(app: FastAPI):
     app_state.vectordb = None
     app_state.rag = None
 
+    
+
     if not TEST_MODE:
-        if _background_feature_enabled("WHISPER_AUTO_COLLECTION_ENABLED"):
-            try:
-                await collect.start_auto_collection_task()
-            except Exception as exc:
-                logger.warning(f"Auto-collection scheduler unavailable: {exc}")
-        else:
-            logger.info("Auto-collection scheduler disabled by power profile/configuration")
-
-        if _background_feature_enabled("WHISPER_AUTO_RESEARCH_ENABLED"):
-            try:
-                await research.start_background_research_task()
-            except Exception as exc:
-                logger.warning(f"Auto research scheduler unavailable: {exc}")
-        else:
-            logger.info("Auto research scheduler disabled by power profile/configuration")
-
-        if _background_feature_enabled("WHISPER_AUTO_TRAINING_ENABLED"):
-            try:
-                from api.routes.train_vision import schedule_auto_training
-
-                if app_state.auto_training_task is None or app_state.auto_training_task.done():
-                    app_state.auto_training_task = asyncio.create_task(schedule_auto_training())
-                logger.info("Auto-training scheduler initialized")
-            except Exception as exc:
-                logger.warning(f"Auto-training scheduler unavailable: {exc}")
-        else:
-            logger.info("Auto-training scheduler disabled by power profile/configuration")
-
-        try:
-            bootstrap_status = start_gguf_runtime_bootstrap()
-            logger.info(
-                "GGUF bootstrap status: {} ({})",
-                bootstrap_status.get("status"),
-                bootstrap_status.get("stage"),
-            )
-        except Exception as exc:
-            logger.warning(f"GGUF runtime bootstrap skipped: {exc}")
-
-        try:
-            catalog_status = start_catalog_bootstrap()
-            logger.info(
-                "Approved model bootstrap status: {}",
-                catalog_status.get("status"),
-            )
-        except Exception as exc:
-            logger.warning(f"Approved model bootstrap skipped: {exc}")
-
         if app_state.post_start_task is None or app_state.post_start_task.done():
             app_state.post_start_task = asyncio.create_task(_run_post_start_initialization(app))
         logger.info("Post-start initialization scheduled in background")
