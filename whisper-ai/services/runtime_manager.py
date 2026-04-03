@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 from utils.app_paths import DATA_ROOT, MODELS_DIR, RUNTIME_CONFIG_PATH, ensure_app_dirs
-from utils.system_tuning import apply_process_tuning, recommended_thread_count
+from utils.system_tuning import apply_process_tuning, configure_torch_threads, recommended_thread_count
 
 ensure_app_dirs()
 apply_process_tuning()
@@ -724,7 +724,7 @@ class ChatRuntimeManager:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        apply_process_tuning()
+        configure_torch_threads(force=True)
         model_id = self.config.model_id
         logger.info(f"Loading transformers backend: {model_id}")
 
@@ -826,6 +826,8 @@ class ChatRuntimeManager:
         from model.quantization import load_quantized_checkpoint, quantize_micro_transformer
         from model.tokenizer import WhisperTokenizer
         from model.transformer import MicroTransformer
+
+        configure_torch_threads(force=True)
 
         try:
             from services.hf_model_sync import is_configured as is_hf_configured, pull_latest_checkpoint

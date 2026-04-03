@@ -148,6 +148,14 @@ def _eager_knowledge_base_enabled() -> bool:
     )
 
 
+def _startup_verification_enabled() -> bool:
+    return env_flag_enabled(
+        "WHISPER_STARTUP_VERIFICATION_ENABLED",
+        True,
+        disable_in_low_power=True,
+    )
+
+
 async def _run_post_start_initialization(app: FastAPI):
     # Stabilize HF Deployments by deliberately delaying heavy boot sequences
     # until AFTER the server is bound and serving HTTP 200 OK /health checks.
@@ -225,12 +233,15 @@ async def _run_post_start_initialization(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Runtime configuration refresh skipped: {exc}")
 
-    try:
-        from utils.verify_startup import run_verification
+    if _startup_verification_enabled():
+        try:
+            from utils.verify_startup import run_verification
 
-        run_verification(app)
-    except Exception as exc:
-        logger.warning(f"Startup verification skipped: {exc}")
+            run_verification(app)
+        except Exception as exc:
+            logger.warning(f"Startup verification skipped: {exc}")
+    else:
+        logger.info("Startup verification disabled by configuration")
 
     if _eager_knowledge_base_enabled():
         try:

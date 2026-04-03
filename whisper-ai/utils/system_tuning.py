@@ -71,17 +71,24 @@ def apply_process_tuning(*, force: bool = False) -> dict[str, int | str]:
 
         os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-        try:
-            import torch
-
-            torch.set_num_threads(threads)
-            try:
-                torch.set_num_interop_threads(max(1, min(2, threads)))
-            except RuntimeError:
-                pass
-        except Exception:
-            pass
-
         _CONFIGURED = True
         logger.info("Applied process tuning: profile={} threads={}", profile, threads)
         return {"profile": profile, "threads": threads}
+
+
+def configure_torch_threads(*, force: bool = False) -> dict[str, int | str]:
+    tuning = apply_process_tuning(force=force)
+    threads = int(tuning["threads"])
+
+    try:
+        import torch
+
+        torch.set_num_threads(threads)
+        try:
+            torch.set_num_interop_threads(max(1, min(2, threads)))
+        except RuntimeError:
+            pass
+    except Exception:
+        pass
+
+    return tuning
