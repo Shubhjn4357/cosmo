@@ -7,12 +7,12 @@ import os
 
 import uvicorn
 from loguru import logger
-from utils.app_paths import DATA_ROOT, HF_HOME_DIR, HUGGINGFACE_HUB_CACHE_DIR, MODELS_DIR, PYTHON_USER_BASE, UPLOADS_DIR, ensure_app_dirs
-
+#from utils.app_paths import DATA_ROOT, HF_HOME_DIR, HUGGINGFACE_HUB_CACHE_DIR, MODELS_DIR, PYTHON_USER_BASE, UPLOADS_DIR, ensure_app_dirs
+logger.info("Importing API routes...")
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "7860"))
-    ensure_app_dirs()
+    #ensure_app_dirs()
     logger.info("Starting Whisper AI server...")
     logger.info(f"Server starting on http://{host}:{port}")
     logger.info(f"Storage root: {DATA_ROOT}")
@@ -23,7 +23,7 @@ if __name__ == "__main__":
     logger.info(f"Python user base: {PYTHON_USER_BASE}")
     
     uvicorn.run(
-        "api.route:app",
+        #"api.route:app",
         host=host,
         port=port,
         log_level="info"
