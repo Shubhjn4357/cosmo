@@ -41,6 +41,14 @@ tqdm==4.66.2
 google-auth>=2.20.0
 cryptography>=42.0.0
 
+# Document & Data (Required for build verification)
+datasets
+torchvision==0.17.0
+PyMuPDF
+pytesseract
+python-docx
+openpyxl
+
 # Quantization & Efficiency
 bitsandbytes==0.42.0
 sentencepiece==0.2.0
