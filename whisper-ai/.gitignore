@@ -41,6 +41,7 @@ output/
 uploads/
 .tools/
 .cache/
+importtime*.txt
 
 # IDE / Extensions
 .zed/
