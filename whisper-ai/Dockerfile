@@ -2,7 +2,9 @@ FROM python:3.12-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG INSTALL_GGUF_RUNTIME=false
-ARG INSTALL_AIRLLM=true
+ARG INSTALL_AIRLLM=false
+ARG INSTALL_EMBEDDING_RUNTIME=false
+ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -46,11 +48,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --chown=user:user requirements.txt requirements-optional.txt ./
+COPY --chown=user:user requirements.txt requirements-space.txt requirements-optional.txt ./
 
 RUN python -m pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 && \
+    pip install --no-cache-dir -r requirements-space.txt && \
     python -c "import datasets, torchvision, tqdm, fitz, pytesseract, docx, openpyxl, edge_tts; import shutil; assert shutil.which('tesseract'), 'tesseract binary missing'" && \
+    if [ "$INSTALL_EMBEDDING_RUNTIME" = "true" ]; then \
+      pip install --no-cache-dir sentence-transformers==2.3.1; \
+    fi && \
     if [ "$INSTALL_GGUF_RUNTIME" = "true" ]; then \
       CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" pip install --no-cache-dir llama-cpp-python==0.3.16; \
     fi && \

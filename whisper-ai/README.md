@@ -506,7 +506,8 @@ validation outcome instead of key presence alone.
 ## Notes
 
 - On free HF CPU, `auto` is the practical default. It will use GGUF when a local artifact is ready and otherwise fall back to the fast transformers coder profile.
-- The Docker Space build now defaults `INSTALL_GGUF_RUNTIME=false` so the optional `llama-cpp-python` backend is not compiled on every deploy.
+- The Docker Space build now defaults `INSTALL_GGUF_RUNTIME=false`, `INSTALL_AIRLLM=false`, and `INSTALL_EMBEDDING_RUNTIME=false` so optional local backends are not compiled or installed on every deploy.
+- The Docker Space image installs CPU-only PyTorch wheels instead of the default CUDA-enabled Linux wheels, which keeps deploy builds materially smaller and faster on HF CPU Spaces.
 - The Docker runtime now starts in a low-power profile, exposes health first, disables eager knowledge-base warmup and startup verification, and defers heavy runtime work until after the server is already serving requests.
 - Hugging Face dataset restore is now explicit: set `HF_DATASET_REPO` in Space settings if you want startup restore and dataset sync.
 - Managed model-directory persistence is now opt-in via `WHISPER_PERSIST_MODELS_DIR=true`.
@@ -514,3 +515,4 @@ validation outcome instead of key presence alone.
 - Background GGUF installs use `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`, so attached persistent storage can keep the compiled runtime between restarts.
 - Large fully local multimodal operation still needs stronger hardware.
 - If you still want GGUF compiled during the Docker build itself, set `INSTALL_GGUF_RUNTIME=true` and expect a much slower image build.
+- If you want AirLLM or sentence-transformers preinstalled in the image, set `INSTALL_AIRLLM=true` or `INSTALL_EMBEDDING_RUNTIME=true` and expect slower deploy builds.
