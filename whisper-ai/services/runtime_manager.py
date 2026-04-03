@@ -25,8 +25,8 @@ from loguru import logger
 from utils.app_paths import DATA_ROOT, MODELS_DIR, RUNTIME_CONFIG_PATH, ensure_app_dirs
 from utils.system_tuning import apply_process_tuning, configure_torch_threads, recommended_thread_count
 
-ensure_app_dirs()
-apply_process_tuning()
+# ensure_app_dirs() - Moving to function level
+# apply_process_tuning() - Moving to function level
 _AIRLLM_IMPORT_CACHE: Optional[dict[str, Any]] = None
 SELF_LEARNER_DIR = Path(os.getenv("WHISPER_SELF_LEARNER_DIR", str(DATA_ROOT / "checkpoints")))
 SELF_LEARNER_CHECKPOINT = SELF_LEARNER_DIR / "latest.pt"

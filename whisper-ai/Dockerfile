@@ -82,7 +82,11 @@ ENV WHISPER_STARTUP_VERIFICATION_ENABLED=true
 USER user
 EXPOSE 7860
 
-HEALTHCHECK --interval=45s --timeout=30s --start-period=180s --retries=5 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/api/health', timeout=10)" || exit 1
-
-CMD ["python", "app.py"]
+# Diagnostics-First Execution Form
+CMD bash -c "echo '>>> BOOTING WHISPER AI CONTAINER <<<'; \
+    echo 'User Context: '$(id); \
+    echo 'Workdir: '$(pwd); \
+    echo 'Files: '$(ls -F); \
+    python -c 'import sys; print(\"Python Path: \", sys.path)'; \
+    echo '>>> Launching Application <<<'; \
+    python app.py"
