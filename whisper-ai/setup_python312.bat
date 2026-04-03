@@ -66,7 +66,7 @@ echo ========================================
 echo.
 echo To start the backend:
 echo   1. Activate venv: venv312\Scripts\activate.bat
-echo   2. Run server: python -m uvicorn api.route:app --reload --host 0.0.0.0 --port 8000
+echo   2. Run server: python -m uvicorn api.route:app --reload --host 0.0.0.0 --port 7860
 echo.
 echo To test auth:
 echo   Open: d:\Code\whisper\auth-test.html

@@ -164,7 +164,7 @@ python -m venv .venv
 source .venv/bin/activate  # or use Scripts\\activate on Windows
 pip install -r requirements.txt
 cp .env.example .env
-python -m uvicorn api.route:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn api.route:app --host 0.0.0.0 --port 7860 --reload
 ```
 
 Any virtualenv name is fine. The Windows startup script now auto-detects

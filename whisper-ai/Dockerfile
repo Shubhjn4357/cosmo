@@ -50,18 +50,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --chown=user:user requirements.txt requirements-space.txt requirements-optional.txt ./
 
-RUN python -m pip install --upgrade pip setuptools wheel "numpy<2" && \
+# CRITICAL: Pin numpy<2 FIRST before any other install.
+# cv2, torch, pandas, sklearn all use numpy 1.x ABI.
+# Installing numpy 2.x causes AttributeError: _ARRAY_API not found and crashes app startup.
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir "numpy>=1.24.0,<2.0.0" && \
     pip install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 && \
     pip install --no-cache-dir -r requirements-space.txt && \
+    python -c "import numpy; assert tuple(int(x) for x in numpy.__version__.split('.')[:2]) < (2,0), f'NumPy {numpy.__version__} >= 2.0 breaks ABI compatibility'" && \
     python -c "import datasets, torchvision, tqdm, fitz, pytesseract, docx, openpyxl, edge_tts; import shutil; assert shutil.which('tesseract'), 'tesseract binary missing'" && \
     if [ "$INSTALL_EMBEDDING_RUNTIME" = "true" ]; then \
-      pip install --no-cache-dir sentence-transformers==2.3.1; \
+      pip install --no-cache-dir "sentence-transformers>=3.0.0,<4.0.0"; \
     fi && \
     if [ "$INSTALL_GGUF_RUNTIME" = "true" ]; then \
-      CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" pip install --no-cache-dir llama-cpp-python==0.3.16; \
+      CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" pip install --no-cache-dir "llama-cpp-python>=0.3.0"; \
     fi && \
     if [ "$INSTALL_AIRLLM" = "true" ]; then \
-      pip install --no-cache-dir airllm==2.11.0; \
+      pip install --no-cache-dir "airllm>=2.11.0"; \
     fi
 
 COPY --chown=user:user . .

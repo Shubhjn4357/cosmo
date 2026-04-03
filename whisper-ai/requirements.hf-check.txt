@@ -19,7 +19,7 @@ sentencepiece==0.1.99
 
 # ===== Data Processing =====
 # Updated for Python 3.12 - versions with prebuilt wheels
-numpy==1.26.0
+numpy<2.0.0
 pandas==2.1.4
 openpyxl==3.1.2
 datasets==2.16.1

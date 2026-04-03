@@ -9,10 +9,9 @@ import threading
 from collections import OrderedDict
 from typing import List
 
-import numpy as np
+# numpy and sentence_transformers imports are deferred to avoid crashing at module
+# import time when NumPy ABI is mismatched (cv2 / torch compiled against numpy 1.x).
 from loguru import logger
-
-# sentence_transformers import deferred to initialization to avoid blocking FastAPI startup
 
 
 _EMBEDDER_INSTANCE = None
@@ -34,7 +33,7 @@ class SentenceEmbedder:
         self.batch_size = max(1, int(os.getenv("WHISPER_EMBEDDER_BATCH_SIZE", "8")))
         self.normalize_embeddings = os.getenv("WHISPER_EMBEDDER_NORMALIZE", "true").lower() == "true"
         self.cache_size = max(0, int(os.getenv("WHISPER_EMBEDDER_CACHE_SIZE", "512")))
-        self._cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._cache: OrderedDict = OrderedDict()
         self._cache_lock = threading.Lock()
         self.model = None
         self.use_model = False
@@ -65,7 +64,7 @@ class SentenceEmbedder:
             value = value[: self.max_chars]
         return value
 
-    def _cache_get(self, text: str) -> np.ndarray | None:
+    def _cache_get(self, text: str) -> object | None:
         if self.cache_size <= 0:
             return None
         with self._cache_lock:
@@ -84,7 +83,8 @@ class SentenceEmbedder:
             while len(self._cache) > self.cache_size:
                 self._cache.popitem(last=False)
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: List[str]) -> object:
+        import numpy as np
         prepared = [self._prepare_text(text) for text in texts]
 
         if self.use_model and self.model is not None:
@@ -112,6 +112,7 @@ class SentenceEmbedder:
 
         embeddings = []
         for text in prepared:
+            import numpy as np
             text_hash = hash(text) % (2**32)
             np.random.seed(text_hash)
             embeddings.append(np.random.randn(self.dim).astype(np.float32))

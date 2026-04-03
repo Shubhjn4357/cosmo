@@ -39,7 +39,7 @@ pip install -r requirements.txt
 ### 5. Start Backend
 ```powershell
 # In venv312
-python -m uvicorn api.route:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn api.route:app --reload --host 0.0.0.0 --port 7860
 ```
 
 ### 6. Test Auth

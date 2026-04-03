@@ -33,10 +33,10 @@ if not defined VENV_DIR (
 call "%VENV_DIR%\Scripts\activate.bat"
 
 echo Environment: %VENV_DIR%
-echo Server: http://0.0.0.0:8000
-echo Docs: http://localhost:8000/docs
+echo Server: http://0.0.0.0:7860
+echo Docs: http://localhost:7860/docs
 echo.
 echo Press CTRL+C to stop the server
 echo.
 
-"%VENV_DIR%\Scripts\python.exe" -m uvicorn api.route:app --reload --host 0.0.0.0 --port 8000
+"%VENV_DIR%\Scripts\python.exe" -m uvicorn api.route:app --reload --host 0.0.0.0 --port 7860
