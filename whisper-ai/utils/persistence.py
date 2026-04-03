@@ -11,6 +11,7 @@ from loguru import logger
 
 from services import hf_dataset_sync
 from utils.app_paths import DATA_ROOT, MODELS_DIR, ensure_app_dirs
+from utils.system_tuning import env_flag_enabled
 
 ensure_app_dirs()
 
@@ -54,9 +55,21 @@ PERSIST_FILES = [
     str(SELF_LEARNER_TOKENIZER_PATH),
     str(SELF_LEARNER_STATE_PATH),
 ]
-PERSIST_DIRECTORIES = [
-    str(MODELS_DIR),
-]
+
+
+def persist_models_dir_enabled() -> bool:
+    return env_flag_enabled(
+        "WHISPER_PERSIST_MODELS_DIR",
+        False,
+        disable_in_low_power=True,
+    )
+
+
+def get_persist_directories() -> list[str]:
+    directories: list[str] = []
+    if persist_models_dir_enabled():
+        directories.append(str(MODELS_DIR))
+    return directories
 
 
 def get_api(*, for_write: bool = False):
@@ -99,7 +112,10 @@ def restore_data():
             logger.debug(f"Could not restore {file_path}: {e}")
             # File might not exist yet, that's OK
 
-    for directory_path in PERSIST_DIRECTORIES:
+    if not persist_models_dir_enabled():
+        logger.info("Managed model directory restore disabled by configuration")
+
+    for directory_path in get_persist_directories():
         try:
             result = hf_dataset_sync.download_directory(directory_path)
             if result["file_count"] > 0:
@@ -134,7 +150,10 @@ def backup_data():
         except Exception as e:
             logger.error(f"Failed to backup {file_path}: {e}")
 
-    for directory_path in PERSIST_DIRECTORIES:
+    if not persist_models_dir_enabled():
+        logger.info("Managed model directory backup disabled by configuration")
+
+    for directory_path in get_persist_directories():
         try:
             local_path = Path(directory_path)
             if not local_path.exists():

@@ -1,5 +1,6 @@
 FROM python:3.12-slim
 
+ARG DEBIAN_FRONTEND=noninteractive
 ARG INSTALL_GGUF_RUNTIME=false
 ARG INSTALL_AIRLLM=false
 
@@ -11,14 +12,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/data/whisper/runtime/python-user-base/bin:/home/user/.local/bin:$PATH \
     HF_HOME=/data/whisper/runtime/huggingface \
     HUGGINGFACE_HUB_CACHE=/data/whisper/runtime/huggingface/hub \
-    HF_DATASET_REPO=shubhjn/whisper-data \
     WHISPER_DATA_ROOT=/data/whisper \
     WHISPER_MODELS_DIR=/data/whisper/models \
     WHISPER_UPLOADS_DIR=/data/whisper/uploads \
     WHISPER_PERSISTENT_VOLUME_ROOT=/data/whisper \
     WHISPER_USE_PERSISTENT_VOLUME=true \
     WHISPER_POWER_PROFILE=low-power \
+    WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED=false \
     WHISPER_WARM_CHAT_RUNTIME_ENABLED=false \
+    WHISPER_PERSIST_MODELS_DIR=false \
     WHISPER_BOOTSTRAP_GGUF_RUNTIME=false \
     WHISPER_BOOTSTRAP_APPROVED_MODELS=false \
     PORT=7860 \
@@ -64,7 +66,7 @@ USER user
 
 EXPOSE 7860
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/api/health', timeout=5)"
 
 CMD ["python", "app.py"]

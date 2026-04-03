@@ -31,7 +31,6 @@ except ImportError:
 ensure_app_dirs()
 
 SYNC_STATE_PATH = DATA_ROOT / "runtime" / "hf_dataset_sync.json"
-DEFAULT_DATASET_REPO = "shubhjn/whisper-data"
 MANAGED_ROOT_FILENAMES = {
     "training_pairs.jsonl",
     "feedback.jsonl",
@@ -99,7 +98,7 @@ def get_repo_id() -> str | None:
     value = os.getenv("HF_DATASET_REPO", "").strip()
     if value:
         return value
-    fallback = os.getenv("WHISPER_DEFAULT_HF_DATASET_REPO", DEFAULT_DATASET_REPO).strip()
+    fallback = os.getenv("WHISPER_DEFAULT_HF_DATASET_REPO", "").strip()
     return fallback or None
 
 

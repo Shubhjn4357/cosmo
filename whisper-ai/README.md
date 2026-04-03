@@ -74,6 +74,7 @@ Relevant env vars:
 - `WHISPER_POWER_PROFILE=low-power|balanced|performance`
 - `LOCAL_MODEL_THREADS=<int>`
 - `WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED=true|false`
+- `WHISPER_PERSIST_MODELS_DIR=true|false`
 - `WHISPER_WARM_CHAT_RUNTIME_ENABLED=true|false`
 - `WHISPER_HF_KEEPALIVE_ENABLED=true|false`
 - `WHISPER_AUTO_COLLECTION_ENABLED=true|false`
@@ -143,6 +144,8 @@ The Docker image sets:
 - `WHISPER_MODELS_DIR=/data/whisper/models`
 - `WHISPER_UPLOADS_DIR=/data/whisper/uploads`
 - `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`
+- `WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED=false`
+- `WHISPER_PERSIST_MODELS_DIR=false`
 - `WHISPER_WARM_CHAT_RUNTIME_ENABLED=false`
 - `WHISPER_BOOTSTRAP_GGUF_RUNTIME=false`
 - `WHISPER_BOOTSTRAP_APPROVED_MODELS=false`
@@ -502,7 +505,9 @@ validation outcome instead of key presence alone.
 
 - On free HF CPU, `auto` is the practical default. It will use GGUF when a local artifact is ready and otherwise fall back to the fast transformers coder profile.
 - The Docker Space build now defaults `INSTALL_GGUF_RUNTIME=false` so the optional `llama-cpp-python` backend is not compiled on every deploy.
-- The Docker runtime now starts in a low-power profile, exposes health first, and defers heavy runtime work until after the server is already serving requests.
+- The Docker runtime now starts in a low-power profile, exposes health first, disables eager knowledge-base warmup, and defers heavy runtime work until after the server is already serving requests.
+- Hugging Face dataset restore is now explicit: set `HF_DATASET_REPO` in Space settings if you want startup restore and dataset sync.
+- Managed model-directory persistence is now opt-in via `WHISPER_PERSIST_MODELS_DIR=true`.
 - If you want the Space to pre-warm the chat runtime or background-bootstrap models after startup, re-enable `WHISPER_WARM_CHAT_RUNTIME_ENABLED`, `WHISPER_BOOTSTRAP_GGUF_RUNTIME`, or `WHISPER_BOOTSTRAP_APPROVED_MODELS` in Space settings.
 - Background GGUF installs use `PYTHONUSERBASE=/data/whisper/runtime/python-user-base`, so attached persistent storage can keep the compiled runtime between restarts.
 - Large fully local multimodal operation still needs stronger hardware.

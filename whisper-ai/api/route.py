@@ -141,7 +141,11 @@ def _warm_chat_runtime_enabled() -> bool:
 
 
 def _eager_knowledge_base_enabled() -> bool:
-    return env_flag_enabled("WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED", True)
+    return env_flag_enabled(
+        "WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED",
+        True,
+        disable_in_low_power=True,
+    )
 
 
 async def _run_post_start_initialization(app: FastAPI):
