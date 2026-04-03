@@ -12,16 +12,7 @@ from typing import List
 import numpy as np
 from loguru import logger
 
-SENTENCE_TRANSFORMERS_AVAILABLE = False
-SENTENCE_TRANSFORMERS_IMPORT_ERROR = None
-
-try:
-    from sentence_transformers import SentenceTransformer
-
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
-except Exception as exc:
-    SENTENCE_TRANSFORMERS_IMPORT_ERROR = exc
-    SentenceTransformer = None
+# sentence_transformers import deferred to initialization to avoid blocking FastAPI startup
 
 
 _EMBEDDER_INSTANCE = None
@@ -48,27 +39,24 @@ class SentenceEmbedder:
         self.model = None
         self.use_model = False
 
-        if SENTENCE_TRANSFORMERS_AVAILABLE:
-            try:
-                logger.info("Loading sentence-transformers model: {}", model_name)
-                self.model = SentenceTransformer(model_name, device=self.device)
-                if hasattr(self.model, "max_seq_length"):
-                    self.model.max_seq_length = self.max_seq_length
-                self.dim = self.model.get_sentence_embedding_dimension()
-                self.use_model = True
-                logger.info(
-                    "Sentence embedder loaded (dim={} device={} max_seq_length={} batch_size={})",
-                    self.dim,
-                    self.device,
-                    self.max_seq_length,
-                    self.batch_size,
-                )
-            except Exception as exc:
-                logger.warning("Failed to load sentence-transformers: {}", exc)
-        else:
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info("Loading sentence-transformers model: {}", model_name)
+            self.model = SentenceTransformer(model_name, device=self.device)
+            if hasattr(self.model, "max_seq_length"):
+                self.model.max_seq_length = self.max_seq_length
+            self.dim = self.model.get_sentence_embedding_dimension()
+            self.use_model = True
+            logger.info(
+                "Sentence embedder loaded (dim={} device={} max_seq_length={} batch_size={})",
+                self.dim,
+                self.device,
+                self.max_seq_length,
+                self.batch_size,
+            )
+        except Exception as exc:
             logger.warning(
-                "sentence-transformers unavailable, using fallback embedder: {}",
-                SENTENCE_TRANSFORMERS_IMPORT_ERROR or "package not installed",
+                "sentence-transformers unavailable, using fallback embedder: {}", exc
             )
 
     def _prepare_text(self, text: str) -> str:
