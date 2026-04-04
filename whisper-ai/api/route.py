@@ -17,6 +17,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from utils.system_tuning import apply_process_tuning, env_flag_enabled
+from services.runtime_manager import get_chat_runtime_manager
+from utils.app_paths import UPLOADS_DIR, ensure_app_dirs
+from utils.persistence import backup_data, restore_data
 
 load_dotenv()
 TEST_MODE = os.getenv("WHISPER_TEST_MODE", "false").lower() == "true"
@@ -93,9 +97,6 @@ def _register_api_routes(app: FastAPI):
     app.include_router(datasets.router, prefix="/api", tags=["Datasets"])
     app.include_router(research.router, prefix="/api", tags=["Research"])
     app.include_router(ui.router, tags=["UI"])
-from services.runtime_manager import get_chat_runtime_manager
-from utils.app_paths import UPLOADS_DIR, ensure_app_dirs
-from utils.persistence import backup_data, restore_data
 
 
 class AppState:
@@ -203,7 +204,9 @@ async def _run_post_start_initialization(app: FastAPI):
 
     from services.catalog_bootstrap import start_catalog_bootstrap
     from services.gguf_bootstrap import start_gguf_runtime_bootstrap
-    
+    import api.routes.collect as collect
+    import api.routes.research as research
+
     if not TEST_MODE:
         if _background_feature_enabled("WHISPER_AUTO_COLLECTION_ENABLED"):
             try:
@@ -381,12 +384,14 @@ async def _shutdown():
             app_state.auto_training_task = None
 
     try:
-        await research.stop_background_research_task()
+        from api.routes.research import stop_background_research_task
+        await stop_background_research_task()
     except Exception as exc:
         logger.warning(f"Auto research shutdown skipped: {exc}")
 
     try:
-        await collect.stop_auto_collection_task()
+        from api.routes.collect import stop_auto_collection_task
+        await stop_auto_collection_task()
     except Exception as exc:
         logger.warning(f"Auto-collection shutdown skipped: {exc}")
 
