@@ -439,12 +439,33 @@ app.add_middleware(
 )
 
 
+ensure_app_dirs()
 Path("ui").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
 # Register all routes lazily
 _register_api_routes(app)
+
+
+def _record_request_analytics(
+    *,
+    duration_seconds: float,
+    endpoint: str,
+    client_host: str | None,
+    status_code: int,
+) -> None:
+    try:
+        from api.routes.analytics import analytics as request_analytics
+
+        request_analytics.record_request(
+            duration_seconds,
+            endpoint=endpoint,
+            client_id=client_host,
+            status_code=status_code,
+        )
+    except Exception as exc:
+        logger.debug(f"Request analytics skipped: {exc}")
 
 
 @app.middleware("http")
@@ -460,10 +481,10 @@ async def track_request_analytics(request, call_next):
         path = request.url.path or ""
         if path.startswith("/api"):
             client_host = request.client.host if request.client else None
-            analytics.analytics.record_request(
-                time.time() - start,
+            _record_request_analytics(
+                duration_seconds=time.time() - start,
                 endpoint=path,
-                client_id=client_host,
+                client_host=client_host,
                 status_code=status_code,
             )
 

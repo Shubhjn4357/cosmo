@@ -11,8 +11,20 @@ print(">>> INITIALIZING LOG AGGREGATION GRACE PERIOD (5s) <<<", flush=True)
 time.sleep(5)
 print(">>> BOOT PROBE: SYSTEM OK <<<", flush=True)
 
+
+def _safe_uid() -> str:
+    getuid = getattr(os, "getuid", None)
+    if callable(getuid):
+        try:
+            return str(getuid())
+        except Exception:
+            return "unknown"
+    return "n/a"
+
+
 # Environment Diagnostics
-print(f">>> CONTEXT: UID={os.getuid()}, CWD={os.getcwd()}, PATH={os.getenv('PATH')[:100]}...", flush=True)
+path_preview = (os.getenv("PATH") or "")[:100]
+print(f">>> CONTEXT: UID={_safe_uid()}, CWD={os.getcwd()}, PATH={path_preview}...", flush=True)
 sys.stdout.flush()
 
 try:

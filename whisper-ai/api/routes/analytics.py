@@ -5,13 +5,14 @@ Server metrics, response tracking, and system analytics.
 import hashlib
 import json
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from threading import Lock
 from typing import Dict, Any, List
 
 import psutil
 from dataclasses import dataclass, field
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from .auth import verify_admin_token
 from services.system_jobs import (
     refresh_job_state,
@@ -25,6 +26,7 @@ from utils.app_paths import DATA_ROOT
 
 router = APIRouter()
 DAILY_ANALYTICS_PATH = DATA_ROOT / "analytics" / "daily_metrics.json"
+EVENT_ANALYTICS_PATH = DATA_ROOT / "analytics" / "mobile_usage_events.jsonl"
 
 
 @dataclass
@@ -254,6 +256,160 @@ class AnalyticsTracker:
 analytics = AnalyticsTracker()
 
 
+class AnalyticsCollectEvent(BaseModel):
+    type: str
+    action: str
+    metadata: dict[str, Any] | None = None
+    timestamp: str
+
+
+class AnalyticsCollectRequest(BaseModel):
+    events: list[AnalyticsCollectEvent]
+    deviceId: str | None = None
+
+
+def _period_days(period: str | None) -> int:
+    normalized = str(period or "week").strip().lower()
+    if normalized == "day":
+        return 1
+    if normalized == "month":
+        return 30
+    return 7
+
+
+def _cutoff_timestamp(days: int) -> str:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(days - 1, 0))
+    return cutoff.isoformat()
+
+
+def _write_usage_events(payload: AnalyticsCollectRequest) -> int:
+    EVENT_ANALYTICS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    device_id = str(payload.deviceId or "").strip() or "anonymous"
+    written = 0
+    with EVENT_ANALYTICS_PATH.open("a", encoding="utf-8") as handle:
+        for event in payload.events:
+            handle.write(
+                json.dumps(
+                    {
+                        "type": event.type,
+                        "action": event.action,
+                        "metadata": event.metadata or {},
+                        "timestamp": event.timestamp,
+                        "device_id": device_id,
+                        "received_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+            written += 1
+    return written
+
+
+def _usage_requests_by_day(days: int) -> list[dict[str, Any]]:
+    series = analytics.get_daily_series(days=days)
+    return [
+        {
+            "date": (date.today() - timedelta(days=days - index - 1)).isoformat(),
+            "count": count,
+        }
+        for index, count in enumerate(series["requests"])
+    ]
+
+
+def _token_analytics_payload(*, user_id: str | None, period: str | None) -> dict[str, Any]:
+    from .profile import get_db_client
+
+    days = _period_days(period)
+    db_client = get_db_client()
+    if not db_client or not user_id:
+        return {
+            "total_tokens_used": 0,
+            "tokens_by_feature": [],
+            "tokens_by_day": [
+                {"date": (date.today() - timedelta(days=days - index - 1)).isoformat(), "tokens": 0}
+                for index in range(days)
+            ],
+            "average_daily_usage": 0,
+        }
+
+    try:
+        result = (
+            db_client.table("token_usage")
+            .select("feature,tokens_used,created_at")
+            .eq("user_id", user_id)
+            .gte("created_at", _cutoff_timestamp(days))
+            .execute()
+        )
+    except Exception:
+        result = None
+
+    rows = result.data if result and getattr(result, "data", None) else []
+    tokens_by_feature: dict[str, float] = {}
+    tokens_by_day: dict[str, float] = {}
+
+    for row in rows:
+        feature = str(row.get("feature") or "unknown")
+        tokens = float(row.get("tokens_used") or 0)
+        created_at = str(row.get("created_at") or "")
+        day_key = created_at.split("T", 1)[0] if created_at else date.today().isoformat()
+        tokens_by_feature[feature] = tokens_by_feature.get(feature, 0.0) + tokens
+        tokens_by_day[day_key] = tokens_by_day.get(day_key, 0.0) + tokens
+
+    ordered_days = [
+        (date.today() - timedelta(days=days - index - 1)).isoformat()
+        for index in range(days)
+    ]
+    day_series = [{"date": day_key, "tokens": round(tokens_by_day.get(day_key, 0.0), 2)} for day_key in ordered_days]
+    total_tokens = round(sum(tokens_by_feature.values()), 2)
+
+    return {
+        "total_tokens_used": total_tokens,
+        "tokens_by_feature": [
+            {"feature": feature, "tokens": round(tokens, 2)}
+            for feature, tokens in sorted(tokens_by_feature.items(), key=lambda item: item[1], reverse=True)
+        ],
+        "tokens_by_day": day_series,
+        "average_daily_usage": round(total_tokens / max(days, 1), 2),
+    }
+
+
+def _popular_models_payload() -> dict[str, Any]:
+    from .profile import get_db_client
+    from services.admin_state import get_selected_image_model
+    from services.model_manager import get_profiles
+
+    db_client = get_db_client()
+    model_counts: dict[str, int] = {}
+
+    if db_client:
+        try:
+            image_rows = db_client.table("generated_images").select("model_id").execute()
+            for row in image_rows.data or []:
+                model_id = str(row.get("model_id") or "").strip()
+                if model_id:
+                    model_counts[model_id] = model_counts.get(model_id, 0) + 1
+        except Exception:
+            pass
+
+    if not model_counts:
+        selected_image_model = get_selected_image_model("cyberrealistic-v9") or "cyberrealistic-v9"
+        model_counts[selected_image_model] = 1
+        for profile_id in get_profiles().keys():
+            model_counts.setdefault(profile_id, 0)
+
+    total = sum(model_counts.values()) or 1
+    models = [
+        {
+            "model": model_id,
+            "usage_count": count,
+            "percentage": round((count / total) * 100, 2),
+        }
+        for model_id, count in sorted(model_counts.items(), key=lambda item: item[1], reverse=True)
+    ]
+    return {"models": models}
+
+
 def get_system_metrics() -> Dict[str, Any]:
     """Get system resource metrics."""
     try:
@@ -321,6 +477,50 @@ async def get_system_analytics(payload: dict = Depends(verify_admin_token)):
             "daemon_running": app_state.daemon_running,
         },
         "jobs": jobs,
+    }
+
+
+@router.get("/analytics/usage")
+async def get_usage_analytics(user_id: str | None = None, period: str = "week"):
+    days = _period_days(period)
+    stats = analytics.get_stats()
+    series = analytics.get_daily_series(days=days)
+    total_requests = series["totals"]["requests"]
+    failed_requests = series["totals"]["errors"]
+    successful_requests = max(total_requests - failed_requests, 0)
+
+    return {
+        "user_id": user_id,
+        "period": period,
+        "total_requests": total_requests,
+        "successful_requests": successful_requests,
+        "failed_requests": failed_requests,
+        "average_response_time": stats["avg_response_time_ms"],
+        "requests_by_day": _usage_requests_by_day(days),
+    }
+
+
+@router.get("/analytics/tokens")
+async def get_token_analytics(user_id: str | None = None, period: str = "week"):
+    return {
+        "user_id": user_id,
+        "period": period,
+        **_token_analytics_payload(user_id=user_id, period=period),
+    }
+
+
+@router.get("/analytics/popular-models")
+async def get_popular_models():
+    return _popular_models_payload()
+
+
+@router.post("/analytics/collect")
+async def collect_mobile_analytics(request: AnalyticsCollectRequest):
+    written = _write_usage_events(request)
+    return {
+        "success": True,
+        "accepted": written,
+        "device_id": str(request.deviceId or "").strip() or "anonymous",
     }
 
 

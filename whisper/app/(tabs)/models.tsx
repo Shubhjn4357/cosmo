@@ -8,9 +8,9 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { useToast } from '@/components/Toast';
 import { borderRadius, fontSize, spacing, useTheme } from '@/constants/theme';
 import { useAIRuntime } from '@/hooks';
+import { type LLMModel, whisperAPI } from '@/services/api';
 import deviceWarnings, { type DeviceResources, type ModelCompatibility } from '@/services/deviceWarnings';
 import llmBackend from '@/services/llmBackend';
-import { whisperAPI } from '@/services/api';
 import { MODEL_MODE_DESCRIPTIONS, MODEL_MODE_LABELS, type ModelType } from '@/types';
 import { ensureModelsDirectoryExists, getModelsDirectory, getModelsDirectoryWithProtocol } from '@/utils/modelPaths';
 
@@ -113,7 +113,7 @@ export default function ModelsScreen() {
         return `${sizeMb} MB`;
     };
 
-    const mapServerModelToLocalModel = (model: any): LocalModel => ({
+    const mapServerModelToLocalModel = (model: LLMModel): LocalModel => ({
         id: model.id,
         name: model.name,
         size: formatSizeLabel(model.size_mb || 0),
@@ -135,11 +135,11 @@ export default function ModelsScreen() {
             const serverModels = await whisperAPI.getLLMModels();
             const approvedLocalModels = serverModels
                 .filter((model) => {
-                    const provider = (model.provider || '').toLowerCase();
                     return (
+                        model.kind === 'text' &&
+                        model.downloadable !== false &&
                         !!model.download_url &&
-                        model.supports_local !== false &&
-                        (provider === 'downloadable' || provider === 'hybrid' || model.kind === 'text')
+                        model.supports_local !== false
                     );
                 })
                 .map(mapServerModelToLocalModel);
@@ -300,6 +300,8 @@ export default function ModelsScreen() {
             let value = 0;
             if (activeModelPath === model.filePath) value += 1000;
             if (model.isDownloaded) value += 200;
+            if (model.recommended) value += 80;
+            if (!model.adult) value += 20;
             if (advice?.label === 'Recommended') value += 120;
             else if (advice?.label === 'Fits device') value += 90;
             else if (advice?.label === 'Use with care') value += 50;

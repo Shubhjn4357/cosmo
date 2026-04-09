@@ -32,6 +32,11 @@ interface SelectedImage {
     base64: string;
 }
 
+
+function toDataUrl(base64: string): string {
+    return base64.startsWith('data:') ? base64 : `data:image/jpeg;base64,${base64}`;
+}
+
 // Wrapper for auth protection
 export default function FaceSwapScreenWrapper() {
     return (
@@ -143,8 +148,8 @@ function FaceSwapScreen() {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    source_image: sourceImage.base64,
-                    target_image: targetImage.base64,
+                    source_image: toDataUrl(sourceImage.base64),
+                    target_image: toDataUrl(targetImage.base64),
                     enhance_face: enhanceFace,
                 }),
             });

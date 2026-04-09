@@ -80,19 +80,25 @@ class HordeAPI {
    */
   async generateImage(params: HordeImageParams): Promise<HordeImageResult> {
     try {
-      const baseUrl = whisperAPI.getBaseUrl();
-      const response = await fetch(`${baseUrl}/api/horde/image/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
+      const result = await whisperAPI.generateImage({
+        prompt: params.prompt,
+        negativePrompt: params.negative_prompt,
+        width: params.width,
+        height: params.height,
+        numSteps: params.steps,
+        guidanceScale: params.cfg_scale,
+        modelId: params.model,
+        isLocal: false,
       });
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(error.detail || `HTTP ${response.status}`);
-      }
-
-      return await response.json();
+      return {
+        success: true,
+        image_url: result.image_url,
+        seed: String(result.seed),
+        model: params.model || 'whisper-server',
+        enhanced_prompt: params.prompt,
+        original_prompt: params.prompt,
+      };
     } catch (error: any) {
       console.error('Horde image generation failed:', error);
       throw error;
@@ -104,27 +110,22 @@ class HordeAPI {
    */
   async chat(params: HordeChatParams): Promise<HordeChatResult> {
     try {
-      const baseUrl = whisperAPI.getBaseUrl();
-      const response = await fetch(`${baseUrl}/api/horde/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: params.prompt,
-          user_id: params.user_id,
-          model: params.model,
-          max_tokens: params.max_tokens,
-          temperature: params.temperature,
-          character_id: params.character_id,
-          conversation_history: params.conversation_history,
-        }),
+      const result = await whisperAPI.chat({
+        message: params.prompt,
+        history: params.conversation_history,
+        maxTokens: params.max_tokens,
+        temperature: params.temperature,
+        userId: params.user_id,
+        smartMode: true,
+        isLocal: false,
       });
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(error.detail || `HTTP ${response.status}`);
-      }
-
-      return await response.json();
+      return {
+        success: true,
+        response: result.response,
+        model: params.model || 'whisper-smart',
+        tokens_used: result.tokens_used,
+      };
     } catch (error: any) {
       console.error('Horde chat failed:', error);
       throw error;
@@ -136,14 +137,49 @@ class HordeAPI {
    */
   async getModels(modelType: 'image' | 'text' = 'image'): Promise<HordeModelsResult> {
     try {
-      const baseUrl = whisperAPI.getBaseUrl();
-      const response = await fetch(`${baseUrl}/api/horde/models?model_type=${modelType}`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+      if (modelType === 'image') {
+        const models = await whisperAPI.getImageModels();
+        return {
+          success: true,
+          models: models.map((model) => ({
+            name: model.id,
+            type: 'image',
+            count: model.downloaded ? 1 : 0,
+            performance: model.performance || 0,
+            queued: model.queued || 0,
+            eta: model.eta || 0,
+          })),
+          defaults: {
+            realism: models[0]?.id || 'cyberrealistic-v9',
+            anime: models[0]?.id || 'cyberrealistic-v9',
+            flux: models[0]?.id || 'cyberrealistic-v9',
+            furry: models[0]?.id || 'cyberrealistic-v9',
+            chat: 'whisper-smart',
+          },
+          total: models.length,
+        };
       }
 
-      return await response.json();
+      const models = await whisperAPI.getLLMModels();
+      return {
+        success: true,
+        models: models.map((model) => ({
+          name: model.id,
+          type: 'text',
+          count: model.downloaded ? 1 : 0,
+          performance: 0,
+          queued: 0,
+          eta: 0,
+        })),
+        defaults: {
+          realism: 'cyberrealistic-v9',
+          anime: 'cyberrealistic-v9',
+          flux: 'cyberrealistic-v9',
+          furry: 'cyberrealistic-v9',
+          chat: models[0]?.id || 'whisper-smart',
+        },
+        total: models.length,
+      };
     } catch (error: any) {
       console.error('Get horde models failed:', error);
       throw error;
@@ -162,19 +198,14 @@ class HordeAPI {
     result?: any;
     error?: string;
   }> {
-    try {
-      const baseUrl = whisperAPI.getBaseUrl();
-      const response = await fetch(`${baseUrl}/api/horde/tasks/${taskId}`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error: any) {
-      console.error('Get task status failed:', error);
-      throw error;
-    }
+    return {
+      success: false,
+      task_id: taskId,
+      status: 'failed',
+      task_type: 'compatibility',
+      created_at: new Date().toISOString(),
+      error: 'Background Horde task status is not supported by the current Whisper backend.',
+    };
   }
 
   /**

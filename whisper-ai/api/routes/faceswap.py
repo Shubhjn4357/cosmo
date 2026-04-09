@@ -18,10 +18,20 @@ class FaceSwapRequest(BaseModel):
     """Face swap request model."""
     source_image: str  # URL of face source
     target_image: str  # URL of target image
+    enhance_face: bool = True
     # Token system
     is_local: bool = False  # Faceswap costs tokens
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+
+
+def _normalize_image_input(value: str) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        raise HTTPException(status_code=400, detail="Image input is required")
+    if candidate.startswith(("http://", "https://", "data:")):
+        return candidate
+    return f"data:image/png;base64,{candidate}"
 
 @router.post("/faceswap")
 async def face_swap(request: FaceSwapRequest):
@@ -67,8 +77,8 @@ async def face_swap(request: FaceSwapRequest):
                 json={
                     "version": "278a81e7ebb22db98bcba54de985d22cc1abeead2754eb1f2af717247be69b34",  # lucataco/faceswap (working)
                     "input": {
-                        "swap_image": request.source_image,
-                        "input_image": request.target_image
+                        "swap_image": _normalize_image_input(request.source_image),
+                        "input_image": _normalize_image_input(request.target_image),
                     }
                 }
             )
@@ -107,3 +117,9 @@ async def face_swap(request: FaceSwapRequest):
     except Exception as e:
         logger.error(f"Face swap error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/faceswap/swap")
+async def face_swap_compat(request: FaceSwapRequest):
+    """Compatibility alias for older app clients."""
+    return await face_swap(request)

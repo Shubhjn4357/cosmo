@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel
 
@@ -271,6 +271,104 @@ async def get_vision_sample(count: int = 5):
 class VisionGenerateRequest(BaseModel):
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+
+
+@router.post("/upload")
+async def upload_feed_files(
+    files: List[UploadFile] = File(...),
+    source: str = Form(default="mobile_app"),
+):
+    """
+    Upload mixed files from the mobile app and feed them into knowledge or vision memory.
+    """
+    from api.route import get_app_state
+    from api.routes.analytics import analytics as request_analytics
+    from api.routes.collect import _compute_local_image_embedding
+    from api.routes.files import FileReader
+
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one file is required")
+
+    app_state = get_app_state()
+    upload_dir = UPLOADS_DIR / "feed-upload"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    processed: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+
+    for upload in files:
+        filename = Path(upload.filename or f"upload-{uuid.uuid4().hex}").name
+        temp_path = upload_dir / f"{uuid.uuid4().hex}-{filename}"
+
+        try:
+            content = await upload.read()
+            if not content:
+                raise ValueError("Uploaded file is empty")
+
+            temp_path.write_bytes(content)
+            file_type = FileReader.detect_type(filename)
+            if file_type == "unknown":
+                raise ValueError("Unsupported file type")
+
+            if file_type == "image":
+                embedding = _compute_local_image_embedding(content)
+                stored = store_vision_data(
+                    embedding=embedding,
+                    text_representation=f"{filename} uploaded from {source}",
+                    source=source,
+                    preview_bytes=content,
+                    metadata={
+                        "filename": filename,
+                        "file_type": file_type,
+                        "uploaded_via": "feed-upload",
+                    },
+                )
+                processed.append(
+                    {
+                        "filename": filename,
+                        "file_type": file_type,
+                        "stored": "vision",
+                        "preview_url": stored["entry"].get("preview_url"),
+                    }
+                )
+                continue
+
+            result = await FileReader.read(temp_path, file_type)
+            text_content = str(result.get("content") or "").strip()
+            if not text_content:
+                raise ValueError("No readable content extracted")
+
+            chunks_indexed = 0
+            if app_state.rag is not None:
+                chunks_indexed = app_state.rag.index_document(text_content, source=f"{source}:{filename}")
+                if chunks_indexed:
+                    request_analytics.record_knowledge_added(chunks_indexed)
+                    if app_state.vectordb is not None:
+                        app_state.vectordb.save()
+
+            processed.append(
+                {
+                    "filename": filename,
+                    "file_type": file_type,
+                    "stored": "knowledge",
+                    "characters": len(text_content),
+                    "chunks_indexed": chunks_indexed,
+                }
+            )
+        except Exception as exc:
+            errors.append({"filename": filename, "error": str(exc)})
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
+    return {
+        "success": bool(processed),
+        "processed": len(processed),
+        "failed": len(errors),
+        "results": processed,
+        "errors": errors,
+        "source": source,
+    }
 
 
 @router.post("/vision/generate")

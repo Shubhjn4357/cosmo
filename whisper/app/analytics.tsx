@@ -34,6 +34,10 @@ export default function AnalyticsScreen() {
     const [usageData, setUsageData] = useState<any>(null);
     const [tokenData, setTokenData] = useState<any>(null);
     const [popularModels, setPopularModels] = useState<any>(null);
+    const totalRequests = usageData?.total_requests || 0;
+    const successfulRequests = usageData?.successful_requests || 0;
+    const totalTokensUsed = tokenData?.total_tokens_used || 0;
+    const successRate = totalRequests > 0 ? Math.round((successfulRequests / totalRequests) * 100) : 0;
 
     useEffect(() => {
         if (user?.id) {
@@ -178,9 +182,9 @@ export default function AnalyticsScreen() {
                         <StatCard
                             icon="flash"
                             label="Total Requests"
-                            value={usageData.total_requests}
+                            value={totalRequests}
                             color={theme.colors.primary}
-                            subtitle={`${usageData.successful_requests} successful`}
+                            subtitle={`${successfulRequests} successful`}
                         />
                         <StatCard
                             icon="analytics"
@@ -192,7 +196,7 @@ export default function AnalyticsScreen() {
                         <StatCard
                             icon="checkmark-circle"
                             label="Success Rate"
-                            value={`${Math.round((usageData.successful_requests / usageData.total_requests) * 100)}%`}
+                            value={`${successRate}%`}
                             color={theme.colors.success}
                         />
                         <StatCard
@@ -254,7 +258,7 @@ export default function AnalyticsScreen() {
                                                 style={[
                                                     styles.progressFill,
                                                     {
-                                                        width: `${(feature.tokens / tokenData.total_tokens_used) * 100}%`,
+                                                        width: `${totalTokensUsed > 0 ? (feature.tokens / totalTokensUsed) * 100 : 0}%`,
                                                         backgroundColor: theme.colors.primary,
                                                     },
                                                 ]}

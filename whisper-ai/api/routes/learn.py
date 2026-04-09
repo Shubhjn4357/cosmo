@@ -69,6 +69,13 @@ class ExternalModelResponse(BaseModel):
     metadata: Optional[dict] = None
 
 
+class LegacyTrainingRequest(BaseModel):
+    input: str
+    output: str
+    model: str = "user-feedback"
+    userId: Optional[str] = None
+
+
 def _append_jsonl(path: Path, record: dict):
     with open(path, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -496,6 +503,25 @@ async def submit_single_pair(pair: UniversalTrainingPair, background_tasks: Back
     return {
         "status": "learned",
         "source": pair.source,
+        "message": "Training pair stored",
+        "synced_to_hf": bool(get_hf_token()),
+    }
+
+
+@router.post("/learn/add")
+async def submit_single_pair_compat(pair: LegacyTrainingRequest, background_tasks: BackgroundTasks):
+    """Compatibility alias used by the mobile app."""
+    save_training_pair(
+        pair.input,
+        pair.output,
+        pair.model or "user-feedback",
+        {"user_id": pair.userId} if pair.userId else None,
+        background_tasks,
+    )
+    return {
+        "status": "learned",
+        "source": pair.model or "user-feedback",
+        "message": "Training data submitted",
         "synced_to_hf": bool(get_hf_token()),
     }
 
@@ -564,6 +590,9 @@ async def get_learning_stats():
         "curated_text_pairs": counts["curated_text_pairs"],
         "total_knowledge": counts["total_sequences"],
         "total_sequences": counts["total_sequences"],
+        "learning_enabled": True,
+        "restrictions": "none",
+        "content_filter": "disabled",
         "huggingface_repo": get_hf_dataset_repo(),
         "hf_sync_enabled": bool(get_hf_token()),
         "last_sync_count": hf_dataset_sync.get_last_sync_count(),

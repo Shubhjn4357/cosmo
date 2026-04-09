@@ -178,8 +178,7 @@ class DataCollectionService {
         }
 
         try {
-            // Send to server (you'd implement a specific endpoint for this)
-            const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/analytics/collect`, {
+            const response = await fetch(`${whisperAPI.getBaseUrl()}/api/analytics/collect`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

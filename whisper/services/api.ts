@@ -55,6 +55,7 @@ export interface HealthStatus {
     knowledge_chunks?: number;
     is_training: boolean;
     daemon_running: boolean;
+    backend?: string;
 }
 
 export interface LLMModel {
@@ -69,6 +70,7 @@ export interface LLMModel {
     quantization: string;
     provider: string;
     download_url: string;
+    downloadable?: boolean;
     recommended?: boolean;
     adult?: boolean;
     supports_local?: boolean;
@@ -85,6 +87,7 @@ export interface LLMModel {
     install_error?: string | null;
     size_bytes?: number;
     kind?: string;
+    tags?: string[];
 }
 
 export interface ImageModel {
@@ -250,6 +253,17 @@ export class WhisperAPI {
         return {
             'Content-Type': 'application/json',
             // Add any other default headers here, e.g., Authorization
+        };
+    }
+
+    private getAdminHeaders(adminToken?: string): HeadersInit {
+        if (!adminToken) {
+            return this.getHeaders();
+        }
+
+        return {
+            ...this.getHeaders(),
+            Authorization: `Bearer ${adminToken}`,
         };
     }
 
@@ -869,13 +883,24 @@ export class WhisperAPI {
      * Get server health status
      */
     async getHealth(): Promise<HealthStatus> {
-        const response = await fetch(`${this.baseUrl}/api/healthcheck`);
+        const response = await fetch(`${this.baseUrl}/api/health`);
 
         if (!response.ok) {
             throw new Error(`Health check failed: ${response.status}`);
         }
 
-        return response.json();
+        const data = await response.json();
+        return {
+            status: data.status || 'unknown',
+            service: data.service,
+            model_loaded: Boolean(data.model_loaded),
+            tokenizer_loaded: Boolean(data.model_loaded),
+            vectordb_loaded: Boolean(data.knowledge_loaded),
+            knowledge_chunks: data.runtime?.knowledge?.total_vectors,
+            is_training: Boolean(data.runtime?.flags?.is_training),
+            daemon_running: Boolean(data.runtime?.flags?.daemon_running),
+            backend: data.backend,
+        };
     }
 
     /**
@@ -1237,14 +1262,18 @@ export class WhisperAPI {
     /**
      * Get admin dashboard stats
      */
-    async getAdminStats(): Promise<{
+    async getAdminStats(params: {
+        adminToken?: string;
+    } = {}): Promise<{
         total_users: number;
         active_users_today: number;
         total_requests_today: number;
         total_tokens_used_today: number;
         server_health: string;
     }> {
-        const response = await fetch(`${this.baseUrl}/api/admin/stats`);
+        const response = await fetch(`${this.baseUrl}/api/admin/stats`, {
+            headers: this.getAdminHeaders(params.adminToken),
+        });
         if (!response.ok) {
             throw new Error(`Failed to get admin stats: ${response.status}`);
         }
@@ -1257,6 +1286,7 @@ export class WhisperAPI {
     async getUsers(params: {
         page?: number;
         limit?: number;
+        adminToken?: string;
     }): Promise<{
         users: any[];
         total: number;
@@ -1265,11 +1295,17 @@ export class WhisperAPI {
     }> {
         const page = params.page || 1;
         const limit = params.limit || 20;
-        const response = await fetch(`${this.baseUrl}/api/admin/users?page=${page}&limit=${limit}`);
+        const response = await fetch(`${this.baseUrl}/api/admin/users?page=${page}&limit=${limit}`, {
+            headers: this.getAdminHeaders(params.adminToken),
+        });
         if (!response.ok) {
             throw new Error(`Failed to get users: ${response.status}`);
         }
-        return response.json();
+        const data = await response.json();
+        return {
+            ...data,
+            pages: Math.max(1, Math.ceil((data.total || 0) / limit)),
+        };
     }
 }
 

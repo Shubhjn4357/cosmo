@@ -1082,7 +1082,7 @@ async def delete_research_documents_endpoint(
         provider=request.provider,
         search=request.search,
     )
-    scraper_cleanup = SCRAPER.prune_state(
+    scraper_cleanup = get_scraper().prune_state(
         urls=[document.get("url") for document in matched_documents if document.get("provider") == "legacy"],
         content_hashes=[
             (document.get("metadata") or {}).get("content_hash")
@@ -1139,7 +1139,7 @@ async def reset_cloudflare_quota(payload: dict = Depends(verify_admin_token)):
 async def reset_research_scraper(payload: dict = Depends(verify_admin_token)):
     return {
         "status": "reset",
-        "scraper": SCRAPER.reset_state(),
+        "scraper": get_scraper().reset_state(),
     }
 
 

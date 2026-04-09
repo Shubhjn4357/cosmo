@@ -60,7 +60,7 @@ class LLMModel(BaseModel):
     supports_local: bool = True
     supports_server: bool = True
     roles: list[str] = Field(default_factory=list)
-    auto_bootstrap: bool = True
+    auto_bootstrap: bool = False
     runtime_backend: str = ""
     endpoint_env: str = ""
     resolved_endpoint: str = ""

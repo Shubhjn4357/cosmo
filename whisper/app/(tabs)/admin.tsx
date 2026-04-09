@@ -41,6 +41,7 @@ interface Analytics {
     };
     knowledge: {
         total_chunks?: number;
+        total_vectors?: number;
     };
     status: {
         server: string;
@@ -161,20 +162,21 @@ export default function AdminScreen() {
 
         setLoading(true);
         try {
-            const response = await fetch(`${serverUrl}/api/auth/login`, {
+            const response = await fetch(`${serverUrl}/api/auth/signin`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
             });
             
             const data = await response.json();
+            const token = data.session?.access_token || data.token;
             
-            if (data.success && data.token) {
-                await AsyncStorage.setItem('adminToken', data.token);
+            if (data.success && token) {
+                await AsyncStorage.setItem('adminToken', token);
                 setIsLoggedIn(true);
                 setPassword('');
             } else {
-                toast.error('Login Failed', data.message || 'Invalid credentials');
+                toast.error('Login Failed', data.message || data.error || 'Invalid credentials');
             }
         } catch (e) {
             toast.error('Error', 'Could not connect to server');
@@ -193,13 +195,14 @@ export default function AdminScreen() {
     const fetchAnalytics = async () => {
         try {
             const token = await AsyncStorage.getItem('adminToken');
-            const response = await fetch(`${serverUrl}/api/admin/analytics`, {
+            const response = await fetch(`${serverUrl}/api/admin/system-analytics`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             
             if (response.ok) {
                 const data = await response.json();
                 setAnalytics(data);
+                setGeneratorRunning(Boolean(data.jobs?.generator?.running));
             }
         } catch (e) {
             console.error('Failed to fetch analytics:', e);
@@ -618,7 +621,7 @@ export default function AdminScreen() {
                     </View>
                     <View style={styles.metricItem}>
                         <Text style={[styles.metricValue, { color: theme.colors.primary }]}>
-                            {analytics?.knowledge.total_chunks || 0}
+                            {analytics?.knowledge.total_chunks ?? analytics?.knowledge.total_vectors ?? 0}
                         </Text>
                         <Text style={[styles.metricLabel, { color: theme.colors.textSecondary }]}>Knowledge Chunks</Text>
                     </View>

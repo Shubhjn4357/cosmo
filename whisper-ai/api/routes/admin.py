@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from io import BytesIO
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Body, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import Any, Optional, List, Dict
 from loguru import logger
@@ -411,13 +411,13 @@ def _readiness_report(app_state) -> dict:
 
 def _control_center_payload(app_state) -> dict[str, Any]:
     from api.routes.research import (
-        RESEARCH_STATS,
         SOURCE_POLICY,
         get_background_research_status,
+        get_research_stats_summary,
         list_research_documents,
         list_research_runs,
-        summarize_research_runs,
         summarize_research_documents,
+        summarize_research_runs,
     )
 
     jobs = refresh_job_state(app_state)
@@ -458,7 +458,7 @@ def _control_center_payload(app_state) -> dict[str, Any]:
         "readiness": readiness,
         "hf_sync": hf_sync_status(),
         "datasets": _collect_dataset_payload(),
-        "research": dict(RESEARCH_STATS),
+        "research": get_research_stats_summary(),
         "research_history": {
             "runs": list_research_runs(limit=6),
             "summary": summarize_research_runs(),
@@ -502,11 +502,23 @@ class RuntimeProfileValidationRequest(BaseModel):
     refresh_imports: bool = True
 
 
+class UserBanRequest(BaseModel):
+    banned: bool
+
+
+class ModelToggleRequest(BaseModel):
+    enabled: bool
+
+
+class ServiceToggleRequest(BaseModel):
+    enabled: bool
+
+
 @router.get("/runtime-status")
 async def get_runtime_status():
     """Public runtime status for the chat and admin UI."""
     from api.route import get_app_state
-    from api.routes.research import RESEARCH_STATS
+    from api.routes.research import get_research_stats_summary
 
     app_state = get_app_state()
     jobs = refresh_job_state(app_state)
@@ -532,7 +544,7 @@ async def get_runtime_status():
     return {
         "runtime": runtime,
         "knowledge": knowledge,
-        "research": dict(RESEARCH_STATS),
+        "research": get_research_stats_summary(),
         "gguf_bootstrap": get_gguf_bootstrap_status(),
         "uptime_seconds": int(time.time() - app_state.start_time),
         "flags": {
@@ -755,20 +767,25 @@ async def get_users(
 @router.post("/users/{user_id}/ban")
 async def ban_user(
     user_id: str,
-    banned: bool,
+    request: Optional[UserBanRequest] = Body(default=None),
+    banned: Optional[bool] = None,
     payload: dict = Depends(verify_admin_token)
 ):
     """Ban or unban a user"""
     db_client = get_db_client()
     if not db_client:
         return {"success": False, "error": "Database not available"}
-    
+
+    target_state = request.banned if request is not None else banned
+    if target_state is None:
+        raise HTTPException(status_code=400, detail="'banned' must be provided")
+
     try:
         db_client.table("profiles").update({
-            "banned": banned
+            "banned": target_state
         }).eq("id", user_id).execute()
-        
-        return {"success": True, "message": f"User {'banned' if banned else 'unbanned'}"}
+
+        return {"success": True, "message": f"User {'banned' if target_state else 'unbanned'}", "banned": target_state}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -863,12 +880,17 @@ async def get_models(payload: dict = Depends(verify_admin_token)):
 @router.post("/models/{model_id}/toggle")
 async def toggle_model(
     model_id: str,
-    enabled: bool,
+    request: Optional[ModelToggleRequest] = Body(default=None),
+    enabled: Optional[bool] = None,
     payload: dict = Depends(verify_admin_token)
 ):
     """Enable or disable a model"""
     from api.route import get_app_state
     from api.routes.image import IMAGE_MODEL_IDS
+
+    target_enabled = request.enabled if request is not None else enabled
+    if target_enabled is None:
+        raise HTTPException(status_code=400, detail="'enabled' must be provided")
 
     parts = model_id.split(".", 1)
     if len(parts) != 2:
@@ -880,7 +902,7 @@ async def toggle_model(
     if scope == "runtime":
         if raw_id not in get_profiles():
             raise HTTPException(status_code=404, detail=f"Unknown runtime profile '{raw_id}'")
-        if not enabled and app_state.chat_runtime and app_state.chat_runtime.get_selected_profile() == raw_id:
+        if not target_enabled and app_state.chat_runtime and app_state.chat_runtime.get_selected_profile() == raw_id:
             raise HTTPException(status_code=400, detail="Cannot disable the active runtime profile")
     elif scope == "image":
         if raw_id not in IMAGE_MODEL_IDS:
@@ -891,12 +913,34 @@ async def toggle_model(
     else:
         raise HTTPException(status_code=404, detail=f"Unknown model scope '{scope}'")
 
-    set_model_enabled(model_id, enabled)
+    set_model_enabled(model_id, target_enabled)
     return {
         "success": True,
-        "message": f"Model '{model_id}' {'enabled' if enabled else 'disabled'}",
+        "message": f"Model '{model_id}' {'enabled' if target_enabled else 'disabled'}",
         "model_id": model_id,
-        "enabled": enabled,
+        "enabled": target_enabled,
+    }
+
+
+@router.post("/services/{service_name}/toggle")
+async def toggle_service(
+    service_name: str,
+    request: ServiceToggleRequest,
+    payload: dict = Depends(verify_admin_token),
+):
+    """Persist lightweight service toggles for the mobile admin UI."""
+    normalized = str(service_name or "").strip().lower()
+    allowed = {"horde", "huggingface", "faceswap", "tts", "vision"}
+    if normalized not in allowed:
+        raise HTTPException(status_code=404, detail=f"Unknown service '{normalized}'")
+
+    state_key = f"service.{normalized}"
+    set_model_enabled(state_key, request.enabled)
+    return {
+        "success": True,
+        "service": normalized,
+        "enabled": request.enabled,
+        "message": f"Service '{normalized}' {'enabled' if request.enabled else 'disabled'}",
     }
 
 
@@ -984,6 +1028,49 @@ async def get_analytics(payload: dict = Depends(verify_admin_token)):
         "features": feature_rows,
         "total_users": total_users,
         "request_totals": request_stats,
+    }
+
+
+@router.get("/stats")
+async def get_admin_stats(payload: dict = Depends(verify_admin_token)):
+    from api.route import get_app_state
+    from api.routes.analytics import analytics as request_analytics
+
+    app_state = get_app_state()
+    db_client = get_db_client()
+    request_stats = request_analytics.get_stats()
+    today_stats = request_stats.get("today", {})
+
+    total_users = _count_total_profiles(db_client)
+    active_users_today = int(today_stats.get("unique_clients", 0))
+    total_requests_today = int(today_stats.get("requests", 0))
+    total_tokens_used_today = 0.0
+
+    if db_client:
+        try:
+            today_start = time.strftime("%Y-%m-%dT00:00:00")
+            result = (
+                db_client.table("token_usage")
+                .select("tokens_used,created_at")
+                .gte("created_at", today_start)
+                .execute()
+            )
+            total_tokens_used_today = round(
+                sum(float(row.get("tokens_used") or 0) for row in (result.data or [])),
+                2,
+            )
+        except Exception:
+            total_tokens_used_today = 0.0
+
+    runtime_loaded = bool(app_state.chat_runtime and app_state.chat_runtime.is_ready())
+    server_health = "healthy" if runtime_loaded else "degraded"
+
+    return {
+        "total_users": total_users,
+        "active_users_today": active_users_today,
+        "total_requests_today": total_requests_today,
+        "total_tokens_used_today": total_tokens_used_today,
+        "server_health": server_health,
     }
 
 

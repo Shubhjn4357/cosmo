@@ -136,6 +136,34 @@ class LoginResponse(BaseModel):
     message: str
 
 
+def _login_success_response(*, token: str, user: dict, is_admin: bool, profile: Optional[dict] = None) -> dict:
+    payload = {
+        "success": True,
+        "token": token,
+        "message": "Login successful",
+        "session": {
+            "access_token": token,
+            "refresh_token": token,
+            "user": user,
+        },
+        "user": user,
+        "is_admin": is_admin,
+        "error": None,
+    }
+    if profile is not None:
+        payload["profile"] = profile
+    return payload
+
+
+def _login_error_response(message: str) -> dict:
+    return {
+        "success": False,
+        "token": None,
+        "message": message,
+        "error": message,
+    }
+
+
 def create_jwt(username: str, user_id: Optional[str] = None, is_admin: bool = False) -> str:
     header = {"alg": "HS256", "typ": "JWT"}
     payload = {
@@ -250,15 +278,11 @@ async def signin(request: LoginRequest):
     username_or_email = request.username or request.email or ""
     if _is_admin_login(username_or_email, request.password):
         token = create_jwt(username_or_email, is_admin=True)
-        return {
-            "success": True,
-            "session": {
-                "access_token": token,
-                "refresh_token": token,
-                "user": {"email": username_or_email, "is_admin": True},
-            },
-            "error": None,
-        }
+        return _login_success_response(
+            token=token,
+            user={"email": username_or_email, "is_admin": True},
+            is_admin=True,
+        )
 
     try:
         result = get_db_client().auth.sign_in_with_password(
@@ -273,23 +297,27 @@ async def signin(request: LoginRequest):
                 user_id=result.user.id,
                 is_admin=False,
             )
-            return {
-                "success": True,
-                "session": {
-                    "access_token": token,
-                    "refresh_token": token,
-                    "user": {"id": result.user.id, "email": username_or_email},
-                },
-                "user": result.user.model_dump(),
-                "error": None,
-            }
-        return {"success": False, "error": "Invalid username or password"}
+            return _login_success_response(
+                token=token,
+                user={"id": result.user.id, "email": username_or_email},
+                is_admin=False,
+                profile=result.user.model_dump(),
+            )
+        return _login_error_response("Invalid username or password")
     except Exception as exc:
         error_msg = str(exc)
         logger.warning(f"User login failed: {error_msg}")
         if "Invalid login credentials" in error_msg:
             error_msg = "Invalid username or password"
-        return {"success": False, "error": error_msg}
+        elif "Missing database migration file" in error_msg:
+            error_msg = "Local user database is not available"
+        return _login_error_response(error_msg)
+
+
+@router.post("/auth/login")
+async def login(request: LoginRequest):
+    """Compatibility alias for older mobile/admin clients."""
+    return await signin(request)
 
 
 @router.post("/auth/google")

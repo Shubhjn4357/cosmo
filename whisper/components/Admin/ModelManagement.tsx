@@ -10,10 +10,10 @@ import { useTheme, spacing, fontSize, borderRadius } from '@/constants/theme';
 interface Model {
     id: string;
     name: string;
-    type: 'llm' | 'image';
+    type: 'llm' | 'image' | 'provider';
     enabled: boolean;
     performance?: {
-        avg_response_time: number;
+        avg_response_time_ms?: number | null;
         requests_today: number;
     };
 }
@@ -83,7 +83,7 @@ export function ModelManagement({ serverUrl, adminToken }: ModelManagementProps)
                             </Text>
                             {item.performance && (
                                 <Text style={[styles.perfText, { color: theme.colors.textMuted }]}>
-                                    {item.performance.avg_response_time}ms avg • {item.performance.requests_today} requests today
+                                    {item.performance.avg_response_time_ms ?? 0}ms avg • {item.performance.requests_today} requests today
                                 </Text>
                             )}
                         </View>
