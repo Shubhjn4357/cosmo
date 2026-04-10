@@ -21,6 +21,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED=false \
     WHISPER_STARTUP_VERIFICATION_ENABLED=false \
     WHISPER_WARM_CHAT_RUNTIME_ENABLED=false \
+    WHISPER_DEFER_ROUTE_REGISTRATION=true \
+    WHISPER_PREBIND_DELAY_SECONDS=0 \
     WHISPER_PERSIST_MODELS_DIR=false \
     WHISPER_BOOTSTRAP_GGUF_RUNTIME=false \
     WHISPER_BOOTSTRAP_APPROVED_MODELS=false \
@@ -84,6 +86,6 @@ USER user
 EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=20s --start-period=120s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/api/health', timeout=10)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/health', timeout=10)" || exit 1
 
 CMD ["python", "app.py"]

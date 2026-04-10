@@ -18,9 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from utils.system_tuning import apply_process_tuning, env_flag_enabled
-from services.runtime_manager import get_chat_runtime_manager
 from utils.app_paths import UPLOADS_DIR, ensure_app_dirs
-from utils.persistence import backup_data, restore_data
 
 load_dotenv()
 TEST_MODE = os.getenv("WHISPER_TEST_MODE", "false").lower() == "true"
@@ -37,7 +35,7 @@ def _log_system_resources():
         pass
 
 # Lazy-loaded router registration to improve startup time and memory footprint on restricted hardware
-def _register_api_routes(app: FastAPI):
+def _load_api_route_modules():
     from api.routes import (
         admin,
         agent,
@@ -68,35 +66,73 @@ def _register_api_routes(app: FastAPI):
         ui,
         voice,
     )
-    
-    app.include_router(chat.router, prefix="/api", tags=["Chat"])
-    app.include_router(agent.router, prefix="/api", tags=["Agent"])
-    app.include_router(autoresearch.router, prefix="/api", tags=["Autoresearch"])
-    app.include_router(image.router, prefix="/api", tags=["Image"])
-    app.include_router(files.router, prefix="/api", tags=["Files"])
-    app.include_router(knowledge.router, prefix="/api", tags=["Knowledge"])
-    app.include_router(auth.router, prefix="/api", tags=["Auth"])
-    app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
-    app.include_router(models.router, prefix="/api", tags=["Models"])
-    app.include_router(profile.router, prefix="/api", tags=["Profile"])
-    app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-    app.include_router(dashboard.dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
-    app.include_router(voice.router, prefix="/api", tags=["Voice"])
-    app.include_router(faceswap.router, prefix="/api", tags=["FaceSwap"])
-    app.include_router(roleplay.router, prefix="/api", tags=["Roleplay"])
-    app.include_router(characters.router, prefix="/api", tags=["Characters"])
-    app.include_router(tts.router, prefix="/api", tags=["TTS"])
-    app.include_router(learn.router, prefix="/api", tags=["Learning"])
-    app.include_router(feed.router, prefix="/api/feed", tags=["Data Feed"])
-    app.include_router(huggingface.router, prefix="/api", tags=["HuggingFace"])
-    app.include_router(smart_mode.router, prefix="/api", tags=["Smart Mode"])
-    app.include_router(healthcheck.router, prefix="/api", tags=["Health"])
-    app.include_router(ping.router, prefix="/api", tags=["Keepalive"])
-    app.include_router(collect.router, prefix="/api/collect", tags=["Data Collection"])
-    app.include_router(train_vision.router, tags=["Vision Training"])
-    app.include_router(datasets.router, prefix="/api", tags=["Datasets"])
-    app.include_router(research.router, prefix="/api", tags=["Research"])
-    app.include_router(ui.router, tags=["UI"])
+    return {
+        "admin": admin,
+        "agent": agent,
+        "analytics": analytics,
+        "autoresearch": autoresearch,
+        "auth": auth,
+        "characters": characters,
+        "chat": chat,
+        "collect": collect,
+        "dashboard": dashboard,
+        "datasets": datasets,
+        "faceswap": faceswap,
+        "feed": feed,
+        "files": files,
+        "healthcheck": healthcheck,
+        "huggingface": huggingface,
+        "image": image,
+        "knowledge": knowledge,
+        "learn": learn,
+        "models": models,
+        "ping": ping,
+        "profile": profile,
+        "research": research,
+        "roleplay": roleplay,
+        "smart_mode": smart_mode,
+        "train_vision": train_vision,
+        "tts": tts,
+        "ui": ui,
+        "voice": voice,
+    }
+
+
+def _register_api_routes(app: FastAPI, route_modules: dict | None = None) -> None:
+    if app_state.routes_registered:
+        return
+
+    modules = route_modules or _load_api_route_modules()
+
+    app.include_router(modules["chat"].router, prefix="/api", tags=["Chat"])
+    app.include_router(modules["agent"].router, prefix="/api", tags=["Agent"])
+    app.include_router(modules["autoresearch"].router, prefix="/api", tags=["Autoresearch"])
+    app.include_router(modules["image"].router, prefix="/api", tags=["Image"])
+    app.include_router(modules["files"].router, prefix="/api", tags=["Files"])
+    app.include_router(modules["knowledge"].router, prefix="/api", tags=["Knowledge"])
+    app.include_router(modules["auth"].router, prefix="/api", tags=["Auth"])
+    app.include_router(modules["analytics"].router, prefix="/api", tags=["Analytics"])
+    app.include_router(modules["models"].router, prefix="/api", tags=["Models"])
+    app.include_router(modules["profile"].router, prefix="/api", tags=["Profile"])
+    app.include_router(modules["admin"].router, prefix="/api/admin", tags=["Admin"])
+    app.include_router(modules["dashboard"].dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
+    app.include_router(modules["voice"].router, prefix="/api", tags=["Voice"])
+    app.include_router(modules["faceswap"].router, prefix="/api", tags=["FaceSwap"])
+    app.include_router(modules["roleplay"].router, prefix="/api", tags=["Roleplay"])
+    app.include_router(modules["characters"].router, prefix="/api", tags=["Characters"])
+    app.include_router(modules["tts"].router, prefix="/api", tags=["TTS"])
+    app.include_router(modules["learn"].router, prefix="/api", tags=["Learning"])
+    app.include_router(modules["feed"].router, prefix="/api/feed", tags=["Data Feed"])
+    app.include_router(modules["huggingface"].router, prefix="/api", tags=["HuggingFace"])
+    app.include_router(modules["smart_mode"].router, prefix="/api", tags=["Smart Mode"])
+    app.include_router(modules["healthcheck"].router, prefix="/api", tags=["Health"])
+    app.include_router(modules["ping"].router, prefix="/api", tags=["Keepalive"])
+    app.include_router(modules["collect"].router, prefix="/api/collect", tags=["Data Collection"])
+    app.include_router(modules["train_vision"].router, tags=["Vision Training"])
+    app.include_router(modules["datasets"].router, prefix="/api", tags=["Datasets"])
+    app.include_router(modules["research"].router, prefix="/api", tags=["Research"])
+    app.include_router(modules["ui"].router, tags=["UI"])
+    app_state.routes_registered = True
 
 
 class AppState:
@@ -116,6 +152,8 @@ class AppState:
         self.post_start_task = None
         self.knowledge_init_task = None
         self.runtime_warm_task = None
+        self.route_registration_task = None
+        self.routes_registered = False
         self.model_switch_enabled = False
         self.start_time = time.time()
         self.config = {}
@@ -193,7 +231,38 @@ def _startup_verification_enabled() -> bool:
     )
 
 
+def _defer_route_registration_enabled() -> bool:
+    if os.getenv("SPACE_ID") or os.getenv("HUGGINGFACE_SPACES"):
+        return env_flag_enabled("WHISPER_DEFER_ROUTE_REGISTRATION", True)
+    return env_flag_enabled("WHISPER_DEFER_ROUTE_REGISTRATION", False)
+
+
+async def _ensure_api_routes_registered(app: FastAPI) -> None:
+    if app_state.routes_registered:
+        return
+
+    if app_state.route_registration_task is None or app_state.route_registration_task.done():
+        async def _register() -> None:
+            started_at = time.time()
+            modules = await asyncio.to_thread(_load_api_route_modules)
+            _register_api_routes(app, modules)
+            logger.info(
+                "Deferred API routes registered in {:.2f}s",
+                time.time() - started_at,
+            )
+
+        app_state.route_registration_task = asyncio.create_task(_register())
+
+    await app_state.route_registration_task
+
+
 async def _run_post_start_initialization(app: FastAPI):
+    if _defer_route_registration_enabled():
+        try:
+            await _ensure_api_routes_registered(app)
+        except Exception as exc:
+            logger.error(f"Deferred route registration failed: {exc}")
+
     # Stabilize HF Deployments by deliberately delaying heavy boot sequences
     # until AFTER the server is bound and serving HTTP 200 OK /health checks.
     logger.info("Initializing 15s health-check grace period (Heartbeat: 3s)...")
@@ -204,6 +273,7 @@ async def _run_post_start_initialization(app: FastAPI):
 
     from services.catalog_bootstrap import start_catalog_bootstrap
     from services.gguf_bootstrap import start_gguf_runtime_bootstrap
+    from utils.persistence import restore_data
     import api.routes.collect as collect
     import api.routes.research as research
 
@@ -314,9 +384,8 @@ async def _startup(app: FastAPI):
     _log_system_resources()
     
     from api.routes.profile import get_db_client
-    from services.catalog_bootstrap import start_catalog_bootstrap
-    from services.gguf_bootstrap import start_gguf_runtime_bootstrap
     from services.hf_keepalive import get_keepalive, keepalive_enabled
+    from services.runtime_manager import get_chat_runtime_manager
 
     startup_start = time.time()
     app_state.start_time = startup_start
@@ -358,11 +427,13 @@ async def _startup(app: FastAPI):
 
 async def _shutdown():
     from services.hf_keepalive import get_keepalive, keepalive_enabled
+    from utils.persistence import backup_data
 
     for task_name, label in (
         ("post_start_task", "Post-start initialization"),
         ("runtime_warm_task", "Warm chat runtime"),
         ("knowledge_init_task", "Knowledge base initialization"),
+        ("route_registration_task", "Deferred route registration"),
     ):
         task = getattr(app_state, task_name, None)
         if task is not None and not task.done():
@@ -445,7 +516,10 @@ app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
 # Register all routes lazily
-_register_api_routes(app)
+if not _defer_route_registration_enabled():
+    _register_api_routes(app)
+else:
+    logger.info("Deferring non-critical API route registration until after startup health is green")
 
 
 def _record_request_analytics(

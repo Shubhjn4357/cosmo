@@ -6,9 +6,18 @@ import time
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
-# 5s Startup Grace Period for HF Log Aggregator
-print(">>> INITIALIZING LOG AGGREGATION GRACE PERIOD (5s) <<<", flush=True)
-time.sleep(5)
+
+def _prebind_delay_seconds() -> float:
+    try:
+        return max(0.0, float(os.getenv("WHISPER_PREBIND_DELAY_SECONDS", "0")))
+    except Exception:
+        return 0.0
+
+
+startup_delay = _prebind_delay_seconds()
+if startup_delay > 0:
+    print(f">>> INITIALIZING PRE-BIND DELAY ({startup_delay:.1f}s) <<<", flush=True)
+    time.sleep(startup_delay)
 print(">>> BOOT PROBE: SYSTEM OK <<<", flush=True)
 
 
@@ -37,13 +46,6 @@ except Exception as e:
     sys.exit(1)
 sys.stdout.flush()
 
-try:
-    import uvicorn
-    from loguru import logger
-except Exception as e:
-    print(f"FATAL: Early Import Failure: {e}", file=sys.stderr, flush=True)
-    sys.exit(1)
-
 if __name__ == "__main__":
     print(">>> Whisper AI Main Block Starting... <<<", flush=True)
     try:
@@ -59,6 +61,8 @@ if __name__ == "__main__":
             os.environ.setdefault("WHISPER_STARTUP_VERIFICATION_ENABLED", "false")
             os.environ.setdefault("WHISPER_EAGER_KNOWLEDGE_BASE_ENABLED", "false")
             os.environ.setdefault("WHISPER_WARM_CHAT_RUNTIME_ENABLED", "false")
+            os.environ.setdefault("WHISPER_DEFER_ROUTE_REGISTRATION", "true")
+            os.environ.setdefault("WHISPER_PREBIND_DELAY_SECONDS", "0")
 
         print(">>> Creating mandatory application directories... <<<", flush=True)
         ensure_app_dirs()
