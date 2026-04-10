@@ -9,7 +9,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Awaitable
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -203,6 +203,25 @@ def _initialize_knowledge_base():
         logger.warning(f"Knowledge base initialization skipped: {exc}")
 
 
+def _initialize_runtime_services() -> None:
+    try:
+        from api.routes.profile import get_db_client
+
+        get_db_client()
+        logger.info("Application database ready")
+    except Exception as exc:
+        logger.warning(f"Database initialization skipped: {exc}")
+
+    try:
+        from services.runtime_manager import get_chat_runtime_manager
+
+        app_state.chat_runtime = get_chat_runtime_manager()
+        logger.info("Chat runtime manager initialized")
+    except Exception as exc:
+        app_state.chat_runtime = None
+        logger.warning(f"Chat runtime manager initialization skipped: {exc}")
+
+
 def _background_feature_enabled(env_name: str, default: bool = True) -> bool:
     return env_flag_enabled(env_name, default, disable_in_low_power=True)
 
@@ -257,11 +276,17 @@ async def _ensure_api_routes_registered(app: FastAPI) -> None:
 
 
 async def _run_post_start_initialization(app: FastAPI):
+    startup_tasks: list[Awaitable[object]] = []
+
     if _defer_route_registration_enabled():
-        try:
-            await _ensure_api_routes_registered(app)
-        except Exception as exc:
-            logger.error(f"Deferred route registration failed: {exc}")
+        startup_tasks.append(_ensure_api_routes_registered(app))
+
+    startup_tasks.append(asyncio.to_thread(_initialize_runtime_services))
+
+    startup_results = await asyncio.gather(*startup_tasks, return_exceptions=True)
+    for result in startup_results:
+        if isinstance(result, Exception):
+            logger.error(f"Deferred startup initialization failed: {result}")
 
     # Stabilize HF Deployments by deliberately delaying heavy boot sequences
     # until AFTER the server is bound and serving HTTP 200 OK /health checks.
@@ -382,20 +407,12 @@ async def _run_post_start_initialization(app: FastAPI):
 async def _startup(app: FastAPI):
     print(">>> LIFESPAN STARTUP PROBE: Whisper AI Lifespan Triggered <<<", flush=True)
     _log_system_resources()
-    
-    from api.routes.profile import get_db_client
+
     from services.hf_keepalive import get_keepalive, keepalive_enabled
-    from services.runtime_manager import get_chat_runtime_manager
 
     startup_start = time.time()
     app_state.start_time = startup_start
     logger.info("Whisper AI starting - Lifespan Hook Active")
-
-    try:
-        get_db_client()
-        logger.info("Application database ready")
-    except Exception as exc:
-        logger.warning(f"Database initialization skipped: {exc}")
 
     hf_key = None
     if not TEST_MODE:
@@ -410,8 +427,7 @@ async def _startup(app: FastAPI):
         else:
             logger.info("HF keepalive disabled by configuration")
 
-    app_state.chat_runtime = get_chat_runtime_manager()
-    logger.info("Chat runtime manager initialized")
+    app_state.chat_runtime = None
     app_state.embedder = None
     app_state.vectordb = None
     app_state.rag = None

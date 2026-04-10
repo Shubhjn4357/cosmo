@@ -5,6 +5,8 @@ colorFrom: blue
 colorTo: red
 sdk: docker
 app_port: 7860
+base_path: /chat
+startup_duration_timeout: 1h
 pinned: false
 ---
 
@@ -62,6 +64,8 @@ CLOUDFLARE_API_TOKEN=your_browser_rendering_token
 - Auto preference: `gguf-coder` when a local GGUF artifact plus llama backend is ready, otherwise `fast-coder`
 - Admin UI: `/admin-ui`
 - Chat UI: `/chat`
+- Space landing path: `/chat`
+- Primary liveness path: `/health`
 - Public health: `/api/health`
 
 ### Runtime efficiency controls

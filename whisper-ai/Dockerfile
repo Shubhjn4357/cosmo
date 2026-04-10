@@ -58,7 +58,7 @@ COPY --chown=user:user requirements.txt requirements-space.txt requirements-opti
 # Install all packages as root into system site-packages (safe from volume overwrites at runtime)
 RUN python -m pip install "pip>=24.0" "setuptools<70.0.0" wheel && \
     pip install --no-cache-dir "numpy>=1.24.0,<2.0.0" && \
-    pip install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 && \
+    pip install --no-cache-dir --index-url "$PYTORCH_INDEX_URL" torch==2.2.0 torchvision==0.17.0 && \
     pip install --no-cache-dir --no-build-isolation -r requirements-space.txt && \
     python -c "import numpy; assert tuple(int(x) for x in numpy.__version__.split('.')[:2]) < (2,0), f'NumPy {numpy.__version__} >= 2.0'" && \
     python -c "import datasets, torchvision, tqdm, fitz, pytesseract, docx, openpyxl, edge_tts; import shutil; assert shutil.which('tesseract'), 'tesseract missing'" && \
