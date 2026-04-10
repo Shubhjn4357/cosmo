@@ -249,7 +249,6 @@ def _startup_verification_enabled() -> bool:
         disable_in_low_power=True,
     )
 
-
 def _defer_route_registration_enabled() -> bool:
     if os.getenv("SPACE_ID") or os.getenv("HUGGINGFACE_SPACES"):
         return env_flag_enabled("WHISPER_DEFER_ROUTE_REGISTRATION", True)
