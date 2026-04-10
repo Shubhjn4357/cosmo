@@ -133,21 +133,68 @@ def get_db_path() -> Path:
         _DB_PATH = _resolve_configured_file("WHISPER_DB_PATH", get_data_root() / "db" / "whisper.db")
     return _DB_PATH
 
-# Exported paths (Lazy via __getattr__)
-MODELS_DIR = Path(os.getenv("WHISPER_MODELS_DIR", "/app/data/models"))
-UPLOADS_DIR = Path(os.getenv("WHISPER_UPLOADS_DIR", "/app/data/uploads"))
-HF_HOME_DIR = Path(os.getenv("HF_HOME", "/app/data/runtime/huggingface"))
-HUGGINGFACE_HUB_CACHE_DIR = Path(os.getenv("HUGGINGFACE_HUB_CACHE", str(HF_HOME_DIR / "hub")))
-PYTHON_USER_BASE = Path(os.getenv("PYTHONUSERBASE", "/app/data/runtime/python-user-base"))
-RUNTIME_CONFIG_PATH = Path(os.getenv("WHISPER_RUNTIME_CONFIG", "/app/data/runtime/runtime_config.json"))
+_MODELS_DIR: Path | None = None
+_UPLOADS_DIR: Path | None = None
+_HF_HOME_DIR: Path | None = None
+_HUGGINGFACE_HUB_CACHE_DIR: Path | None = None
+_PYTHON_USER_BASE: Path | None = None
+_RUNTIME_CONFIG_PATH: Path | None = None
 
-def __getattr__(name: str) -> Any:
+def get_models_dir() -> Path:
+    global _MODELS_DIR
+    if _MODELS_DIR is None:
+        _MODELS_DIR = _resolve_configured_directory("WHISPER_MODELS_DIR", get_data_root() / "models")
+    return _MODELS_DIR
+
+def get_uploads_dir() -> Path:
+    global _UPLOADS_DIR
+    if _UPLOADS_DIR is None:
+        _UPLOADS_DIR = _resolve_configured_directory("WHISPER_UPLOADS_DIR", get_data_root() / "uploads")
+    return _UPLOADS_DIR
+
+def get_hf_home_dir() -> Path:
+    global _HF_HOME_DIR
+    if _HF_HOME_DIR is None:
+        _HF_HOME_DIR = _resolve_configured_directory("HF_HOME", get_data_root() / "runtime" / "huggingface")
+    return _HF_HOME_DIR
+
+def get_huggingface_hub_cache_dir() -> Path:
+    global _HUGGINGFACE_HUB_CACHE_DIR
+    if _HUGGINGFACE_HUB_CACHE_DIR is None:
+        _HUGGINGFACE_HUB_CACHE_DIR = _resolve_configured_directory("HUGGINGFACE_HUB_CACHE", get_hf_home_dir() / "hub")
+    return _HUGGINGFACE_HUB_CACHE_DIR
+
+def get_python_user_base() -> Path:
+    global _PYTHON_USER_BASE
+    if _PYTHON_USER_BASE is None:
+        _PYTHON_USER_BASE = _resolve_configured_directory("PYTHONUSERBASE", get_data_root() / "runtime" / "python-user-base")
+    return _PYTHON_USER_BASE
+
+def get_runtime_config_path() -> Path:
+    global _RUNTIME_CONFIG_PATH
+    if _RUNTIME_CONFIG_PATH is None:
+        _RUNTIME_CONFIG_PATH = _resolve_configured_file("WHISPER_RUNTIME_CONFIG", get_data_root() / "runtime" / "runtime_config.json")
+    return _RUNTIME_CONFIG_PATH
+
+def __getattr__(name: str) -> Any:  # type: ignore
     if name == "DATA_ROOT":
         return get_data_root()
     if name == "DATASETS_DIR":
         return get_datasets_dir()
     if name == "DB_PATH":
         return get_db_path()
+    if name == "MODELS_DIR":
+        return get_models_dir()
+    if name == "UPLOADS_DIR":
+        return get_uploads_dir()
+    if name == "HF_HOME_DIR":
+        return get_hf_home_dir()
+    if name == "HUGGINGFACE_HUB_CACHE_DIR":
+        return get_huggingface_hub_cache_dir()
+    if name == "PYTHON_USER_BASE":
+        return get_python_user_base()
+    if name == "RUNTIME_CONFIG_PATH":
+        return get_runtime_config_path()
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
 def ensure_app_dirs():
@@ -157,16 +204,16 @@ def ensure_app_dirs():
     get_datasets_dir().mkdir(parents=True, exist_ok=True)
     get_db_path().parent.mkdir(parents=True, exist_ok=True)
     
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    HF_HOME_DIR.mkdir(parents=True, exist_ok=True)
-    HUGGINGFACE_HUB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    PYTHON_USER_BASE.mkdir(parents=True, exist_ok=True)
-    RUNTIME_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    get_models_dir().mkdir(parents=True, exist_ok=True)
+    get_uploads_dir().mkdir(parents=True, exist_ok=True)
+    get_hf_home_dir().mkdir(parents=True, exist_ok=True)
+    get_huggingface_hub_cache_dir().mkdir(parents=True, exist_ok=True)
+    get_python_user_base().mkdir(parents=True, exist_ok=True)
+    get_runtime_config_path().parent.mkdir(parents=True, exist_ok=True)
     
     # Sync environment variables for libraries that expect them
     os.environ["WHISPER_DATA_ROOT"] = str(root)
     os.environ["WHISPER_DB_PATH"] = str(get_db_path())
-    os.environ["HF_HOME"] = str(HF_HOME_DIR)
-    os.environ["HUGGINGFACE_HUB_CACHE"] = str(HUGGINGFACE_HUB_CACHE_DIR)
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(HUGGINGFACE_HUB_CACHE_DIR))
+    os.environ["HF_HOME"] = str(get_hf_home_dir())
+    os.environ["HUGGINGFACE_HUB_CACHE"] = str(get_huggingface_hub_cache_dir())
+    os.environ.setdefault("TRANSFORMERS_CACHE", str(get_huggingface_hub_cache_dir()))
