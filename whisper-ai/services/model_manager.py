@@ -249,7 +249,7 @@ def _directory_size_bytes(path: Path) -> int:
 
 
 def _get_hf_token() -> Optional[str]:
-    return hf_dataset_sync.get_hf_token()
+    return os.getenv("HF_READONLY_TOKEN", "").strip() or hf_dataset_sync.get_hf_token()
 
 
 def _get_repo_file_metadata(repo_id: str, filename: str) -> dict:

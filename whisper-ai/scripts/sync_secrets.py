@@ -32,7 +32,7 @@ def is_secret(key: str) -> bool:
 changes_made = False
 
 for key, value in secrets.items():
-    if not key or not value or key.startswith("#") or key == "HF_TOKEN":
+    if not key or not value or key.startswith("#"):
         continue
 
     val_str = str(value).strip()
