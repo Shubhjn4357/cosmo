@@ -474,7 +474,7 @@ APPROVED_IMAGE_MODELS: tuple[ImageModelSpec, ...] = (
         supports_local=True,
         supports_server=True,
         supports_text_prompt=True,
-        auto_bootstrap=False,
+        auto_bootstrap=True,
         tags=("adult", "photo"),
     ),
 )

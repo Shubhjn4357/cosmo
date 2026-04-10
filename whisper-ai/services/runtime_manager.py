@@ -1026,9 +1026,15 @@ class ChatRuntimeManager:
 
             readiness = self.readiness()
             if not readiness["can_load"]:
-                self._last_error = readiness["summary"]
-                logger.error(f"Chat runtime blocked: {self._last_error}")
-                return False
+                if self.config.backend != "auto" and os.getenv("WHISPER_AUTO_RUNTIME_FALLBACK", "true").lower() == "true":
+                    logger.warning(f"Configured backend '{self.config.backend}' is not ready: {readiness.get('summary')}. Falling back to 'auto'.")
+                    self.config.backend = "auto"
+                    readiness = self.readiness()
+
+                if not readiness["can_load"]:
+                    self._last_error = readiness.get("summary", "Unknown error")
+                    logger.error(f"Chat runtime blocked: {self._last_error}")
+                    return False
 
             try:
                 resolved = resolve_runtime_choice(self.config)
@@ -1165,6 +1171,12 @@ class ChatRuntimeManager:
             raise RuntimeError(self._last_error or "Chat runtime not available")
 
         max_new_tokens = min(max_new_tokens, self.config.max_new_tokens)
+        
+        stop_words = [
+            "<|im_end|>", "<|im_start|>user", "<|im_start|>system", 
+            "\nUser:", "\nAssistant:", "User:", "Assistant:", 
+            "\n\nUser:", "\n\nAssistant:", "### Instruction:", "### Response:"
+        ]
 
         if self._backend_name == "llama_cpp":
             response = self._model(
@@ -1172,9 +1184,13 @@ class ChatRuntimeManager:
                 max_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
-                stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system", "\nUser:", "\nAssistant:", "User:"],
+                stop=stop_words,
             )
             text = response["choices"][0]["text"].strip()
+            # Failsafe truncation
+            for stop_word in stop_words:
+                if stop_word in text:
+                    text = text.split(stop_word)[0].strip()
             return {
                 "text": text,
                 "model_used": os.path.basename(self.config.gguf_model_path) or "llama_cpp",
@@ -1205,15 +1221,10 @@ class ChatRuntimeManager:
                 "--no-perf",
                 "--no-warmup",
                 "-no-cnv",
-                "-r",
-                "<|im_end|>",
-                "-r",
-                "\nUser:",
-                "-r",
-                "\nAssistant:",
-                "-r",
-                "User:",
             ]
+            for word in stop_words:
+                command.extend(["-r", word])
+                
             result = subprocess.run(
                 command,
                 capture_output=True,
@@ -1229,8 +1240,10 @@ class ChatRuntimeManager:
             text = result.stdout.strip()
             if "[end of text]" in text:
                 text = text.replace("[end of text]", "").strip()
-            if "<|im_end|>" in text:
-                text = text.split("<|im_end|>", 1)[0].strip()
+            # Failsafe truncation
+            for stop_word in stop_words:
+                if stop_word in text:
+                    text = text.split(stop_word)[0].strip()
             return {
                 "text": text,
                 "model_used": os.path.basename(model_path) or "llama_cpp_cli",
@@ -1302,6 +1315,10 @@ class ChatRuntimeManager:
             text = result.stdout.strip()
             if text.startswith(prompt):
                 text = text[len(prompt):].strip()
+            # Failsafe truncation
+            for stop_word in stop_words:
+                if stop_word in text:
+                    text = text.split(stop_word)[0].strip()
             return {
                 "text": text,
                 "model_used": os.path.basename(model_path) or "bitnet_cpp",
@@ -1344,6 +1361,10 @@ class ChatRuntimeManager:
             generated_ids = output_ids[0][len(prompt_ids) :].tolist()
             text = self._tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
             text = _repair_collapsed_spacing(text)
+            # Failsafe truncation
+            for stop_word in stop_words:
+                if stop_word in text:
+                    text = text.split(stop_word)[0].strip()
             return {
                 "text": text,
                 "model_used": self.config.model_id or "whisper-micro-transformer",
@@ -1370,6 +1391,10 @@ class ChatRuntimeManager:
             text = self._tokenizer.decode(output_ids[0], skip_special_tokens=True)
             if text.startswith(prompt):
                 text = text[len(prompt):].strip()
+            # Failsafe truncation
+            for stop_word in stop_words:
+                if stop_word in text:
+                    text = text.split(stop_word)[0].strip()
             return {
                 "text": text,
                 "model_used": self.config.airllm_model_id or self.config.model_id,
@@ -1400,6 +1425,11 @@ class ChatRuntimeManager:
         prompt_len = inputs["input_ids"].shape[1]
         generated_ids = output_ids[0][prompt_len:]
         text = self._tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+
+        # Failsafe truncation
+        for stop_word in stop_words:
+            if stop_word in text:
+                text = text.split(stop_word)[0].strip()
 
         return {
             "text": text,
