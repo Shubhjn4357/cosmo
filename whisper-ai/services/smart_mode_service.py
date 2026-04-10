@@ -82,7 +82,7 @@ class SmartModeService:
         self.hf_key = hf_key
         self.user_hf_key = user_hf_key  # User's custom HF key
         self.timeout = float(os.getenv("SMART_MODE_TIMEOUT_SECONDS", "20"))
-        self.gemini_model = os.getenv("SMART_MODE_GEMINI_MODEL", "gemini-2.5-flash")
+        self.gemini_model = os.getenv("SMART_MODE_GEMINI_MODEL", "gemini-1.5-flash")
         self.health_monitor = ProviderHealthMonitor()
 
     def _normalize_turn(self, turn: Dict[str, Any]) -> Optional[Tuple[str, str]]:

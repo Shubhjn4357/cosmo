@@ -216,4 +216,4 @@ def ensure_app_dirs():
     os.environ["WHISPER_DB_PATH"] = str(get_db_path())
     os.environ["HF_HOME"] = str(get_hf_home_dir())
     os.environ["HUGGINGFACE_HUB_CACHE"] = str(get_huggingface_hub_cache_dir())
-    os.environ.setdefault("TRANSFORMERS_CACHE", str(get_huggingface_hub_cache_dir()))
+    os.environ.setdefault("HF_HOME", str(get_huggingface_hub_cache_dir()))

@@ -484,6 +484,7 @@ class RuntimeProfileSelectionRequest(BaseModel):
 
 
 class RuntimeCustomConfigRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     backend: str
     model_id: str
     gguf_model_path: str = ""

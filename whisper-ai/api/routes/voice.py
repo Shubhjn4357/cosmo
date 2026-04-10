@@ -41,6 +41,7 @@ USE_LOCAL_WHISPER = os.environ.get("USE_LOCAL_WHISPER", "false").lower() == "tru
 
 
 class TTSRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     text: str
     voice: str = "alloy"
     speed: float = 1.0
@@ -48,6 +49,7 @@ class TTSRequest(BaseModel):
 
 
 class TranscriptionResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
     success: bool
     text: str
     language: Optional[str] = None
@@ -55,6 +57,7 @@ class TranscriptionResponse(BaseModel):
 
 
 class VoiceChatResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
     success: bool
     transcript: str
     response_text: str

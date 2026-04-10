@@ -1172,7 +1172,7 @@ class ChatRuntimeManager:
                 max_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
-                stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system"],
+                stop=["<|im_end|>", "<|im_start|>user", "<|im_start|>system", "\nUser:", "\nAssistant:", "User:"],
             )
             text = response["choices"][0]["text"].strip()
             return {
@@ -1207,6 +1207,12 @@ class ChatRuntimeManager:
                 "-no-cnv",
                 "-r",
                 "<|im_end|>",
+                "-r",
+                "\nUser:",
+                "-r",
+                "\nAssistant:",
+                "-r",
+                "User:",
             ]
             result = subprocess.run(
                 command,

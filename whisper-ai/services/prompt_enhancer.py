@@ -82,7 +82,7 @@ Enhanced prompt:"""
         try:
             # New SDK Usage
             response = self.client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-1.5-flash',
                 contents=enhancement_instruction,
                 config=types.GenerateContentConfig(
                     temperature=0,

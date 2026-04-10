@@ -54,6 +54,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Chat response model."""
+    model_config = {"protected_namespaces": ()}
     response: str
     tokens_used: int
     sources: list[dict] = Field(default_factory=list)
