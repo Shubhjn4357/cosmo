@@ -10,7 +10,8 @@ from fastapi.responses import FileResponse, Response
 
 router = APIRouter(tags=["ui"])
 
-UI_DIR = Path(__file__).parent.parent.parent / "ui"
+# Absolute resolution of the UI directory
+UI_DIR = Path(__file__).resolve().parent.parent.parent / "ui"
 
 
 def _serve_page(filename: str):

@@ -57,6 +57,11 @@ mkdir -p "$KEYSTORE_DIR" "$CREDENTIAL_DIR"
 
 pushd "$ROOT_DIR" >/dev/null
 
+# Harden Node environment for Gradle/Reanimated
+export NODE_BINARY="$(which node)"
+echo ">>> CI DIAGNOSTIC: NODE_BINARY=$NODE_BINARY"
+node -v || echo "Error: node not found"
+
 node scripts/ci/patch-expo-dev-launcher-android.js
 npx expo prebuild --platform android --clean --no-install
 write_local_properties

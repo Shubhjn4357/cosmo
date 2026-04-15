@@ -725,16 +725,21 @@ def validate_profile(profile_id: str, *, test_load: bool = False, refresh_import
 def runtime_profiles_payload(selected_profile: Optional[str]) -> dict:
     profiles = []
     for profile in RUNTIME_PROFILES.values():
-        profile_status = _profile_status(profile)
-        profiles.append(
-            {
-                **asdict(profile),
-                **profile_status,
-                "downloaded": profile_status["artifact_exists"],
-                "enabled": get_model_enabled(f"runtime.{profile.id}"),
-                "validation": PROFILE_VALIDATIONS.get(profile.id),
-            }
-        )
+        try:
+            profile_status = _profile_status(profile)
+            profiles.append(
+                {
+                    **asdict(profile),
+                    **profile_status,
+                    "downloaded": profile_status.get("artifact_exists", False),
+                    "enabled": get_model_enabled(f"runtime.{profile.id}", True),
+                    "validation": PROFILE_VALIDATIONS.get(profile.id),
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to include profile {profile.id} in payload: {e}")
+            # Add a basic entry so the selector isn't empty
+            profiles.append({**asdict(profile), "ready": False, "enabled": True, "status_message": "Initialization error"})
 
     return {
         "selected_profile": selected_profile,

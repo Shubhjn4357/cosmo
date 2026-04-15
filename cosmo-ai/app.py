@@ -65,9 +65,10 @@ if __name__ == "__main__":
             os.environ.setdefault("COSMO_DEFER_ROUTE_REGISTRATION", "true")
             os.environ.setdefault("COSMO_PREBIND_DELAY_SECONDS", "0")
             
-            # Map Hugging Face secrets to environment variables to ensure external libraries can access them
+            # Map Hugging Face secrets to environment variables securely
             for secret_key in ("HF_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"):
-                secret_path = Path(f"/run/secrets/{secret_key}")
+                # Use absolute path for /run/secrets
+                secret_path = Path("/run/secrets").joinpath(secret_key)
                 if secret_path.exists() and not os.getenv(secret_key):
                     os.environ[secret_key] = secret_path.read_text(encoding="utf-8").strip()
 

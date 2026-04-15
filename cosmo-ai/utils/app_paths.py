@@ -9,6 +9,8 @@ import uuid
 import warnings
 from pathlib import Path
 
+# Absolute base directory of the repository
+APP_ROOT = Path(__file__).resolve().parent.parent
 
 def _should_suppress_fallback_warning(original: Path, fallback: Path) -> bool:
     original_str = str(original)
@@ -68,9 +70,10 @@ def _candidate_data_roots() -> list[Path]:
         candidates.append(Path(configured))
     if persistent_volume:
         candidates.append(Path(persistent_volume))
-    elif use_persistent_volume and Path("/data").exists():
+    if use_persistent_volume and Path("/data").exists():
         candidates.append(Path("/data/cosmo"))
-    candidates.extend([Path("data"), Path("/tmp/cosmo")])
+    # Always resolve these against the absolute APP_ROOT to avoid relative CWD issues
+    candidates.extend([APP_ROOT / "data", Path("/tmp/cosmo")])
     return candidates
 
 

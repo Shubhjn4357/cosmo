@@ -22,7 +22,7 @@
       </div>
 
       <!-- Theme Toggle -->
-      <button class="sidebar-theme-btn" id="adminThemeToggle" type="button">
+      <button class="sidebar-theme-btn" id="adminThemeToggle" type="button" style="display:none;">
         <span id="adminThemeIcon">☀️</span>
         <span id="adminThemeLabel">Light Mode</span>
       </button>
@@ -106,6 +106,7 @@
         <div class="topbar-actions">
           <div id="lastRefreshLabel" class="pill glass">Last sync: never</div>
           <div id="adminAuthBadge" class="pill status-warn">Authorizing...</div>
+          <button id="adminLogoutButton" type="button" class="secondary glass" style="padding: 6px 14px; font-size: 0.75rem;">Logout</button>
         </div>
       </header>
 
@@ -167,7 +168,11 @@
               <button id="refreshControlCenterButton" class="secondary glass">Sync Data</button>
             </div>
           </div>
-          <div id="controlCenterBanner" class="hero-grid"></div>
+          <div id="controlCenterBanner" class="hero-grid">
+            <div class="hero-card skeleton"><div class="meta">Status</div><div class="hero-value">...</div></div>
+            <div class="hero-card skeleton"><div class="meta">Profile</div><div class="hero-value">...</div></div>
+            <div class="hero-card skeleton"><div class="meta">Uptime</div><div class="hero-value">...</div></div>
+          </div>
           <div class="spacer-md"></div>
           <div id="aiModeGrid" class="grid-dynamic"></div>
           <div class="spacer-md"></div>
