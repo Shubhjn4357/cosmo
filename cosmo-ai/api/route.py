@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Awaitable
 
+from dataclasses import dataclass
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -306,29 +307,22 @@ def _defer_route_registration_enabled() -> bool:
 
 
 async def _ensure_api_routes_registered(app: FastAPI) -> None:
+    """
+    Ensures all API routes are registered. 
+    Now synchronous and eager to prevent 404s on booting.
+    """
     if app_state.routes_registered:
         return
-
-    if app_state.route_registration_task is None or app_state.route_registration_task.done():
-        async def _register() -> None:
-            started_at = time.time()
-            modules = await asyncio.to_thread(_load_api_route_modules)
-            _register_api_routes(app, modules)
-            logger.info(
-                "Deferred API routes registered in {:.2f}s",
-                time.time() - started_at,
-            )
-
-        app_state.route_registration_task = asyncio.create_task(_register())
-
-    await app_state.route_registration_task
+    
+    modules = _load_api_route_modules()
+    _register_api_routes(app, modules)
 
 
 async def _run_post_start_initialization(app: FastAPI):
     startup_tasks: list[Awaitable[object]] = []
 
-    if _defer_route_registration_enabled():
-        startup_tasks.append(_ensure_api_routes_registered(app))
+    # Always register routes eagerly to prevent hidden 404s
+    await _ensure_api_routes_registered(app)
 
     startup_tasks.append(asyncio.to_thread(_initialize_runtime_services))
 
@@ -580,15 +574,8 @@ Path("ui").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
-# Register critical UI routes immediately (non-deferred)
-from api.routes.ui import router as ui_router
-app.include_router(ui_router, tags=["UI"])
-
-# Register all other routes lazily
-if not _defer_route_registration_enabled():
-    _register_api_routes(app)
-else:
-    logger.info("Deferring non-critical API route registration until after startup health is green")
+# Register all routes immediately (Eager) to prevent 404s
+_register_api_routes(app, _load_api_route_modules())
 
 
 def _record_request_analytics(
