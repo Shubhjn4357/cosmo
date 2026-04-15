@@ -90,8 +90,18 @@ keytool -genkeypair \
   -dname "$KEY_DNAME"
 
 if [[ ! -f "$PERSISTENT_RELEASE_KEYSTORE" ]]; then
-  echo "Persistent release keystore not found at $PERSISTENT_RELEASE_KEYSTORE" >&2
-  exit 1
+  echo "Warning: Persistent release keystore not found at $PERSISTENT_RELEASE_KEYSTORE" >&2
+  echo "Generating a temporary release keystore for this build..." >&2
+  keytool -genkeypair \
+    -keystore "$PERSISTENT_RELEASE_KEYSTORE" \
+    -storetype JKS \
+    -storepass "$RELEASE_STORE_PASSWORD" \
+    -keypass "$RELEASE_KEY_PASSWORD" \
+    -alias "$RELEASE_KEY_ALIAS" \
+    -keyalg RSA \
+    -keysize 2048 \
+    -validity 10950 \
+    -dname "$KEY_DNAME"
 fi
 
 cp "$PERSISTENT_RELEASE_KEYSTORE" "$ANDROID_SIGNING_DIR/release.keystore"
