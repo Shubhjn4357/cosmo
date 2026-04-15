@@ -56,9 +56,10 @@ def _load_runtime_env() -> dict[str, str]:
         for key in keys:
             current = file_values.get(key)
             if current not in (None, ""):
-                if prefer_process_env and key in values:
-                    continue
-                values[key] = str(current)
+                # ONLY update if the key wasn't already set in the process environment (os.environ)
+                # or if the current value is empty, respecting the standard priority.
+                if key not in values or values[key] in (None, ""):
+                    values[key] = str(current)
 
     return values
 

@@ -138,6 +138,7 @@ def _register_api_routes(app: FastAPI, route_modules: dict | None = None) -> Non
     app.include_router(modules["research"].router, prefix="/api", tags=["Research"])
     app.include_router(modules["ui"].router, tags=["UI"])
     app_state.routes_registered = True
+    logger.info("FastAPI route registration complete ({} modules)", len(modules))
 
 
 class AppState:
@@ -634,8 +635,20 @@ async def root():
     return await chat_page()
 
 
+@app.get("/admin")
+@app.get("/admin/")
+async def admin_redirect():
+    """Compatibility redirect for older admin URLs."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/admin-ui")
+
+
 @app.get("/health")
 async def health():
+    # Ensure routes are registered if they somehow haven't been (failsafe)
+    if not app_state.routes_registered:
+        _register_api_routes(app)
+    
     runtime = _runtime_status()
     return JSONResponse(
         content={
