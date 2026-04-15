@@ -13,7 +13,8 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, TypedDict, Union
+from typing import Callable, Dict, List, Optional, Union
+from typing_extensions import TypedDict
 
 from loguru import logger
 

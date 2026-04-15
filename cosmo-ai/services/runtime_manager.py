@@ -19,7 +19,8 @@ import time
 import types
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, TypedDict, Union
+from typing import Dict, List, Optional, Union
+from typing_extensions import TypedDict
 
 from loguru import logger
 from utils.app_paths import DATA_ROOT, MODELS_DIR, RUNTIME_CONFIG_PATH, ensure_app_dirs

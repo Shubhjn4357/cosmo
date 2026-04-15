@@ -8,7 +8,8 @@ import asyncio
 import base64
 import json
 import os
-from typing import Dict, List, Optional, TypedDict, Union
+from typing import Dict, List, Optional, Union
+from typing_extensions import TypedDict
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
