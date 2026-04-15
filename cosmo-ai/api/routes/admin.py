@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from loguru import logger
 from pydantic import BaseModel
 
-from api.auth import verify_admin_token
+from .auth import verify_admin_token
 from services.model_manager import (
     RUNTIME_PROFILES,
     get_model_enabled,

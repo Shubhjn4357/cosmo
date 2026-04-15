@@ -11,7 +11,7 @@
   --primary: #8b5cf6;
   --primary-glow: rgba(139, 92, 246, 0.2);
   --cyan: #06b6d4;
-  --cyan-glow: rgba(6, 182, 212, 0.15);
+  --cyan-glow: rgba(6, 182, 212, 0.2);
   --emerald: #10b981;
   --amber: #f59e0b;
   --rose: #f43f5e;
@@ -20,8 +20,8 @@
   --text-muted: #94a3b8;
   --text-dim: #64748b;
   
-  --border-glass: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(139, 92, 246, 0.3);
+  --border-glass: rgba(255, 255, 255, 0.12);
+  --border-active: rgba(139, 92, 246, 0.4);
   
   --radius-xl: 18px;
   --radius-lg: 14px;

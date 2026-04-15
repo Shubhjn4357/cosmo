@@ -250,7 +250,7 @@ async function performLogin(username, password) {
     const res = await fetch("/api/auth/admin-login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identifier: username, password }),
+      body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
     if (res.ok && data.access_token) {
@@ -328,13 +328,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  if ($("adminLogoutButton")) {
-      $("adminLogoutButton").addEventListener("click", () => {
+  document.querySelectorAll(".logout-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
           token.set("");
           navigateTo("section-access");
           updateAuthStatus("Signed Out", "Session terminated.", "warn");
       });
-  }
+  });
 
   // 3. Action Button Wiring
   $("applyProfileButton")?.addEventListener("click", applyRuntimeProfile);

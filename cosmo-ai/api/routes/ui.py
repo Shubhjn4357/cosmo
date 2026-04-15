@@ -8,10 +8,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 
+from utils.app_paths import get_ui_dir
+
 router = APIRouter(tags=["ui"])
 
-# Absolute resolution of the UI directory
-UI_DIR = Path(__file__).resolve().parent.parent.parent / "ui"
+UI_DIR = get_ui_dir()
 
 
 def _serve_page(filename: str):

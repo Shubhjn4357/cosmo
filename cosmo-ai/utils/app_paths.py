@@ -142,6 +142,7 @@ _HF_HOME_DIR: Path | None = None
 _HUGGINGFACE_HUB_CACHE_DIR: Path | None = None
 _PYTHON_USER_BASE: Path | None = None
 _RUNTIME_CONFIG_PATH: Path | None = None
+_UI_DIR: Path | None = None
 
 def get_models_dir() -> Path:
     global _MODELS_DIR
@@ -179,6 +180,12 @@ def get_runtime_config_path() -> Path:
         _RUNTIME_CONFIG_PATH = _resolve_configured_file("COSMO_RUNTIME_CONFIG", get_data_root() / "runtime" / "runtime_config.json")
     return _RUNTIME_CONFIG_PATH
 
+def get_ui_dir() -> Path:
+    global _UI_DIR
+    if _UI_DIR is None:
+        _UI_DIR = APP_ROOT / "ui"
+    return _UI_DIR
+
 def __getattr__(name: str) -> Any:  # type: ignore
     if name == "DATA_ROOT":
         return get_data_root()
@@ -198,6 +205,8 @@ def __getattr__(name: str) -> Any:  # type: ignore
         return get_python_user_base()
     if name == "RUNTIME_CONFIG_PATH":
         return get_runtime_config_path()
+    if name == "UI_DIR":
+        return get_ui_dir()
     raise AttributeError(f"module {__name__} has no attribute {name}")
 
 def ensure_app_dirs():
@@ -213,6 +222,7 @@ def ensure_app_dirs():
     get_huggingface_hub_cache_dir().mkdir(parents=True, exist_ok=True)
     get_python_user_base().mkdir(parents=True, exist_ok=True)
     get_runtime_config_path().parent.mkdir(parents=True, exist_ok=True)
+    get_ui_dir().mkdir(parents=True, exist_ok=True)
     
     # Sync environment variables for libraries that expect them
     os.environ["COSMO_DATA_ROOT"] = str(root)

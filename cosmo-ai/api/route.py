@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from utils.system_tuning import apply_process_tuning, env_flag_enabled
-from utils.app_paths import UPLOADS_DIR, ensure_app_dirs
+from utils.app_paths import UPLOADS_DIR, ensure_app_dirs, get_ui_dir
 from utils.anonymizer import anonymize_lesson
 
 load_dotenv()
@@ -570,9 +570,8 @@ app.add_middleware(
 
 
 ensure_app_dirs()
-Path("ui").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
-app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
+app.mount("/ui-assets", StaticFiles(directory=str(get_ui_dir())), name="ui-assets")
 
 # Register all routes immediately (Eager) to prevent 404s
 _register_api_routes(app, _load_api_route_modules())
