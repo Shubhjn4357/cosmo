@@ -19,10 +19,9 @@ from pydantic import BaseModel
 from .auth import verify_admin_token
 from services.model_manager import (
     RUNTIME_PROFILES,
-    get_model_enabled,
     runtime_profiles_payload,
-    set_model_enabled,
 )
+from services.admin_state import get_model_enabled, set_model_enabled
 from utils.app_paths import get_data_root, get_db_path, get_models_dir, get_runtime_config_path
 
 router = APIRouter()

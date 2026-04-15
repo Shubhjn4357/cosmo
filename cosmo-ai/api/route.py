@@ -136,6 +136,7 @@ def _register_api_routes(app: FastAPI, route_modules: dict | None = None) -> Non
     app.include_router(modules["train_vision"].router, tags=["Vision Training"])
     app.include_router(modules["datasets"].router, prefix="/api", tags=["Datasets"])
     app.include_router(modules["research"].router, prefix="/api", tags=["Research"])
+    app.include_router(modules["ui"].router, tags=["UI"])
     app_state.routes_registered = True
 
 
@@ -553,10 +554,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _shutdown()
 
 
+from utils.constants import SYSTEM_DESCRIPTION, SYSTEM_NAME, SYSTEM_VERSION
+
 app = FastAPI(
-    title="Cosmo AI",
-    description="Production-grade AI environment with native BitNet JSI, autonomous research, and privacy-shielded multi-agent governance.",
-    version="1.4.0",
+    title=SYSTEM_NAME,
+    description=SYSTEM_DESCRIPTION,
+    version=SYSTEM_VERSION,
     lifespan=lifespan,
 )
 
@@ -606,6 +609,9 @@ async def track_request_analytics(request, call_next):
         response = await call_next(request)
         status_code = response.status_code
         return response
+    except Exception as e:
+        logger.error(f"Middleware error for {request.url.path}: {e}")
+        raise e
     finally:
         path = request.url.path or ""
         if path.startswith("/api"):

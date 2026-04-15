@@ -178,8 +178,9 @@ class CosmoModel:
                     continue
             
             self.save_state()
-            logger.info("[Cosmo] Mythos sync complete.")
-
+        except Exception as e:
+            logger.error(f"[Cosmo] Mythos sync failed: {e}")
+        finally:
             # Trigger Background Compression check
             self._trigger_compression()
 

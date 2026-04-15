@@ -376,7 +376,7 @@ class AutonomousBusinessEngine:
                     if session.multi_user_mode and session.messages:
                         latest_msg = session.messages[-1]
                         if latest_msg['role'] == 'user':
-                    logger.info(f"[Session {session.id}] Paused: Waiting for consensus quorum...")
+                            logger.info(f"[Session {session.id}] Paused: Waiting for consensus quorum...")
                     await asyncio.sleep(2) # Poll for vote changes
                 
                 # Resume status after quorum
@@ -432,17 +432,29 @@ class AutonomousBusinessEngine:
         return session
 
     async def run_hardware_diagnostics(self) -> Dict[str, Any]:
+        results = {
+            "filesystem": {"writable": False},
+            "mythos": {"graph_exists": False, "lesson_count": 0}
+        }
+        try:
+            from utils.app_paths import DATA_ROOT
+            test_file = DATA_ROOT / "test_write.txt"
             test_file.write_text("ok")
             results["filesystem"]["writable"] = test_file.read_text() == "ok"
             test_file.unlink()
-        except: pass
+        except Exception:
+            pass
         
         # Mythos Check
         from services.cosmo_model import cosmo_instance
         if cosmo_instance.mythos_graph.exists():
             results["mythos"]["graph_exists"] = True
-            with cosmo_instance.mythos_graph.open("r", encoding="utf-8") as f:
-                results["mythos"]["lesson_count"] = sum(1 for _ in f)
+            try:
+                from utils.encryption import EncryptedJSONLReader
+                reader = EncryptedJSONLReader(cosmo_instance.mythos_graph)
+                results["mythos"]["lesson_count"] = sum(1 for _ in reader)
+            except Exception:
+                pass
                 
         return results
 

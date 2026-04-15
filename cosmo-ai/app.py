@@ -48,6 +48,18 @@ sys.stdout.flush()
 
 if __name__ == "__main__":
     print(">>> Cosmo AI Main Block Starting... <<<", flush=True)
+    
+    # Pre-flight Diagnostic: Verify internal imports before binding
+    try:
+        print(">>> PRE-FLIGHT DIAGNOSTICS: Verifying module structure... <<<", flush=True)
+        import api.route
+        import api.routes.auth
+        import api.routes.admin
+        print(">>> PRE-FLIGHT: Module verification successful. <<<", flush=True)
+    except Exception as e:
+        print(f"FATAL: MODULE VERIFICATION FAILED: {e}", file=sys.stderr, flush=True)
+        sys.exit(1)
+
     try:
         from pathlib import Path
         from utils.app_paths import DATA_ROOT, HF_HOME_DIR, HUGGINGFACE_HUB_CACHE_DIR, MODELS_DIR, PYTHON_USER_BASE, UPLOADS_DIR, ensure_app_dirs

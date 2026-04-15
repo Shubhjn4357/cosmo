@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, Response
 
 
 from utils.app_paths import get_ui_dir
+from utils.constants import UI_PAGE_ADMIN, UI_PAGE_CHAT
 
 router = APIRouter(tags=["ui"])
 
@@ -24,12 +25,12 @@ def _serve_page(filename: str):
 
 @router.get("/chat")
 async def chat_page():
-    return _serve_page("chat.html")
+    return _serve_page(UI_PAGE_CHAT)
 
 
 @router.get("/admin-ui")
 async def admin_page():
-    return _serve_page("admin.html")
+    return _serve_page(UI_PAGE_ADMIN)
 
 
 @router.get("/favicon.ico")
