@@ -1,6 +1,7 @@
 /**
  * Cosmo AI - Premium Admin Control Surface (V2 Unified Vanilla)
  * High-performance, robust operational logic for runtime management and observability.
+ * HARDENED: Enhanced error handling, Skeleton state, and Toast notifications.
  */
 
 // ─── Constants & Configuration ──────────────────────────────────────────────
@@ -44,6 +45,29 @@ const format = {
   escape: (str) => String(str || "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])),
 };
 
+// ─── Toast System ─────────────────────────────────────────────────────────────
+const toast = {
+    show: (msg, tone = "info") => {
+        const container = $("toast-container") || createToastContainer();
+        const el = document.createElement("div");
+        el.className = `toast status-${tone} slide-up`;
+        el.innerHTML = `<span>${msg}</span>`;
+        container.appendChild(el);
+        setTimeout(() => {
+            el.classList.add("fade-out");
+            setTimeout(() => el.remove(), 500);
+        }, 3000);
+    }
+};
+
+function createToastContainer() {
+    const el = document.createElement("div");
+    el.id = "toast-container";
+    el.className = "toast-container";
+    document.body.appendChild(el);
+    return el;
+}
+
 // ─── API Wrapper ──────────────────────────────────────────────────────────────
 async function apiFetch(url, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -56,11 +80,15 @@ async function apiFetch(url, options = {}) {
       token.set("");
       navigateTo("section-access");
       updateAuthStatus("Session Expired", "Please login again.", "error");
+      toast.show("Unauthorized: Session Revoked", "error");
       throw new Error("Unauthorized");
     }
     return res;
   } catch (err) {
-    if (err.message !== "Unauthorized") console.error(`Fetch API Error [${url}]:`, err);
+    if (err.message !== "Unauthorized") {
+        console.error(`Fetch API Error [${url}]:`, err);
+        toast.show(`API Error: ${err.message}`, "error");
+    }
     throw err;
   }
 }
@@ -100,6 +128,18 @@ function updateAuthStatus(label, message, tone = "warn") {
     feedback.textContent = message;
     feedback.className = `auth-feedback status-${tone}`;
   }
+}
+
+function showSkeletons(containerId, count = 3) {
+    const grid = $(containerId);
+    if (!grid) return;
+    grid.innerHTML = Array(count).fill(0).map(() => `
+        <div class="card skeleton-card">
+            <div class="skeleton skeleton-text" style="width: 60%"></div>
+            <div class="skeleton skeleton-text" style="width: 40%"></div>
+            <div class="skeleton skeleton-rect" style="height: 40px; margin-top: 10px;"></div>
+        </div>
+    `).join("");
 }
 
 // ─── Data Sync ───────────────────────────────────────────────────────────────
@@ -253,16 +293,23 @@ async function performLogin(username, password) {
       body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
-    if (res.ok && data.access_token) {
-      token.set(data.access_token);
+    
+    // Robust Key Check for Token
+    const authToken = data.access_token || data.token || (data.session ? data.session.access_token : null);
+
+    if (res.ok && authToken) {
+      token.set(authToken);
       updateAuthStatus("Authorized", `Logged in as ${username}`, "ok");
+      toast.show("Successfully Authenticated", "ok");
       navigateTo("section-overview");
       refreshData();
     } else {
-      updateAuthStatus("Login Failed", data.detail || "Invalid credentials", "error");
+      updateAuthStatus("Login Failed", data.detail || data.error || data.message || "Invalid credentials", "error");
+      toast.show("Authentication Failed", "error");
     }
   } catch (err) {
     updateAuthStatus("Network Error", "Server unreachable.", "error");
+    toast.show("Network failure during login", "error");
   }
 }
 
@@ -273,6 +320,7 @@ async function applyRuntimeProfile() {
     const btn = $("applyProfileButton");
     btn.disabled = true;
     btn.textContent = "Activating...";
+    toast.show("Applying runtime profile...", "info");
 
     try {
         const res = await apiFetch("/api/admin/runtime-profiles/select", {
@@ -281,6 +329,7 @@ async function applyRuntimeProfile() {
             body: JSON.stringify({ profile_id: profileId, eager_load: true }),
         });
         if (res.ok) {
+            toast.show("Profile applied successfully", "ok");
             refreshData();
         }
     } finally {
@@ -333,15 +382,21 @@ document.addEventListener("DOMContentLoaded", async () => {
           token.set("");
           navigateTo("section-access");
           updateAuthStatus("Signed Out", "Session terminated.", "warn");
+          toast.show("Signed Out", "info");
       });
   });
 
   // 3. Action Button Wiring
   $("applyProfileButton")?.addEventListener("click", applyRuntimeProfile);
-  $("refreshControlCenterButton")?.addEventListener("click", () => refreshData());
+  $("refreshControlCenterButton")?.addEventListener("click", () => {
+      toast.show("Refreshing system state...", "info");
+      refreshData();
+  });
 
   // 4. Boot-up check
   if (token.get()) {
+    showSkeletons("aiJobGrid", 2);
+    showSkeletons("runtimeProfileGrid", 2);
     const isReady = await refreshData().then(() => true).catch(() => false);
     if (!isReady) navigateTo("section-access");
     else navigateTo("section-overview");

@@ -259,3 +259,61 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.02em; }
   .sidebar-brand h1, .sidebar-brand p, .nav-button span, .sidebar-group-title { display: none; }
   .nav-button { justify-content: center; padding: 16px; }
 }
+
+/* ── Hardening: Skeletons & Toasts ────────────────────────── */
+.toast-container {
+    position: fixed;
+    bottom: 32px;
+    right: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 1000;
+}
+
+.toast {
+    background: var(--bg-panel);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-glass);
+    padding: 16px 24px;
+    border-radius: var(--radius-lg);
+    color: var(--text-main);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    min-width: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    animation: slide-up 0.4s cubic-bezier(0.18, 0.89, 0.32, 1.28) both;
+}
+
+.toast.status-ok { border-left: 4px solid var(--emerald); }
+.toast.status-warn { border-left: 4px solid var(--amber); }
+.toast.status-error { border-left: 4px solid var(--rose); }
+
+.skeleton {
+    background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite linear;
+    border-radius: 4px;
+}
+
+.skeleton-card { border-color: rgba(255,255,255,0.05) !important; pointer-events: none; }
+.skeleton-text { height: 12px; margin-bottom: 8px; }
+.skeleton-rect { border-radius: 8px; }
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+@keyframes slide-up {
+    0% { transform: translateY(100%) scale(0.9); opacity: 0; }
+    100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.fade-out {
+    opacity: 0;
+    transform: scale(0.95);
+    transition: all 0.4s ease;
+}
+

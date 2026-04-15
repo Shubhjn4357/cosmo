@@ -141,11 +141,14 @@ def _login_success_response(*, token: str, user: dict, is_admin: bool, profile: 
     payload = {
         "success": True,
         "token": token,
+        "access_token": token,
         "message": "Login successful",
         "session": {
             "access_token": token,
             "refresh_token": token,
             "user": user,
+            "expires_in": 86400 * 7,
+            "token_type": "Bearer",
         },
         "user": user,
         "is_admin": is_admin,
@@ -258,6 +261,8 @@ async def signup(request: SignUpRequest):
         token = create_jwt(username=request.email, user_id=result.user.id, is_admin=False)
         return {
             "success": True,
+            "token": token,
+            "access_token": token,
             "session": {
                 "access_token": token,
                 "refresh_token": token,
@@ -340,6 +345,8 @@ async def google_signin(request: GoogleAuthRequest):
             )
             return {
                 "success": True,
+                "token": token,
+                "access_token": token,
                 "session": {
                     "access_token": token,
                     "refresh_token": token,

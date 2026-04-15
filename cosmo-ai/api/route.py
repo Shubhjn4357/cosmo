@@ -13,9 +13,9 @@ from typing import AsyncIterator, Awaitable
 
 from dataclasses import dataclass
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from utils.system_tuning import apply_process_tuning, env_flag_enabled
@@ -599,6 +599,29 @@ def _record_request_analytics(
         )
     except Exception as exc:
         logger.debug(f"Request analytics skipped: {exc}")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global Error for {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "message": "Internal Server Error",
+            "detail": str(exc) if TEST_MODE else "Application error encountered",
+            "error": "InternalServerError"
+        }
+    )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
 
 
 @app.middleware("http")

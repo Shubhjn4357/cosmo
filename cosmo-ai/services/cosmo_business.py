@@ -28,6 +28,14 @@ BUSINESS_SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─── Enums & Data Models ──────────────────────────────────────────────────────
 
+class TaskStatus(str, Enum):
+    PENDING    = "pending"
+    RUNNING    = "running"
+    COMPLETED  = "completed"
+    FAILED     = "failed"
+    WAITING    = "waiting_for_user"
+
+
 class EmployeeRole(str, Enum):
     CEO            = "ceo"             # Strategic planning, prioritization
     RESEARCH       = "research"        # Data gathering, web search, fact-finding
@@ -36,9 +44,6 @@ class EmployeeRole(str, Enum):
     WRITER         = "writer"          # Reports, content, communication
     REVIEWER       = "reviewer"        # Quality control, critique, validation
     PRE_FLIGHT     = "pre_flight"      # Intent-to-Goal conversion
-
-
-    WAITING    = "waiting_for_user"
 
 
 class HandoffItem(TypedDict):
