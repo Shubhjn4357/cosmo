@@ -135,7 +135,6 @@ def _register_api_routes(app: FastAPI, route_modules: dict | None = None) -> Non
     app.include_router(modules["train_vision"].router, tags=["Vision Training"])
     app.include_router(modules["datasets"].router, prefix="/api", tags=["Datasets"])
     app.include_router(modules["research"].router, prefix="/api", tags=["Research"])
-    app.include_router(modules["ui"].router, tags=["UI"])
     app_state.routes_registered = True
 
 
@@ -581,7 +580,11 @@ Path("ui").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
 app.mount("/ui-assets", StaticFiles(directory="ui"), name="ui-assets")
 
-# Register all routes lazily
+# Register critical UI routes immediately (non-deferred)
+from api.routes.ui import router as ui_router
+app.include_router(ui_router, tags=["UI"])
+
+# Register all other routes lazily
 if not _defer_route_registration_enabled():
     _register_api_routes(app)
 else:
