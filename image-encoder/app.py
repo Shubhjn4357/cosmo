@@ -36,7 +36,7 @@ def _recommended_threads() -> int:
     return min(4, cpu_count)
 
 
-WHISPER_AI_URL = os.getenv("WHISPER_AI_URL", "https://shubhjn-whisper-ai.hf.space").strip().rstrip("/")
+COSMO_AI_URL = os.getenv("COSMO_AI_URL", "https://shubhjn-cosmo-ai.hf.space").strip().rstrip("/")
 IMAGE_ENCODER_MODEL_ID = os.getenv("IMAGE_ENCODER_MODEL_ID", "openai/clip-vit-base-patch32").strip()
 IMAGE_ENCODER_DEVICE = os.getenv("IMAGE_ENCODER_DEVICE", "cpu").strip() or "cpu"
 IMAGE_ENCODER_THREADS = max(1, int(os.getenv("IMAGE_ENCODER_THREADS", str(_recommended_threads()))))
@@ -106,7 +106,7 @@ if CLIP_AVAILABLE and torch is not None:
 
 app = FastAPI(
     title="Image Encoder Service",
-    description="Lightweight image encoding service for Whisper AI",
+    description="Lightweight image encoding service for Cosmo AI",
     version="1.1.0",
 )
 
@@ -121,14 +121,14 @@ app.add_middleware(
 
 class EncodeRequest(BaseModel):
     image_base64: str
-    send_to_whisper: bool = False
+    send_to_cosmo: bool = False
 
 
 class EncodeResponse(BaseModel):
     embedding: List[float]
     text_representation: str
     dimension: int
-    sent_to_whisper: bool = False
+    sent_to_cosmo: bool = False
 
 
 _MODEL_LOCK = threading.Lock()
@@ -271,11 +271,11 @@ def create_text_representation(image: Image.Image, embedding: np.ndarray) -> str
     return "\n".join(lines)
 
 
-async def send_to_whisper_ai(embedding: List[float], text: str) -> bool:
+async def send_to_cosmo_ai(embedding: List[float], text: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                f"{WHISPER_AI_URL}/api/feed/vision",
+                f"{COSMO_AI_URL}/api/feed/vision",
                 json={
                     "embedding": embedding,
                     "text_representation": text,
@@ -284,7 +284,7 @@ async def send_to_whisper_ai(embedding: List[float], text: str) -> bool:
             )
             return response.status_code == 200
     except Exception as exc:
-        logger.error("Failed to send image embedding to whisper-ai: {}", exc)
+        logger.error("Failed to send image embedding to cosmo-ai: {}", exc)
         return False
 
 
@@ -352,7 +352,7 @@ async def root():
         "threads": IMAGE_ENCODER_THREADS,
         "max_image_dim": IMAGE_ENCODER_MAX_IMAGE_DIM,
         "dynamic_quantization": IMAGE_ENCODER_QUANTIZE and IMAGE_ENCODER_DEVICE == "cpu",
-        "whisper_ai": WHISPER_AI_URL,
+        "cosmo_ai": COSMO_AI_URL,
     }
 
 
@@ -378,9 +378,9 @@ async def encode_endpoint(request: EncodeRequest, background_tasks: BackgroundTa
         result = encode_image(image)
 
         sent = False
-        if request.send_to_whisper:
+        if request.send_to_cosmo:
             background_tasks.add_task(
-                send_to_whisper_ai,
+                send_to_cosmo_ai,
                 result["embedding"],
                 result["text_representation"],
             )
@@ -390,7 +390,7 @@ async def encode_endpoint(request: EncodeRequest, background_tasks: BackgroundTa
             embedding=result["embedding"],
             text_representation=result["text_representation"],
             dimension=result["dimension"],
-            sent_to_whisper=sent,
+            sent_to_cosmo=sent,
         )
     except Exception as exc:
         logger.error("Encoding failed: {}", exc)
@@ -398,14 +398,14 @@ async def encode_endpoint(request: EncodeRequest, background_tasks: BackgroundTa
 
 
 @app.post("/encode/upload")
-async def encode_upload(file: UploadFile = File(...), send_to_whisper: bool = False):
+async def encode_upload(file: UploadFile = File(...), send_to_cosmo: bool = False):
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         result = encode_image(image)
 
-        if send_to_whisper:
-            await send_to_whisper_ai(result["embedding"], result["text_representation"])
+        if send_to_cosmo:
+            await send_to_cosmo_ai(result["embedding"], result["text_representation"])
 
         return result
     except Exception as exc:
@@ -420,15 +420,15 @@ async def ping():
 
 @app.post("/keepalive/trigger")
 async def trigger_keepalive():
-    results = {"self": False, "whisper_ai": False}
+    results = {"self": False, "cosmo_ai": False}
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(f"{_service_url()}/ping")
             results["self"] = response.status_code == 200
 
-            response = await client.get(f"{WHISPER_AI_URL}/api/ping")
-            results["whisper_ai"] = response.status_code == 200
+            response = await client.get(f"{COSMO_AI_URL}/api/ping")
+            results["cosmo_ai"] = response.status_code == 200
     except Exception as exc:
         logger.error("Keepalive trigger failed: {}", exc)
 

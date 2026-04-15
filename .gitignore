@@ -30,13 +30,13 @@ env/
 
 # Node / Expo / React Native artifacts
 **/node_modules/
-whisper/.expo/
-whisper/.expo-shared/
-whisper/dist/
-whisper/web-build/
-whisper/android/.gradle/
-whisper/android/app/build/
-whisper/ios/build/
+cosmo/.expo/
+cosmo/.expo-shared/
+cosmo/dist/
+cosmo/web-build/
+cosmo/android/.gradle/
+cosmo/android/app/build/
+cosmo/ios/build/
 
 # Editor and OS noise
 .DS_Store

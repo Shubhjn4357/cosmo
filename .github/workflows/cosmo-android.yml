@@ -1,0 +1,94 @@
+name: Cosmo Android
+
+on:
+  push:
+    paths:
+      - .github/workflows/cosmo-android.yml
+      - cosmo/**
+  pull_request:
+    paths:
+      - .github/workflows/cosmo-android.yml
+      - cosmo/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apks:
+    name: Build Debug And Signed Release APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CI: "1"
+      EXPO_NO_TELEMETRY: "1"
+      EXPO_USE_PNPM: "1"
+      COSMO_ANDROID_CI_ABIS: arm64-v8a
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /opt/az || true
+          sudo docker system prune -af || true
+          df -h
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+          cache-dependency-path: './cosmo/pnpm-lock.yaml'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Install mobile app dependencies
+        working-directory: cosmo
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Android APKs
+        working-directory: cosmo
+        run: bash scripts/ci/build-android-apks.sh
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmo-android-apks-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            cosmo/artifacts/android/cosmo-debug.apk
+            cosmo/artifacts/android/cosmo-release-signed.apk
+            cosmo/artifacts/android/build-metadata.json
+            cosmo/artifacts/android/signing-summary.txt
+
+      - name: Upload signing materials
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmo-android-signing-materials-${{ github.run_number }}
+          retention-days: 14
+          path: |
+            cosmo/artifacts/android/keystores/debug.keystore
+            cosmo/artifacts/android/keystores/release.keystore
+            cosmo/artifacts/android/credentials/generated-key.properties
+            cosmo/artifacts/android/credentials/debug-key-info.txt
+            cosmo/artifacts/android/credentials/release-key-info.txt

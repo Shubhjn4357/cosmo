@@ -16,12 +16,12 @@ CLIP-based image encoding service for AI learning.
 - Vision-only CLIP path when supported by the installed `transformers` version
 - Optional CPU int8 dynamic quantization
 - Optional preload and optional keepalive
-- Auto-send to Whisper AI backend
+- Auto-send to Cosmo AI backend
 
 ## Recommended environment variables
 
 ```bash
-WHISPER_AI_URL=https://your-whisper-ai-space.hf.space
+COSMO_AI_URL=https://your-cosmo-ai-space.hf.space
 IMAGE_ENCODER_MODEL_ID=openai/clip-vit-base-patch32
 IMAGE_ENCODER_DEVICE=cpu
 IMAGE_ENCODER_THREADS=4

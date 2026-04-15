@@ -1,1 +1,0 @@
-# Whisper AI - Model Module

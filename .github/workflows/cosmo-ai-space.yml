@@ -1,0 +1,96 @@
+name: Cosmo AI Space
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/cosmo-ai-space.yml
+      - cosmo-ai/**
+      - cosmo-ai/native/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-space:
+    name: Deploy Cosmo AI Space
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Validate deployment secret
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+
+      - name: Validate Space payload
+        run: |
+          set -euo pipefail
+          test -f cosmo-ai/README.md
+          test -f cosmo-ai/Dockerfile
+          # Ensure the native directory was successfully integrated
+          test -d cosmo-ai/native
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Build clean cosmo-ai deployment repo
+        id: deployment_repo
+        run: |
+          set -euo pipefail
+          repo_dir="$(mktemp -d)"
+          cp -a cosmo-ai/. "$repo_dir/"
+          (
+            cd "$repo_dir"
+            git init -b main
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "Deploy cosmo-ai from ${GITHUB_SHA}"
+          )
+          echo "path=$repo_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve cosmo-ai Space URL
+        id: cosmo_ai_space
+        run: |
+          set -euo pipefail
+          # Fallback to cosmo key if cosmo not yet set in example env
+          space_url="$(grep -E '^(COSMO_AI_URL|HF_SPACE_ID)=' cosmo-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
+          if [ -z "$space_url" ]; then
+            space_url="https://shubhjn-cosmo-ai.hf.space"
+          fi
+          echo "url=$space_url" >> "$GITHUB_OUTPUT"
+
+      - name: Push to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          DEPLOYMENT_REPO_PATH: ${{ steps.deployment_repo.outputs.path }}
+          COSMO_AI_SPACE_URL: ${{ steps.cosmo_ai_space.outputs.url }}
+        run: |
+          set -euo pipefail
+          space_host="${COSMO_AI_SPACE_URL#https://}"
+          space_host="${space_host#http://}"
+          space_host="${space_host%%/*}"
+          space_slug="${space_host%.hf.space}"
+          space_owner="${space_slug%%-*}"
+          space_name="${space_slug#*-}"
+          if [ -z "$space_owner" ] || [ -z "$space_name" ] || [ "$space_name" = "$space_slug" ]; then
+            echo "Could not derive Hugging Face repo from $COSMO_AI_SPACE_URL — Using fallback"
+            # Hardcoded as a safety measure for the shubhjn user
+            space_owner="shubhjn"
+            space_name="cosmo-ai"
+          fi
+          cd "$DEPLOYMENT_REPO_PATH"
+          git remote add origin "https://${space_owner}:${HF_TOKEN}@huggingface.co/spaces/${space_owner}/${space_name}"
+          git push --force origin HEAD:main

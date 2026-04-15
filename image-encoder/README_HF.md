@@ -17,12 +17,12 @@ Converts images to CLIP embeddings for AI learning.
 - Vision-only CLIP path when available
 - Optional CPU int8 dynamic quantization
 - Optional preload and optional keepalive
-- Auto-sends to Whisper AI
+- Auto-sends to Cosmo AI
 
 ## Recommended environment variables
 
 ```bash
-WHISPER_AI_URL=https://your-whisper-ai-space.hf.space
+COSMO_AI_URL=https://your-cosmo-ai-space.hf.space
 IMAGE_ENCODER_MODEL_ID=openai/clip-vit-base-patch32
 IMAGE_ENCODER_DEVICE=cpu
 IMAGE_ENCODER_THREADS=4
@@ -37,7 +37,7 @@ IMAGE_ENCODER_KEEPALIVE=false
 ```bash
 curl -X POST https://YOUR-SPACE-URL/encode \
   -H "Content-Type: application/json" \
-  -d '{"image_base64": "...", "send_to_whisper": true}'
+  -d '{"image_base64": "...", "send_to_cosmo": true}'
 ```
 
 See `/docs` for API documentation.

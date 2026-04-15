@@ -7,7 +7,8 @@ on:
     paths:
       - .github/workflows/image-encoder-space.yml
       - image-encoder/**
-      - whisper-ai/.env.example
+      - cosmo-ai/.env.example
+      - cosmo-ai/native/**
   workflow_dispatch:
 
 permissions:
@@ -54,10 +55,10 @@ jobs:
         id: image-encoder-space
         run: |
           set -euo pipefail
-          space_url="$(grep -E '^IMAGE_ENCODER_URL=' whisper-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
+          space_url="$(grep -E '^(IMAGE_ENCODER_URL|HF_IMAGE_ENCODER_ID)=' cosmo-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
           if [ -z "$space_url" ]; then
-            echo "IMAGE_ENCODER_URL is not set in whisper-ai/.env.example" >&2
-            exit 1
+             echo "IMAGE_ENCODER_URL is not set in cosmo-ai/.env.example — Using fallback"
+             space_url="https://shubhjn-cosmo-image-encoder.hf.space"
           fi
           echo "url=$space_url" >> "$GITHUB_OUTPUT"
 
@@ -75,7 +76,8 @@ jobs:
           space_owner="${space_slug%%-*}"
           space_name="${space_slug#*-}"
           if [ -z "$space_owner" ] || [ -z "$space_name" ] || [ "$space_name" = "$space_slug" ]; then
-            echo "Could not derive Hugging Face repo from $IMAGE_ENCODER_SPACE_URL" >&2
-            exit 1
+            echo "Could not derive Hugging Face repo from $IMAGE_ENCODER_SPACE_URL — Using fallback"
+            space_owner="shubhjn"
+            space_name="cosmo-image-encoder"
           fi
           git push --force "https://${space_owner}:${HF_TOKEN}@huggingface.co/spaces/${space_owner}/${space_name}" "${SUBTREE_SHA}:main"

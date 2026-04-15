@@ -8,7 +8,7 @@ Converts any image into:
 
 - ✅ 512-dimensional CLIP embeddings
 - ✅ Text representation for LLMs
-- ✅ Auto-sends to whisper-ai for learning
+- ✅ Auto-sends to cosmo-ai for learning
 - ✅ Runs on FREE HuggingFace CPU tier
 
 ## Quick Deploy
@@ -21,7 +21,7 @@ Converts any image into:
 
 2. Upload files from `/image-encoder/` folder
 
-3. Update `WHISPER_AI_URL` in `app.py` to your whisper-ai URL
+3. Update `COSMO_AI_URL` in `app.py` to your cosmo-ai URL
 
 4. Deploy! ✅
 
@@ -34,9 +34,9 @@ Converts any image into:
     ↓
 [Converts to embedding + text]
     ↓
-[Sends to whisper-ai /api/feed/vision]
+[Sends to cosmo-ai /api/feed/vision]
     ↓
-[Whisper-AI stores and learns]
+[Cosmo-AI stores and learns]
 ```
 
 ## API Usage
@@ -51,12 +51,12 @@ import base64
 with open("photo.jpg", "rb") as f:
     img_data = base64.b64encode(f.read()).decode()
 
-# Encode and send to whisper-ai
+# Encode and send to cosmo-ai
 response = requests.post(
     "https://YOUR-USERNAME-image-encoder.hf.space/encode",
     json={
         "image_base64": img_data,
-        "send_to_whisper": True  # Auto-send to whisper-ai
+        "send_to_cosmo": True  # Auto-send to cosmo-ai
     }
 )
 
@@ -70,7 +70,7 @@ files = {"file": open("image.png", "rb")}
 response = requests.post(
     "https://YOUR-USERNAME-image-encoder.hf.space/encode/upload",
     files=files,
-    params={"send_to_whisper": True}
+    params={"send_to_cosmo": True}
 )
 ```
 
@@ -88,15 +88,15 @@ response = requests.post(
 - Prevents space from sleeping
 - Always available
 
-### ✅ Whisper-AI Integration
+### ✅ Cosmo-AI Integration
 
 - Automatic data sending
 - Vision feed endpoint
 - Learning from visual data
 
-## Whisper-AI Integration
+## Cosmo-AI Integration
 
-Whisper-AI now has `/api/feed/vision` endpoint that:
+Cosmo-AI now has `/api/feed/vision` endpoint that:
 
 - ✅ Receives image embeddings
 - ✅ Stores up to 1000 images
@@ -106,14 +106,14 @@ Whisper-AI now has `/api/feed/vision` endpoint that:
 Check stats:
 
 ```bash
-curl https://shubhjn-whisper-ai.hf.space/api/feed/vision/stats
+curl https://shubhjn-cosmo-ai.hf.space/api/feed/vision/stats
 ```
 
 ## Architecture
 
 ```
 ┌─────────────────┐      ┌──────────────────┐
-│ image-encoder   │──────▶│   whisper-ai     │
+│ image-encoder   │──────▶│   cosmo-ai     │
 │  (CPU Space)    │ REST  │   (Main App)     │
 │                 │ API   │                  │
 │ • CLIP Model    │       │ • LLM            │

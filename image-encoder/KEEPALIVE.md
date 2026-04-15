@@ -45,7 +45,7 @@ You can manually trigger keepalive:
 curl -X POST https://YOUR-USERNAME-image-encoder.hf.space/keepalive/trigger
 ```
 
-This also pings whisper-ai to keep both services alive!
+This also pings cosmo-ai to keep both services alive!
 
 ## Environment Variables
 
@@ -74,12 +74,12 @@ If a ping fails:
 
 The keepalive loop is resilient and won't stop even if individual pings fail.
 
-## Combined with Whisper-AI
+## Combined with Cosmo-AI
 
 Both services can keep each other alive:
 
 1. **image-encoder** pings itself every 30 min
-2. **whisper-ai** has its own HF model keepalive
+2. **cosmo-ai** has its own HF model keepalive
 3. They ping each other when exchanging data
 
 Result: **Both services stay active 24/7 on free tier!** 🎉
