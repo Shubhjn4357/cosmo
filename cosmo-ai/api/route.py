@@ -631,23 +631,12 @@ async def track_request_analytics(request, call_next):
 
 @app.get("/")
 async def root():
-    return JSONResponse(
-        content={
-            "status": "healthy",
-            "message": "Cosmo AI is running",
-            "version": app.version,
-            "endpoints": {
-                "chat_api": "/api/chat",
-                "chat_ui": "/chat",
-                "image_api": "/api/image/generate",
-                "datasets": "/api/datasets",
-                "research": "/api/research",
-                "autoresearch": "/api/autoresearch/projects",
-                "admin_ui": "/admin-ui",
-                "docs": "/docs",
-            },
-        }
-    )
+    """
+    Landing page for Cosmo AI. 
+    Redirects/Serves the primary Chat UI to ensure immediate usability on HF Spaces.
+    """
+    from api.routes.ui import chat_page
+    return await chat_page()
 
 
 @app.get("/health")
