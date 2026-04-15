@@ -58,14 +58,20 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
-          packages: ''
+          packages: 'platform-tools'
           cmdline-tools-version: 'latest'
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
 
-      - name: Accept all Android licenses
+      - name: Accept all Android licenses (Fallback)
         run: |
+          # Try both PATH and absolute path
           yes | sdkmanager --licenses || true
+          if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" ]; then
+            yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          fi
           # Diagnostics
           sdkmanager --list_installed || true
 
