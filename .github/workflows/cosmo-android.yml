@@ -61,6 +61,13 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           packages: ''
+          cmdline-tools-version: 'latest'
+
+      - name: Accept all Android licenses
+        run: |
+          yes | sdkmanager --licenses || true
+          # Diagnostics
+          sdkmanager --list_installed || true
 
       - name: Install mobile app dependencies
         working-directory: cosmo

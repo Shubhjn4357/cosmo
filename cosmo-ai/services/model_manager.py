@@ -20,7 +20,7 @@ from loguru import logger
 
 from services import hf_dataset_sync
 from services.approved_model_catalog import DEFAULT_TEXT_MODEL_ID, get_text_model
-from services.admin_state import get_model_enabled
+from services.admin_state import get_model_enabled, set_model_enabled
 from services.runtime_manager import (
     DEFAULT_BITNET_FILENAME,
     DEFAULT_BITNET_MODEL_ID,
