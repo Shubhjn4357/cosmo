@@ -63,6 +63,14 @@ echo ">>> CI DIAGNOSTIC: NODE_BINARY=$NODE_BINARY"
 node -v || echo "Error: node not found"
 
 node scripts/ci/patch-expo-dev-launcher-android.js
+# Verify patch status (using find logic to handle pnpm)
+PATCH_FILE=$(find node_modules -path "*/expo-dev-launcher/android/src/main/graphql/GetUpdates.graphql" | head -n 1)
+if [[ -n "$PATCH_FILE" ]] && grep -q "runtime {" "$PATCH_FILE"; then
+  echo ">>> CI DIAGNOSTIC: Patch applied successfully to $PATCH_FILE"
+else
+  echo "<<< CI WARNING: Patch failed to verify"
+fi
+
 npx expo prebuild --platform android --clean --no-install
 write_local_properties
 
@@ -136,6 +144,8 @@ cp "$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk" "$ARTIFACT_DIR/cosmo
 cleanup_android_intermediates
 
 pushd "$ANDROID_DIR" >/dev/null
+# Enforce production environment for release bundling
+export NODE_ENV=production
 build_android_variant app:assembleRelease
 popd >/dev/null
 

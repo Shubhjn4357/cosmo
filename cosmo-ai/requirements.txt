@@ -30,6 +30,7 @@ aiohttp==3.9.3
 
 # Voice & TTS
 edge-tts==6.1.10
+gTTS==2.5.1
 pyttsx3==2.90
 openai>=1.12.0
 

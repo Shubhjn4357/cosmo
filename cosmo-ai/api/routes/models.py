@@ -43,6 +43,7 @@ router = APIRouter(prefix="/models", tags=["models"])
 
 
 class LLMModel(BaseModel):
+    model_config = {"protected_namespaces": ()}
     id: str
     name: str
     description: str
@@ -77,6 +78,7 @@ class LLMModel(BaseModel):
 
 
 class ImageModel(BaseModel):
+    model_config = {"protected_namespaces": ()}
     id: str
     name: str
     description: str
@@ -106,6 +108,7 @@ class ImageModel(BaseModel):
 
 
 class OCRModel(BaseModel):
+    model_config = {"protected_namespaces": ()}
     id: str
     name: str
     description: str
@@ -135,6 +138,7 @@ class OCRModel(BaseModel):
 
 
 class SpeechModel(BaseModel):
+    model_config = {"protected_namespaces": ()}
     id: str
     name: str
     description: str

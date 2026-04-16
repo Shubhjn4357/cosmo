@@ -7,7 +7,6 @@
     "icon": "./assets/icon.png",
     "scheme": "cosmo",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "jsEngine": "hermes",
     "splash": {
       "image": "./assets/splash.png",
@@ -17,7 +16,6 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.cosmo.ai",
-      "deploymentTarget": "17.0",
       "infoPlist": {
         "UIBackgroundModes": [
           "fetch",
@@ -74,7 +72,6 @@
       "expo-router",
       "./plugins/withCustomProguard",
       [
-        
         "expo-build-properties",
         {
           "ios": {
@@ -86,7 +83,12 @@
             "minSdkVersion": 33,
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
-            "enableMinifyInReleaseBuilds": true
+            "enableMinifyInReleaseBuilds": true,
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libc++_shared.so"
+              ]
+            }
           }
         }
       ],
@@ -136,7 +138,9 @@
         {
           "iCloudContainerEnvironment": "Production"
         }
-      ]
+      ],
+      "expo-font",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true

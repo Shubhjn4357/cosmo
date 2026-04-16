@@ -13,6 +13,7 @@ router = APIRouter(prefix="/characters")
 
 
 class CreateCharacterRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     name: str
     description: str
     personality: str

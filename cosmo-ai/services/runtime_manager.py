@@ -724,7 +724,7 @@ class ChatRuntimeManager:
         model = AutoModelForCausalLM.from_pretrained(
             model_id,
             trust_remote_code=self.config.allow_remote_code,
-            torch_dtype=torch.float32,
+            dtype=torch.float32,
             low_cpu_mem_usage=True,
         )
         model.to(self.config.device)

@@ -16,6 +16,7 @@ router = APIRouter()
 # ─── Request / Response Models ─────────────────────────────────────────────
 
 class AgentChatRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     message: str
     history: Optional[List[Dict[str, str]]] = None
     user_id: Optional[str] = None
@@ -24,12 +25,14 @@ class AgentChatRequest(BaseModel):
 
 
 class AgentStepResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
     role: str
     content: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentChatResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
     final_response: str
     plan: List[str]
     research_context: str

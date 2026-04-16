@@ -136,6 +136,7 @@ collection_stats = {
 class DataCollectionRequest(BaseModel):
     """Request to collect data."""
 
+    model_config = {"protected_namespaces": ()}
     source_type: str = "both"
     count: int = 10
     auto_feed: bool = True

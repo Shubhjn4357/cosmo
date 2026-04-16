@@ -33,6 +33,7 @@ class ProfileSelectionRequest(BaseModel):
     eager_load: bool = False
 
 class ModelToggleRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     model_id: str
     enabled: bool
 

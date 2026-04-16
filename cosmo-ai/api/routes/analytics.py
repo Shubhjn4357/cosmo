@@ -257,6 +257,7 @@ analytics = AnalyticsTracker()
 
 
 class AnalyticsCollectEvent(BaseModel):
+    model_config = {"protected_namespaces": ()}
     type: str
     action: str
     metadata: dict[str, Any] | None = None
@@ -264,6 +265,7 @@ class AnalyticsCollectEvent(BaseModel):
 
 
 class AnalyticsCollectRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     events: list[AnalyticsCollectEvent]
     deviceId: str | None = None
 

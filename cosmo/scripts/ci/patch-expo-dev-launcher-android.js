@@ -4,7 +4,41 @@ const fs = require('fs');
 const path = require('path');
 
 const rootDir = path.resolve(__dirname, '..', '..');
-const packageDir = path.join(rootDir, 'node_modules', 'expo-dev-launcher');
+
+function findPackageDir(startDir, packageName) {
+  // Try direct resolution first
+  try {
+    const pj = require.resolve(`${packageName}/package.json`, { paths: [startDir] });
+    return path.dirname(pj);
+  } catch (e) {
+    // Fallback: search node_modules recursively for the folder
+    const nm = path.join(startDir, 'node_modules');
+    if (!fs.existsSync(nm)) return null;
+
+    // Direct check in node_modules
+    const direct = path.join(nm, packageName);
+    if (fs.existsSync(path.join(direct, 'package.json'))) return direct;
+
+    // Search in .pnpm or other folders
+    const entries = fs.readdirSync(nm, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const sub = path.join(nm, entry.name);
+        const res = findPackageDir(sub, packageName);
+        // Only return if it's the actual package (check for android/src)
+        if (res && fs.existsSync(path.join(res, 'android', 'src'))) return res;
+      }
+    }
+  }
+  return null;
+}
+
+const packageDir = findPackageDir(rootDir, 'expo-dev-launcher');
+if (!packageDir) {
+  console.log('[expo-dev-launcher patch] package not found in node_modules tree, skipping');
+  process.exit(0);
+}
+
 const androidDir = path.join(packageDir, 'android');
 
 function read(filePath) {

@@ -20,6 +20,7 @@ router = APIRouter(prefix="/autoresearch", tags=["autoresearch"])
 
 
 class AutoresearchProjectCreateRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     name: str
     objective: str
     workspace_path: str
@@ -37,6 +38,7 @@ class AutoresearchProjectCreateRequest(BaseModel):
 
 
 class AutoresearchRunRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     wait_for_completion: bool = False
 
 

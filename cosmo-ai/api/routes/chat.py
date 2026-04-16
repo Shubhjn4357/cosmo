@@ -33,6 +33,7 @@ DEFAULT_SYSTEM_PROMPT = (
 
 class ChatRequest(BaseModel):
     """Chat request model."""
+    model_config = {"protected_namespaces": ()}
     message: str
     history: Optional[list[dict[str, str]]] = None  # List of {"role": "user"|"assistant", "content": "..."}
     context: Optional[str] = None

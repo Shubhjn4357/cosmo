@@ -48,7 +48,7 @@ class LocalImageRuntime:
         logger.info("Loading local image runtime: {} from {}", model.get("id"), artifact_path)
         pipeline = pipeline_cls.from_single_file(
             str(artifact_path),
-            torch_dtype=torch.float32,
+            dtype=torch.float32,
             use_safetensors=artifact_path.suffix.lower() == ".safetensors",
             safety_checker=None,
             requires_safety_checker=False,
