@@ -31,7 +31,10 @@ auto_training_config = {
     "enabled": True,
     "delay_hours": 1.0,
     "auto_started": False,
-    "scheduled_time": None
+    "scheduled_time": None,
+    "loop_active": False,
+    "milestone_threshold": 500,  # Trigger training every 500 new images
+    "last_milestone_count": 0
 }
 
 
@@ -324,6 +327,15 @@ async def run_training(config: TrainingConfig):
                     val_loss
                 )
         
+        # Hot-reload model into hybrid vision system after successful training
+        try:
+            from model.hybrid_vision import get_hybrid_model
+            hybrid_model = get_hybrid_model()
+            hybrid_model._load_trained_model()
+            logger.info("Hot-reloaded vision model after autonomous training pass")
+        except Exception as e:
+            logger.error(f"Post-training reload failed: {e}")
+
         training_state["status"] = "completed"
         training_state["progress"] = 1.0
         
@@ -340,8 +352,7 @@ async def run_training(config: TrainingConfig):
 
 async def schedule_auto_training():
     """
-    Schedule automatic training to start after delay
-    Runs on server startup
+    Schedule automatic training and initiate the autonomous vision loop.
     """
     import datetime
     
@@ -349,36 +360,50 @@ async def schedule_auto_training():
         logger.info("Auto-training disabled")
         return
     
+    # 1. Start the one-time delayed boot training
     delay_seconds = auto_training_config["delay_hours"] * 3600
     scheduled_time = datetime.datetime.now() + datetime.timedelta(seconds=delay_seconds)
     auto_training_config["scheduled_time"] = scheduled_time.isoformat()
     
-    logger.info(f"🕐 Auto-training scheduled for {scheduled_time.strftime('%H:%M:%S')} ({auto_training_config['delay_hours']}h from now)")
+    logger.info(f"🕐 Initial auto-training scheduled for {scheduled_time.strftime('%H:%M:%S')}")
     
-    # Wait for delay
-    await asyncio.sleep(delay_seconds)
-    
-    # Check if training is already running
-    if training_state["is_training"]:
-        logger.info("Training already in progress, skipping auto-start")
-        return
-    
-    # Start training automatically
-    logger.info("🚀 Starting automatic training...")
-    auto_training_config["auto_started"] = True
-    
-    # Default auto-training config
-    config = TrainingConfig(
-        epochs=10,
-        batch_size=32,
-        learning_rate=1e-4,
-        image_size=64,
-        max_samples=5000,  # Start with smaller dataset
-        dataset="shubhjn/cosmo-data"
-    )
-    
-    # Run training
-    await run_training(config)
+    async def _boot_sequence():
+        await asyncio.sleep(delay_seconds)
+        if training_state["is_training"]: return
+        logger.info("🚀 Starting initial boot training...")
+        auto_training_config["auto_started"] = True
+        config = TrainingConfig(epochs=5, max_samples=2000)
+        await run_training(config)
+
+    # 2. Start the continuous Vision Loop Manager
+    async def _vision_loop_manager():
+        auto_training_config["loop_active"] = True
+        logger.info("🔄 Vision Loop Manager active (Threshold: {} samples)", auto_training_config["milestone_threshold"])
+        
+        from api.routes.feed import vision_data_store, _bootstrap_vision_store
+        
+        while auto_training_config["enabled"]:
+            await asyncio.sleep(300) # Check every 5 minutes
+            
+            _bootstrap_vision_store()
+            current_count = len(vision_data_store)
+            diff = current_count - auto_training_config["last_milestone_count"]
+            
+            if diff >= auto_training_config["milestone_threshold"] and not training_state["is_training"]:
+                logger.info("🔥 Data milestone reached ({} new samples). Triggering autonomous training pass...", diff)
+                auto_training_config["last_milestone_count"] = current_count
+                
+                config = TrainingConfig(
+                    epochs=3, 
+                    batch_size=16, 
+                    dataset="local_feed", # Signal to ignore HF dataset and use local feed
+                    max_samples=5000
+                )
+                await run_training(config)
+
+    # Launch both
+    asyncio.create_task(_boot_sequence())
+    await _vision_loop_manager()
 
 
 @router.get("/train/auto-status")

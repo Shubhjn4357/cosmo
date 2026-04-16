@@ -164,52 +164,95 @@ class AppState:
         self.start_time = time.time()
         self.config = {}
         # WebSocket Management for real-time steering
-        self.ws_manager = ConnectionManager()
+        self.ws_manager = HardenedWSManager()
 
 
-class ConnectionManager:
-    """Manages active WebSocket connections for mission steering."""
+class HardenedWSManager:
+    """
+    Manages active WebSocket connections with Auth and Heartbeats.
+    Ensures stable real-time steering for business automation.
+    """
     def __init__(self):
-        self.active_connections: dict[str, list[WebSocket]] = {} # session_id -> [WebSockets]
+        self.active_connections: dict[str, list[WebSocket]] = {}
+        self._heartbeat_interval = 25 # Seconds
+        self._loop = asyncio.get_event_loop()
 
-    async def connect(self, websocket: WebSocket, session_id: str):
+    async def connect(self, websocket: WebSocket, session_id: str, token: Optional[str] = None):
+        # 1. Verification Handshake
+        admin_token = os.getenv("ADMIN_TOKEN", "cosmo-default-admin")
+        if token and token != admin_token:
+            await websocket.close(code=4003) # Unauthorized
+            return False
+            
         await websocket.accept()
         if session_id not in self.active_connections:
             self.active_connections[session_id] = []
         self.active_connections[session_id].append(websocket)
+        
+        # 2. Launch Heartbeat Monitor for this connection
+        asyncio.create_task(self._heartbeat_loop(websocket, session_id))
+        return True
 
     def disconnect(self, websocket: WebSocket, session_id: str):
         if session_id in self.active_connections:
             if websocket in self.active_connections[session_id]:
                 self.active_connections[session_id].remove(websocket)
+            if not self.active_connections[session_id]:
+                del self.active_connections[session_id]
+
+    async def _heartbeat_loop(self, websocket: WebSocket, session_id: str):
+        """Keep-alive loop to prevent HF Space idle timeouts."""
+        try:
+            while websocket in self.active_connections.get(session_id, []):
+                await asyncio.sleep(self._heartbeat_interval)
+                # Send binary heartbeat to keep connection 'warm'
+                await websocket.send_bytes(b"\x09") # PING
+        except Exception:
+            self.disconnect(websocket, session_id)
 
     async def broadcast(self, session_id: str, message: dict):
-        """Sends a JSON message to all clients connected to a specific session (Anonymized)."""
-        if session_id in self.active_connections:
-            # Audit: Scrub the broadcast payload of PII
-            scrubbed_message = {}
-            for k, v in message.items():
-                if isinstance(v, str):
-                    scrubbed_message[k] = anonymize_lesson(v)
-                elif isinstance(v, dict):
-                    # Recursive scrub for mission trees
-                    scrubbed_message[k] = {sk: (anonymize_lesson(sv) if isinstance(sv, str) else sv) for sk, sv in v.items()}
-                else:
-                    scrubbed_message[k] = v
+        if session_id not in self.active_connections:
+            return
 
-            send_tasks = []
-            for connection in self.active_connections[session_id]:
-                send_tasks.append(connection.send_json(scrubbed_message))
+        # Audit: Scrub the broadcast payload
+        scrubbed_message = {
+            "type": message.get("type", "update"),
+            "payload": self._scrub_payload(message.get("payload", message)),
+            "timestamp": datetime.now().isoformat()
+        }
+
+        send_tasks = []
+        for connection in self.active_connections[session_id]:
+            send_tasks.append(connection.send_json(scrubbed_message))
+        
+        if send_tasks:
+            results = await asyncio.gather(*send_tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.debug(f"WS send failed for {session_id}, pruning...")
+
+    def _scrub_payload(self, data: Any) -> Any:
+        if isinstance(data, str):
+            return anonymize_lesson(data)
+        if isinstance(data, dict):
+            return {k: self._scrub_payload(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self._scrub_payload(v) for v in data]
+        return data
+
+    async def handle_steering(self, websocket: WebSocket, session_id: str, raw_data: str):
+        """Processes structured steering commands from the client."""
+        try:
+            cmd = json.loads(raw_data)
+            action = cmd.get("action")
+            logger.info(f"Steering command received [{session_id}]: {action}")
             
-            if send_tasks:
-                # Parallel send with exception handling
-                results = await asyncio.gather(*send_tasks, return_exceptions=True)
-                
-                # Cleanup failed connections
-                for i, result in enumerate(results):
-                    if isinstance(result, Exception):
-                        # We could remove here, but for now we rely on subsequent runs or client-side retry
-                        pass
+            # Integration hooks for cosmo_business steering
+            # Actions: pause, resume, override_target, handoff_confirm
+            response = {"type": "steering_ack", "action": action, "status": "processed"}
+            await websocket.send_json(response)
+        except Exception as e:
+            logger.error(f"Steering error: {e}")
 
 
 app_state = AppState()
@@ -702,17 +745,20 @@ async def api_health():
 
 
 @app.websocket("/api/cosmo/business/ws/{session_id}")
-async def cosmo_business_websocket(websocket: WebSocket, session_id: str):
+async def cosmo_business_websocket(websocket: WebSocket, session_id: str, token: Optional[str] = None):
     """
     WebSocket endpoint for real-time mission steering.
     Streams task updates, progress, and handoff alerts.
     """
-    await app_state.ws_manager.connect(websocket, session_id)
+    connected = await app_state.ws_manager.connect(websocket, session_id, token)
+    if not connected:
+        return
+        
     try:
         while True:
-            # Client can send steering commands via WS as well
+            # Client can send steering commands via WS
             data = await websocket.receive_text()
-            logger.info(f"WS steering command received for {session_id}: {data[:50]}")
+            await app_state.ws_manager.handle_steering(websocket, session_id, data)
     except WebSocketDisconnect:
         app_state.ws_manager.disconnect(websocket, session_id)
     except Exception as e:

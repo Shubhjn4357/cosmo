@@ -13,6 +13,7 @@ from io import BytesIO
 from loguru import logger
 import hashlib
 from pathlib import Path
+from utils.app_paths import DATA_ROOT, UPLOADS_DIR
 
 try:
     from datasets import load_dataset
@@ -88,15 +89,20 @@ class VisionTrainingDataset(Dataset):
             self.dataset = []
 
         self.local_records = self._load_local_records()
+        self.feed_records = self._load_feed_records()
+        
         self.remote_samples = len(self.dataset)
         self.local_samples = len(self.local_records)
-        self.total_samples = self.remote_samples + self.local_samples
+        self.feed_samples = len(self.feed_records)
+        
+        self.total_samples = self.remote_samples + self.local_samples + self.feed_samples
         if max_samples is not None:
             self.total_samples = min(self.total_samples, max_samples)
         logger.info(
-            "Vision dataset ready: remote={} local={} total={}",
+            "Vision dataset ready: remote={} local={} feed={} total={}",
             self.remote_samples,
             self.local_samples,
+            self.feed_samples,
             self.total_samples,
         )
         
@@ -135,6 +141,31 @@ class VisionTrainingDataset(Dataset):
                         records.append(payload)
             except Exception as exc:
                 logger.warning(f"Failed to load local vision file {path}: {exc}")
+        return records
+
+    def _load_feed_records(self) -> list[Dict[str, Any]]:
+        """Loads records from the dynamic environmental feed."""
+        records: list[Dict[str, Any]] = []
+        feed_path = DATA_ROOT / "vision" / "feed.jsonl"
+        if not feed_path.exists():
+            return records
+            
+        try:
+            with feed_path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip(): continue
+                    payload = json.loads(line)
+                    # Convert preview_url to local path if possible
+                    preview_url = payload.get("preview_url")
+                    if preview_url and preview_url.startswith("/static/vision-feed/"):
+                        filename = preview_url.split("/")[-1]
+                        local_path = UPLOADS_DIR / "vision-feed" / filename
+                        if local_path.exists():
+                            payload["image_path"] = str(local_path)
+                    
+                    records.append(payload)
+        except Exception as exc:
+            logger.warning(f"Failed to load feed vision file {feed_path}: {exc}")
         return records
 
     def _fallback_transform(self, image: Image.Image) -> torch.Tensor:
@@ -202,13 +233,12 @@ class VisionTrainingDataset(Dataset):
         Returns:
             Dictionary with 'text', 'image', 'metadata' or None if failed
         """
-        if idx >= len(self.dataset):
-            local_index = idx - len(self.dataset)
-            if local_index < 0 or local_index >= len(self.local_records):
-                return None
-            item = self.local_records[local_index]
-        else:
+        if idx < len(self.dataset):
             item = self.dataset[idx]
+        elif idx < len(self.dataset) + len(self.local_records):
+            item = self.local_records[idx - len(self.dataset)]
+        else:
+            item = self.feed_records[idx - len(self.dataset) - len(self.local_records)]
         
         try:
             # Get text prompt
