@@ -8,8 +8,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
 import { cosmoAPI } from '@/services/api';
 import { initOfflineSync, onNetworkChange, getPendingSyncCount } from '@/services/offlineSync';
-import { useApiBase } from '@/hooks/useApiBase';
-
 export interface NetworkStatus {
     isConnected: boolean;
     isServerReachable: boolean;
@@ -21,7 +19,7 @@ export interface NetworkStatus {
 }
 
 export function useNetworkStatus() {
-    const { baseUrl } = useApiBase();
+    const baseUrl = cosmoAPI.getBaseUrl();
     const [status, setStatus] = useState<NetworkStatus>({
         isConnected: true,
         isServerReachable: false,

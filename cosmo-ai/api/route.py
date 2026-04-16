@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+import json
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator, Awaitable
+from typing import AsyncIterator, Awaitable, Optional, Any
 
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -69,6 +71,11 @@ def _load_api_route_modules():
         ui,
         voice,
     )
+    from services.automation_service import automation_service
+    from services.service_registry import service_registry
+
+    # Register sovereign agent services
+    service_registry.register("automation", automation_service)
     return {
         "admin": admin,
         "agent": agent,
@@ -389,6 +396,7 @@ async def _run_post_start_initialization(app: FastAPI):
     from utils.persistence import restore_data
     import api.routes.collect as collect
     import api.routes.research as research
+    from services.service_registry import service_registry
 
     if not TEST_MODE:
         if _background_feature_enabled("COSMO_AUTO_COLLECTION_ENABLED"):
@@ -428,6 +436,9 @@ async def _run_post_start_initialization(app: FastAPI):
             )
         except Exception as exc:
             logger.warning(f"GGUF runtime bootstrap skipped: {exc}")
+
+        # Start all registered background services
+        await service_registry.start_all(app_state)
 
         try:
             catalog_status = start_catalog_bootstrap()
@@ -532,6 +543,7 @@ async def _startup(app: FastAPI):
 async def _shutdown():
     from services.hf_keepalive import get_keepalive, keepalive_enabled
     from utils.persistence import backup_data
+    from services.service_registry import service_registry
 
     for task_name, label in (
         ("post_start_task", "Post-start initialization"),

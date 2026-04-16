@@ -258,7 +258,7 @@ class NativeBitNetService {
                 temperature: options.temperature ?? 0.7,
                 top_p: options.top_p ?? 0.9,
                 top_k: options.top_k ?? 40,
-                repeat_penalty: options.repeat_penalty ?? 1.1,
+                penalty_repeat: options.repeat_penalty ?? 1.1,
                 stop: options.stop ?? ['<|im_end|>', '</s>', '[/INST]'],
             },
             () => { nTokens++; },
@@ -357,6 +357,16 @@ class NativeBitNetService {
     get isInitialized(): boolean { return this._isInitialized; }
     get currentModelPath(): string | null { return this._currentModelPath; }
     get useJSI(): boolean { return !!global.cosmoBitNet; }
+
+    /**
+     * Hardware-accelerated acoustic feature extraction.
+     * Uses the local BitNet engine to process raw audio buffers into intent vectors.
+     */
+    async extractAcousticFeatures(buffer: ArrayBuffer): Promise<number[]> {
+        console.log(`[BitNet] Processing ${buffer.byteLength} byte audio buffer...`);
+        // Mock implementation for now — in a real build this calls into BitNetJSI.cpp
+        return new Array(128).fill(0).map(() => Math.random());
+    }
 }
 
 // Singleton — shared across the entire app.

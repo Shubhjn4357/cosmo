@@ -13,7 +13,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { BlurView } from 'expo-blur';
 import { useM3Colors, createGlassStyle, M3_RADIUS, M3_SPACING } from '@/constants/material3';
-import { SPRING_CONFIGS, ANIMATIONS } from '@/constants/animations';
+import { REANIMATED_SPRING_CONFIGS, ANIMATIONS } from '@/constants/animations';
 import { useTheme } from '@/constants/theme';
 
 interface GlassButtonProps {
@@ -50,11 +50,11 @@ export function GlassButton({
   }));
 
   const handlePressIn = () => {
-    scale.value = withSpring(ANIMATIONS.tapScale.to, SPRING_CONFIGS.snappy);
+    scale.value = withSpring(ANIMATIONS.tapScale.to, REANIMATED_SPRING_CONFIGS.snappy);
   };
 
   const handlePressOut = () => {
-    scale.value = withSpring(1, SPRING_CONFIGS.bouncy);
+    scale.value = withSpring(1, REANIMATED_SPRING_CONFIGS.bouncy);
   };
 
   useEffect(() => {

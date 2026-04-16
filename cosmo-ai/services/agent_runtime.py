@@ -25,6 +25,8 @@ from urllib import request as urllib_request
 from loguru import logger
 
 from services.agent_profiles import DEFAULT_AGENT_PROFILE_ID, get_agent_profile
+from services.wallet_service import wallet_service
+from services.skills_service import skills_service
 from utils.app_paths import DATA_ROOT, ensure_app_dirs
 
 # ensure_app_dirs() - Moved to app.py
@@ -351,6 +353,25 @@ def _available_tools(payload: AgentRunRequestPayload) -> list[dict[str, Any]]:
             }
         )
 
+    # Sovereign Agent Tools
+    tools.extend([
+        {
+            "name": "wallet_status",
+            "description": "Check current sovereign agent wallet address, balance, and network status.",
+            "input_schema": {},
+        },
+        {
+            "name": "wallet_transfer",
+            "description": "Transfer native ETH (or regional tokens like Base ETH) to an external address.",
+            "input_schema": {"to_address": "string", "amount_eth": "number"},
+        },
+        {
+            "name": "list_skills",
+            "description": "List all currently installed local autonomous skills.",
+            "input_schema": {},
+        }
+    ])
+
     return tools
 
 
@@ -581,6 +602,10 @@ def _build_action_prompt(
         }
         for item in tool_results[-6:]
     ]
+    # Inject Sovereign Identity and Local Skills
+    wallet_info = wallet_service.get_status()
+    skills_prompt = skills_service.get_all_skills_prompt()
+    
     instructions = {
         "format": {
             "kind": "tool|final",
@@ -589,6 +614,12 @@ def _build_action_prompt(
             "input": "tool input object when kind=tool",
             "answer": "final answer when kind=final",
         },
+        "sovereign_identity": {
+            "address": wallet_info["address"],
+            "balance_eth": wallet_info["balance"],
+            "network": wallet_info["network"]
+        },
+        "skills_context": skills_prompt,
         "rules": [
             "Return JSON only.",
             "Use at most one tool in this step.",
@@ -1506,6 +1537,40 @@ async def _execute_web_fetch(tool_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _execute_wallet_status() -> dict[str, Any]:
+    status = wallet_service.get_status()
+    return {
+        "tool": "wallet_status",
+        "summary": f"Wallet {status['address']} has {status['balance']:.6f} ETH on {status['network']}.",
+        "status": status,
+        "context": json.dumps(status, indent=2)
+    }
+
+async def _execute_wallet_transfer(tool_input: dict[str, Any]) -> dict[str, Any]:
+    to_address = tool_input.get("to_address")
+    amount = float(tool_input.get("amount_eth", 0))
+    if not to_address:
+        raise ValueError("to_address is required")
+    
+    tx_hash = wallet_service.transfer(to_address, amount)
+    if tx_hash:
+        return {
+            "tool": "wallet_transfer",
+            "summary": f"Transferred {amount} ETH to {to_address}. TX Hash: {tx_hash}",
+            "tx_hash": tx_hash
+        }
+    else:
+        raise RuntimeError("Transfer failed")
+
+async def _execute_list_skills() -> dict[str, Any]:
+    skills = skills_service.list_skills()
+    return {
+        "tool": "list_skills",
+        "summary": f"Available skills: {', '.join(skills)}",
+        "skills": skills,
+        "context": skills_service.get_all_skills_prompt()
+    }
+
 async def _execute_tool(
     tool_name: str,
     *,
@@ -1513,6 +1578,12 @@ async def _execute_tool(
     app_state,
     tool_input: dict[str, Any],
 ) -> dict[str, Any]:
+    if tool_name == "wallet_status":
+        return await _execute_wallet_status()
+    if tool_name == "wallet_transfer":
+        return await _execute_wallet_transfer(tool_input)
+    if tool_name == "list_skills":
+        return await _execute_list_skills()
     if tool_name == "runtime_status":
         return await _execute_runtime_status(app_state)
     if tool_name == "runtime_profiles":

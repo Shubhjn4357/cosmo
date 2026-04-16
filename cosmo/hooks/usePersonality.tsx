@@ -7,7 +7,7 @@
  * - Custom personalities also persisted offline-first
  */
 
-import React, {
+import {
     createContext,
     useCallback,
     useContext,
@@ -16,6 +16,7 @@ import React, {
     useState,
     type ReactNode,
 } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { storage } from '@/utils/storage';
 import { PersonalitySettings, DEFAULT_PERSONALITY } from '@/types';
 import { saveOfflineFirst, loadOfflineFirst, getIsOnline } from '@/services/offlineSync';

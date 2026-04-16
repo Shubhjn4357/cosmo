@@ -172,6 +172,13 @@ async function refreshData() {
       renderVision();
     }
 
+    // Refresh Wallet Status
+    const walletRes = await apiFetch("/api/admin/agent-status");
+    if (walletRes.ok) {
+        const data = await walletRes.json();
+        renderWallet(data.wallet);
+    }
+
     if ($("lastRefreshLabel")) {
       $("lastRefreshLabel").textContent = `Last Sync: ${new Date().toLocaleTimeString()}`;
     }
@@ -283,6 +290,22 @@ function renderVision() {
     `).join("");
 }
 
+        </div>
+    `).join("");
+}
+
+function renderWallet(wallet) {
+    if (!wallet) return;
+    if ($("agentWalletAddress")) $("agentWalletAddress").textContent = wallet.address || "Unknown";
+    if ($("agentWalletBalance")) $("agentWalletBalance").textContent = parseFloat(wallet.balance || 0).toFixed(6);
+    if ($("agentWalletNetwork")) $("agentWalletNetwork").textContent = (wallet.network || "base").toUpperCase();
+    if ($("currentControllerAddr")) $("currentControllerAddr").textContent = wallet.controller_address || "Not Linked";
+    
+    if (wallet.controller_address && $("controllerLinkRow")) {
+        $("controllerLinkRow").style.display = "block";
+    }
+}
+
 // ─── Actions ──────────────────────────────────────────────────────────────────
 async function performLogin(username, password) {
   updateAuthStatus("Authenticating", "Sending secure credentials...", "warn");
@@ -335,6 +358,50 @@ async function applyRuntimeProfile() {
     } finally {
         btn.disabled = false;
         btn.textContent = "Activate";
+    }
+}
+
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Activate";
+    }
+}
+
+async function connectMetamask() {
+    if (!window.ethereum) {
+        toast.show("Metamask not found. Please install the extension.", "error");
+        return;
+    }
+    
+    try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        const account = accounts[0];
+        AppState.connectedAccount = account;
+        
+        $("metamaskStatus").textContent = `Connected: ${account.substring(0,6)}...${account.substring(38)}`;
+        $("controllerLinkRow").style.display = "block";
+        toast.show("Metamask Connected", "ok");
+    } catch (err) {
+        toast.show("Connection failed", "error");
+    }
+}
+
+async function linkController() {
+    if (!AppState.connectedAccount) return;
+    
+    toast.show("Linking controller address...", "info");
+    try {
+        const res = await apiFetch("/api/admin/wallet/link-controller", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ address: AppState.connectedAccount }),
+        });
+        if (res.ok) {
+            toast.show("Controller wallet linked successfully", "ok");
+            refreshData();
+        }
+    } catch (err) {
+        toast.show("Linking failed", "error");
     }
 }
 
@@ -392,6 +459,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       toast.show("Refreshing system state...", "info");
       refreshData();
   });
+
+  $("refreshWalletBtn")?.addEventListener("click", () => {
+      toast.show("Syncing on-chain state...", "info");
+      refreshData();
+  });
+  
+  $("connectMetamaskBtn")?.addEventListener("click", connectMetamask);
+  $("linkControllerBtn")?.addEventListener("click", linkController);
 
   // 4. Boot-up check
   if (token.get()) {

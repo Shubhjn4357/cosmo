@@ -181,11 +181,6 @@ export interface SpeechModel {
     kind?: string;
 }
 
-    audio?: string;
-    audio_format?: string;
-metadata ?: Record<string, string | number | boolean>;
-}
-
 export interface ChatHistoryItem {
     role: 'user' | 'assistant' | 'system';
     content: string;
@@ -205,6 +200,10 @@ export interface AgentSessionDetail {
     answer: string;
     plan: AgentPlanStep[];
     tool_results: AgentToolResult[];
+    citations?: { source: string; score?: number; chunk?: number }[];
+    updated_at?: number;
+    image_url?: string | null;
+    backend_resolved?: string;
 }
 
 export interface TrainingPair {
@@ -242,6 +241,15 @@ export interface AgentRunResponse {
     tool_results: AgentToolResult[];
     citations: { source: string; score?: number; chunk?: number }[];
     updated_at?: number;
+    backend_resolved?: string;
+}
+
+export interface VoiceChatResult {
+    transcription: string;
+    response: string;
+    audio_url?: string;
+    tokens_used?: number;
+    model?: string;
 }
 
 export class CosmoAPI {
@@ -413,6 +421,7 @@ export class CosmoAPI {
         allowResearch?: boolean;
         allowImages?: boolean;
         maxTokens?: number;
+        maxSteps?: number;
         userId?: string;
         waitForCompletion?: boolean;
     }): Promise<AgentRunResponse> {
@@ -454,7 +463,7 @@ export class CosmoAPI {
         return response.json();
     }
 
-    async cancelAgentSession(sessionId: string): Promise<BaseStatusResponse> {
+    async cancelAgentSession(sessionId: string): Promise<AgentRunResponse> {
         const response = await fetch(`${this.baseUrl}/api/agent/sessions/${encodeURIComponent(sessionId)}/cancel`, {
             method: 'POST',
             headers: this.getHeaders(),

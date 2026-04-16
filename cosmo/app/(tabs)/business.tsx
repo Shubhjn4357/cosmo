@@ -9,6 +9,7 @@ import {
     ActivityIndicator,
     RefreshControl,
     Dimensions,
+    Alert,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -19,7 +20,8 @@ import { businessAgentService, BusinessSession, BusinessTask } from '@/services/
 import { BusinessSkeleton } from '@/components/BusinessSkeleton';
 import { MissionVisualizer } from '@/components/MissionVisualizer';
 import * as Haptics from 'expo-haptics';
-import { useAudioRecorder } from 'expo-audio';
+import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
+import * as FileSystem from 'expo-file-system';
 import { nativeBitNet } from '@/services/NativeBitNet';
 
 const { width } = Dimensions.get('window');
@@ -59,7 +61,7 @@ export default function BusinessScreen() {
     const [isThinking, setIsThinking] = useState(false);
 
     // Real Audio Recorder
-    const recorder = useAudioRecorder();
+    const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
     const [diagnostics, setDiagnostics] = useState<any>(null);
     const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -101,24 +103,27 @@ export default function BusinessScreen() {
     };
 
     const startVoiceIntake = async () => {
-        const { status } = await recorder.requestPermissionsAsync();
-        if (status !== 'granted') return;
+        const { granted } = await AudioModule.requestRecordingPermissionsAsync();
+        if (!granted) {
+            Alert.alert('Permission Denied', 'Microphone access is required for voice commands.');
+            return;
+        }
 
         setIsRecording(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        await recorder.recordAsync();
+        await recorder.record();
     };
 
     const stopVoiceIntake = async () => {
         setIsRecording(false);
-        const uri = await recorder.stopAsync();
+        await recorder.stop();
+        const uri = recorder.uri;
         if (!uri) return;
 
         // v1.4 Hardware Acceleration: Zero-latency acoustic processing
         try {
-            const { readAsStringAsync, EncodingType } = await import('expo-file-system');
             // Safe local file reading instead of fetch
-            const base64 = await readAsStringAsync(uri, { encoding: EncodingType.Base64 });
+            const base64 = await FileSystem.readAsStringAsync(uri, { encoding: (FileSystem as any).EncodingType?.Base64 || 'base64' });
             const buffer = Uint8Array.from(atob(base64), c => c.charCodeAt(0)).buffer;
 
             const features = await nativeBitNet.extractAcousticFeatures(buffer);
@@ -147,7 +152,7 @@ export default function BusinessScreen() {
         setIsDistilling(true);
         try {
             const res = await businessAgentService.triggerDistillation(200);
-            alert(res.message);
+            Alert.alert('Distillation Success', res.message);
         } catch (err) {
             console.error('Distillation failed:', err);
         } finally {
@@ -207,15 +212,15 @@ export default function BusinessScreen() {
         if (subscriptionCleanup.current) subscriptionCleanup.current();
 
         // WebSocket Migration: We now prefer WS, but kept polling as a safety fallback
-        const unsubscribe = businessAgentService.subscribeToSessionUpdates(id, (update) => {
+        const unsubscribe = businessAgentService.subscribeToSessionUpdates(id, (update: any) => {
             if (update.type === 'session_update') {
-                setActiveSession(prev => prev ? { ...prev, ...update } : update);
-                if (update.status === 'completed' || update.status === 'failed') {
+                setActiveSession(prev => prev ? { ...prev, ...update.payload } : update.payload);
+                if (update.payload?.status === 'completed' || update.payload?.status === 'failed') {
                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                     loadSessions();
                 }
             } else if (update.type === 'handoff_message') {
-                setActiveSession(prev => prev ? { ...prev, messages: update.messages, is_handoff_active: true } : prev);
+                setActiveSession(prev => prev ? { ...prev, messages: update.payload.messages, is_handoff_active: true } : prev);
                 setIsHandoffOpen(true);
             } else if (update.type === 'mission_resumed') {
                 setActiveSession(prev => prev ? { ...prev, status: 'running', is_handoff_active: false } : prev);
@@ -263,7 +268,7 @@ export default function BusinessScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         try {
-            await businessAgentService.castVote(activeSession.id, userVoteId, msgId, agree);
+            await businessAgentService.castVote(activeSession.id, msgId, agree);
         } catch (err) {
             console.error('[Consensus] Vote failed:', err);
             // Revert on error? (Simplified for now)
@@ -607,4 +612,6 @@ const styles = StyleSheet.create({
     voteLabel: { fontSize: 9, fontWeight: 'bold' },
     resumeButton: { height: 50, borderRadius: 25, backgroundColor: '#10b981', justifyContent: 'center', alignItems: 'center' },
     resumeText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+    diagAction: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10, backgroundColor: 'rgba(139, 92, 246, 0.2)', borderWidth: 1, borderColor: 'rgba(139, 92, 246, 0.4)' },
+    diagActionText: { color: '#8b5cf6', fontSize: 12, fontWeight: 'bold' },
 });

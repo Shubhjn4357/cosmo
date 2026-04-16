@@ -6,7 +6,8 @@ output/
 data/
 models/
 uploads/
-
+*.automation
+*.skills
 # Logs and runtime artifacts
 *.log
 *.out

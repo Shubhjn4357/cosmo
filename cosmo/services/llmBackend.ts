@@ -153,7 +153,7 @@ class LLMBackendService {
         }
     }
 
-    private async loadConfigs(): Promise<void> {
+    async loadConfigs(): Promise<void> {
         try {
             const saved = await AsyncStorage.getItem('llm_backend_configs');
             if (saved) {
@@ -192,10 +192,26 @@ class LLMBackendService {
         return this.currentBackend;
     }
 
+    getCurrentBackendType(): LLMBackendType {
+        return this.currentBackend;
+    }
+
+    /**
+     * Legacy alias for complete() used by some hooks
+     */
+    async completionWithFallback(request: CompletionRequest): Promise<CompletionResponse> {
+        return this.complete(request);
+    }
+
     async setCurrentBackend(type: LLMBackendType): Promise<void> {
         if (!this.backends.has(type)) throw new Error(`Unknown backend: ${type}`);
         this.currentBackend = type;
         await this.saveConfigs();
+    }
+
+    getCurrentLocalModelPath(): string | null {
+        const local = this.backends.get('local');
+        return local?.modelPath || null;
     }
 
     async updateBackend(type: LLMBackendType, config: Partial<LLMBackendConfig>): Promise<void> {
@@ -295,7 +311,7 @@ class LLMBackendService {
             prompt,
             n_predict: request.maxTokens ?? 512,
             temperature: request.temperature ?? 0.7,
-            repeat_penalty: 1.1,
+            penalty_repeat: 1.1,
             stop: ['User:', 'System:', '<|im_end|>', '</s>'],
         });
 

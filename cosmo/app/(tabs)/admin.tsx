@@ -12,8 +12,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as DocumentPicker from 'expo-document-picker';
-import { useTheme } from '../../constants/theme';
-import { spacing, fontSize, borderRadius } from '../../constants/theme';
+import { useTheme, spacing, fontSize, borderRadius } from '@/constants/theme';
 import { useToast } from '@/components/Toast';
 
 interface Analytics {
@@ -53,6 +52,20 @@ interface Analytics {
     };
 }
 
+interface AgentStatus {
+    wallet: {
+        address: string;
+        balance: number;
+        network: string;
+        connected: boolean;
+        controller_address?: string;
+    };
+    automation: {
+        running: boolean;
+        interval: number;
+    };
+}
+
 interface DatasetRecord {
     name: string;
     path?: string;
@@ -88,6 +101,9 @@ export default function AdminScreen() {
         vision: true,
     });
     const [showServices, setShowServices] = useState(false);
+    const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
+    const [agentSkills, setAgentSkills] = useState<string[]>([]);
+    const [loadingAgent, setLoadingAgent] = useState(false);
     useEffect(() => {
         void initializeAdmin();
     }, []);
@@ -121,6 +137,7 @@ export default function AdminScreen() {
         await Promise.all([
             fetchAnalytics(),
             fetchDatasets(),
+            fetchAgentStatus(),
         ]);
     };
 
@@ -239,6 +256,84 @@ export default function AdminScreen() {
             if (showLoader) {
                 setDatasetsLoading(false);
             }
+        }
+    };
+
+    const fetchAgentStatus = async () => {
+        try {
+            const token = await AsyncStorage.getItem('adminToken');
+            const [statusRes, skillsRes] = await Promise.all([
+                fetch(`${serverUrl}/api/admin/agent-status`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                }),
+                fetch(`${serverUrl}/api/admin/agent-skills`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                })
+            ]);
+            
+            if (statusRes.ok) {
+                const data = await statusRes.json();
+                setAgentStatus(data);
+            }
+            if (skillsRes.ok) {
+                const data = await skillsRes.json();
+                setAgentSkills(data.skills || []);
+            }
+        } catch (e) {
+            console.error('Failed to fetch agent status:', e);
+        }
+    };
+
+    const toggleAutomation = async () => {
+        if (!agentStatus) return;
+        const targetState = !agentStatus.automation.running;
+        try {
+            const token = await AsyncStorage.getItem('adminToken');
+            const response = await fetch(`${serverUrl}/api/admin/agent-automation/toggle?enabled=${targetState}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (response.ok) {
+                toast.success('Updated', `Automation ${targetState ? 'started' : 'stopped'}`);
+                fetchAgentStatus();
+            }
+        } catch (e) {
+            toast.error('Error', 'Could not toggle automation');
+        }
+    };
+
+    const linkController = async (address: string) => {
+        try {
+            const token = await AsyncStorage.getItem('adminToken');
+            const response = await fetch(`${serverUrl}/api/admin/wallet/link-controller`, {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ address })
+            });
+            if (response.ok) {
+                toast.success('Linked', 'Controller wallet linked to agent');
+                fetchAgentStatus();
+            } else {
+                const data = await response.json();
+                toast.error('Link Failed', data.detail || 'Could not link wallet');
+            }
+        } catch (e) {
+            toast.error('Error', 'Connection failed');
+        }
+    };
+
+    const connectMetaMask = async () => {
+        // Deep link to MetaMask
+        const metamaskUrl = `https://metamask.app.link/dapp/${serverUrl.replace(/^https?:\/\//, '')}/admin`;
+        const { Linking } = require('react-native');
+        const supported = await Linking.canOpenURL(metamaskUrl);
+        if (supported) {
+            await Linking.openURL(metamaskUrl);
+        } else {
+            toast.info('MetaMask', 'Please install MetaMask to connect your wallet');
         }
     };
 
@@ -761,6 +856,76 @@ export default function AdminScreen() {
                     </View>
                 </View>
             </View>
+            
+            {/* Sovereign Agent Dashboard */}
+            <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
+                <View style={styles.cardHeader}>
+                    <Text style={[styles.cardTitle, { color: theme.colors.text, marginBottom: 0 }]}>Sovereign Agent</Text>
+                    <TouchableOpacity onPress={fetchAgentStatus}>
+                        <Ionicons name="refresh" size={20} color={theme.colors.primary} />
+                    </TouchableOpacity>
+                </View>
+                
+                <View style={styles.agentWalletBox}>
+                    <Text style={[styles.hint, { textAlign: 'left', marginTop: 0, color: theme.colors.textSecondary }]}>Agent Wallet (Server-Side)</Text>
+                    <Text style={[styles.walletAddress, { color: theme.colors.text }]}>
+                        {agentStatus?.wallet.address || 'Loading...'}
+                    </Text>
+                    <View style={styles.balanceRow}>
+                        <Text style={[styles.balanceValue, { color: theme.colors.primary }]}>
+                            {agentStatus?.wallet.balance.toFixed(6) || '0.000'} ETH
+                        </Text>
+                        <Text style={[styles.networkBadge, { color: theme.colors.textSecondary }]}>
+                            {agentStatus?.wallet.network.toUpperCase()}
+                        </Text>
+                    </View>
+                    {agentStatus?.wallet.controller_address && (
+                        <View style={styles.controllerLinkInfo}>
+                            <Text style={[styles.hint, { textAlign: 'left', marginBottom: 2, color: theme.colors.textSecondary }]}>Controller Linked:</Text>
+                            <Text style={[styles.walletAddress, { fontSize: 10, color: theme.colors.textSecondary }]}>
+                                {agentStatus.wallet.controller_address}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+
+                <View style={styles.buttonRow}>
+                    <TouchableOpacity
+                        style={[styles.actionButton, styles.buttonFlex, {
+                            backgroundColor: agentStatus?.automation.running ? theme.colors.error : theme.colors.primary
+                        }]}
+                        onPress={toggleAutomation}
+                    >
+                        <Ionicons name={agentStatus?.automation.running ? "stop" : "play"} size={18} color="#fff" />
+                        <Text style={styles.actionButtonText}>
+                            {agentStatus?.automation.running ? 'Stop Loop' : 'Start Loop'}
+                        </Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                        style={[styles.actionButton, styles.buttonFlex, {
+                            backgroundColor: '#F6851B' // MetaMask Orange
+                        }]}
+                        onPress={connectMetaMask}
+                    >
+                        <Ionicons name="wallet-outline" size={18} color="#fff" />
+                        <Text style={styles.actionButtonText}>Link Admin</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {agentSkills.length > 0 && (
+                    <View style={styles.skillsList}>
+                        <Text style={[styles.label, { color: theme.colors.textSecondary, marginBottom: 4 }]}>Active Skills</Text>
+                        <View style={styles.skillsRow}>
+                            {agentSkills.map(skill => (
+                                <View key={skill} style={[styles.skillBadge, { backgroundColor: theme.colors.background }]}>
+                                    <Text style={[styles.skillText, { color: theme.colors.primary }]}>{skill}</Text>
+                                </View>
+                            ))}
+                        </View>
+                    </View>
+                )}
+            </View>
 
             {/* Generator Controls */}
             <View style={[styles.card, { backgroundColor: theme.colors.surface }]}>
@@ -1139,6 +1304,70 @@ const styles = StyleSheet.create({
     toggleButtonText: {
         color: '#FFFFFF',
         fontSize: fontSize.sm,
+        fontWeight: '600',
+    },
+    cardHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: spacing.md,
+    },
+    agentWalletBox: {
+        padding: spacing.md,
+        backgroundColor: 'rgba(0,0,0,0.03)',
+        borderRadius: borderRadius.md,
+        marginBottom: spacing.md,
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.05)',
+    },
+    walletAddress: {
+        fontSize: fontSize.sm,
+        fontFamily: 'monospace',
+        marginVertical: spacing.xs,
+    },
+    balanceRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: spacing.xs,
+    },
+    balanceValue: {
+        fontSize: fontSize.md,
+        fontWeight: 'bold',
+    },
+    networkBadge: {
+        fontSize: fontSize.xs,
+        fontWeight: '600',
+        backgroundColor: 'rgba(0,0,0,0.05)',
+        paddingHorizontal: spacing.xs,
+        borderRadius: 4,
+    },
+    controllerLinkInfo: {
+        marginTop: spacing.sm,
+        paddingTop: spacing.xs,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0,0,0,0.05)',
+    },
+    skillsList: {
+        marginTop: spacing.md,
+        paddingTop: spacing.md,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(0,0,0,0.05)',
+    },
+    skillsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: spacing.xs,
+    },
+    skillBadge: {
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(0,0,0,0.1)',
+    },
+    skillText: {
+        fontSize: fontSize.xs,
         fontWeight: '600',
     },
 });

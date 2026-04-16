@@ -45,10 +45,10 @@ export function MissionVisualizer({ mermaid, tasks }: MissionVisualizerProps) {
         return (
             <Animated.View 
                 entering={FadeIn.duration(800)} 
-                style={[styles.container, { backgroundColor: theme.card, alignItems: 'center', justifyContent: 'center' }]}
+                style={[styles.container, { backgroundColor: theme.colors.surface, alignItems: 'center', justifyContent: 'center' }]}
             >
-                <Ionicons name="git-network-outline" size={32} color={theme.primary} style={{ opacity: 0.2 }} />
-                <Text style={[styles.title, { color: theme.text, marginTop: 12, opacity: 0.4 }]}>STRATEGIZING MISSION TREE...</Text>
+                <Ionicons name="git-network-outline" size={32} color={theme.colors.primary} style={{ opacity: 0.2 }} />
+                <Text style={[styles.title, { color: theme.colors.text, marginTop: 12, opacity: 0.4 }]}>STRATEGIZING MISSION TREE...</Text>
             </Animated.View>
         );
     }
@@ -56,18 +56,18 @@ export function MissionVisualizer({ mermaid, tasks }: MissionVisualizerProps) {
     return (
         <Animated.View 
             entering={FadeIn.duration(800)} 
-            style={[styles.container, { backgroundColor: theme.card }]}
+            style={[styles.container, { backgroundColor: theme.colors.surface }]}
         >
             <View style={styles.header}>
-                <Ionicons name="git-network-outline" size={18} color={theme.primary} />
-                <Text style={[styles.title, { color: theme.text }]}>MISSION STRATEGY TREE</Text>
+                <Ionicons name="git-network-outline" size={18} color={theme.colors.primary} />
+                <Text style={[styles.title, { color: theme.colors.text }]}>MISSION STRATEGY TREE</Text>
             </View>
 
             <View style={styles.treeContainer}>
                 {nodes.map((node, index) => {
                     const task = tasks.find(t => t.id === node.id);
                     const isGoal = node.id.toLowerCase() === 'goal';
-                    const color = isGoal ? theme.primary : (ROLE_COLORS[task?.assigned_to || ''] || theme.secondary);
+                    const color = isGoal ? theme.colors.primary : (ROLE_COLORS[task?.assigned_to || ''] || theme.colors.secondary);
                     const isCompleted = task?.status === 'completed';
 
                     return (
@@ -78,7 +78,7 @@ export function MissionVisualizer({ mermaid, tasks }: MissionVisualizerProps) {
                                 styles.node, 
                                 { 
                                     borderColor: color,
-                                    backgroundColor: isCompleted ? color + '20' : theme.background,
+                                    backgroundColor: isCompleted ? color + '20' : theme.colors.background,
                                     marginLeft: isGoal ? 0 : 40,
                                 }
                             ]}
@@ -96,7 +96,7 @@ export function MissionVisualizer({ mermaid, tasks }: MissionVisualizerProps) {
                             <View style={styles.content}>
                                 <Text 
                                     numberOfLines={1} 
-                                    style={[styles.nodeLabel, { color: theme.text }]}
+                                    style={[styles.nodeLabel, { color: theme.colors.text }]}
                                 >
                                     {node.label}
                                 </Text>

@@ -19,7 +19,7 @@ import { DialogProvider } from '@/components/Dialog';
 // Navigation guard component
 function NavigationGuard({ children }: { children: React.ReactNode }) {
     const { isLoading, isAuthenticated, hasCompletedOnboarding, hasGivenConsent } = useAuth();
-    const segments = useSegments();
+    const segments = useSegments() as string[];
     const router = useRouter();
     const { theme } = useTheme();
 

@@ -28,7 +28,7 @@ export interface HordeChatParams {
   max_tokens?: number;
   temperature?: number;
   character_id?: string;
-  conversation_history?: Array<{ role: string; content: string }>;
+  conversation_history?: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>;
 }
 
 export interface HordeModel {

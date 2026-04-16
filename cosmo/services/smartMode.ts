@@ -18,12 +18,18 @@ export interface SmartDecision {
     reason: string;
 }
 
+export type SmartModelSelection = SmartDecision;
+
+export async function selectBestTextModel(message: string, _requireSpeed: boolean = false): Promise<SmartDecision> {
+    return getSmartDecision(message);
+}
+
 /**
  * Main selection logic
  */
-export async function getSmartDecision(message: string): Promise<SmartDecision> {
+export async function getSmartDecision(message: string, _requireSpeed: boolean = false): Promise<SmartDecision> {
     const isOnline = getIsOnline();
-    const isLocalModelReady = await localLLM.isReady();
+    const isLocalModelReady = localLLM.isLoaded();
 
     // 1. Basic check: If offline, MUST use local
     if (!isOnline) {

@@ -24,7 +24,7 @@ import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useM3Colors, M3_RADIUS, M3_SPACING, createGlassStyle } from '@/constants/material3';
-import { SPRING_CONFIGS } from '@/constants/animations';
+import { REANIMATED_SPRING_CONFIGS } from '@/constants/animations';
 import { useTheme } from '@/constants/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -55,7 +55,7 @@ export function Drawer({
   useEffect(() => {
     if (visible) {
       opacity.value = withTiming(1, { duration: 200 });
-      translateY.value = withSpring(0, SPRING_CONFIGS.bouncy);
+      translateY.value = withSpring(0, REANIMATED_SPRING_CONFIGS.bouncy);
     } else {
       opacity.value = withTiming(0, { duration: 150 });
       translateY.value = withTiming(height, { duration: 250 });

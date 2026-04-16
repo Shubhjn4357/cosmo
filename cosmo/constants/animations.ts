@@ -120,3 +120,42 @@ export function entranceAnimation(
         }),
     ]);
 }
+
+// --- Multi-Component Sync ---
+
+export const SPRING_CONFIGS = {
+    standard: SPRING_SNAPPY,
+    gentle: SPRING_GENTLE,
+    bouncy: SPRING_BOUNCY,
+    snappy: SPRING_SNAPPY,
+};
+
+export const M3_DURATIONS = {
+    short1: 50,
+    short2: 100,
+    short3: 150,
+    short4: 200,
+    medium1: 250,
+    medium2: 300,
+    medium3: 350,
+    medium4: 400,
+    long1: 450,
+    long2: 500,
+};
+
+export const ANIMATIONS = {
+    fadeIn,
+    fadeOut,
+    slideUp,
+    scalePop,
+    pulseLoop,
+    tapScale: { to: 0.96 },
+    shimmer: { from: 0, to: 1, duration: 1200 },
+};
+
+export const REANIMATED_SPRING_CONFIGS = {
+    standard: { stiffness: 100, damping: 10 },
+    gentle: { stiffness: 60, damping: 14 },
+    bouncy: { stiffness: 150, damping: 8 },
+    snappy: { stiffness: 200, damping: 20 },
+};

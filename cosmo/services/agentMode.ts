@@ -152,7 +152,7 @@ class AgentModeService {
     async refreshTask(sessionId: string): Promise<CosmoAgentTask> {
         const response = await cosmoAPI.getAgentSession(sessionId);
         const task: CosmoAgentTask = {
-            sessionId: response.id,
+            sessionId: response.session_id,
             prompt: response.goal || '',
             status: response.status,
             backend: (response.backend_resolved || 'server') as CosmoAgentBackend,
@@ -206,7 +206,7 @@ class AgentModeService {
     async cancelTask(sessionId: string): Promise<CosmoAgentTask> {
         const response = await cosmoAPI.cancelAgentSession(sessionId);
         const task: CosmoAgentTask = {
-            sessionId: response.id,
+            sessionId: response.session_id,
             prompt: response.goal || '',
             status: response.status,
             backend: (response.backend_resolved || 'server') as CosmoAgentBackend,

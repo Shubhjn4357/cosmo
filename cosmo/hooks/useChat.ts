@@ -233,7 +233,7 @@ async function buildKnowledgeContext(query: string) {
     if (!normalized) return '';
 
     try {
-        const results = await CosmoAPI.searchKnowledge(normalized, 5);
+        const results = await cosmoAPI.searchKnowledge(normalized, 5);
         if (!results.length) return '';
 
         const snippets = results.slice(0, 4).map((result, index) => (
@@ -303,7 +303,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             let loadedHistories: ChatHistory[] = [];
 
             if (user?.id) {
-                const { success, histories } = await CosmoAPI.getChatHistories(user.id);
+                const { success, histories } = await cosmoAPI.getChatHistories(user.id);
                 if (success) {
                     loadedHistories = histories.map(normalizeHistory);
                 }
@@ -348,12 +348,12 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
             try {
                 const payloadMessages = serializeMessages(normalizedMessages);
                 if (resolvedChatId) {
-                    await CosmoAPI.updateChatHistory(resolvedChatId, {
+                    await cosmoAPI.updateChatHistory(resolvedChatId, {
                         title,
                         messages: payloadMessages,
                     });
                 } else {
-                    const response = await CosmoAPI.createChatHistory(user.id, title, payloadMessages);
+                    const response = await cosmoAPI.createChatHistory(user.id, title, payloadMessages);
                     if (response.success && response.id) {
                         resolvedChatId = response.id;
                         setCurrentChatId(response.id);
@@ -400,7 +400,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
         animateMessage();
 
         try {
-            const response = await CosmoAPI.generateImage({
+            const response = await cosmoAPI.generateImage({
                 prompt: normalizedPrompt,
                 negativePrompt: DEFAULT_IMAGE_NEGATIVE_PROMPT,
                 modelId,
@@ -663,7 +663,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                             throw new Error('Could not read the selected image.');
                         }
 
-                        const response = await CosmoAPI.chatSelfLearner({
+                        const response = await cosmoAPI.chatSelfLearner({
                             message: trimmedInput || 'Describe this image, learn it, and use it in future multimodal reasoning.',
                             history,
                             context: conversationContext,
@@ -691,7 +691,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                             trimmedInput || 'Summarize this document and tell me what it contains.',
                             effectiveSystemPrompt ? `Use this response style:\n${effectiveSystemPrompt}` : '',
                         ].filter(Boolean).join('\n\n');
-                        const response = await CosmoAPI.analyzeFile(
+                        const response = await cosmoAPI.analyzeFile(
                             { uri: selectedFile.uri, name: selectedFile.name, type: selectedFile.type },
                             question
                         );
@@ -727,7 +727,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
 
                 try {
                     if (useModel === 'self-learner') {
-                        const response = await CosmoAPI.chatSelfLearner({
+                        const response = await cosmoAPI.chatSelfLearner({
                             message: selfLearnerUnifiedImageRequest ? extractImagePrompt(userMessage.text) : userMessage.text,
                             history,
                             context: conversationContext,
@@ -751,7 +751,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                         } else if (useModel === 'cloud') {
                             await LLMBackendService.setCurrentBackend('gemini');
                         } else {
-                            await LLMBackendService.setCurrentBackend('Cosmo_server');
+                            await LLMBackendService.setCurrentBackend('cosmo_server');
                         }
 
                         const stream = LLMBackendService.stream({
@@ -790,7 +790,7 @@ export function useChat(options: UseChatOptions = {}): UseChatReturn {
                             ? streamError.message
                             : 'Self-learner runtime is not ready yet.';
                     } else {
-                        const response: ChatResponse = await CosmoAPI.chat({
+                        const response: ChatResponse = await cosmoAPI.chat({
                             message: userMessage.text,
                             useRAG: useRag,
                             context: conversationContext,

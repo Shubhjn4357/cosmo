@@ -82,6 +82,13 @@
             <span>Return to Chat</span>
           </a>
 
+          <button class="nav-button" type="button" data-section-target="section-wallet">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>
+            <span>Sovereign Wallet</span>
+          </button>
+        </div>
+      </div>
+
       <div class="sidebar-footer">
         <div class="footer-status">
           <div class="pulse-dot"></div>
@@ -253,6 +260,62 @@
               <div class="terminal-title">cosmo-server.log</div>
             </div>
             <pre id="systemLogConsole" class="terminal-content">Initializing log stream...</pre>
+          </div>
+        </section>
+
+        <!-- SOVEREIGN WALLET SECTION -->
+        <section id="section-wallet" class="section-shell content-section" style="display:none;">
+          <div class="section-heading">
+            <div>
+              <h3>Sovereign AI Wallet</h3>
+              <p>Autonomous earning and on-chain identity management.</p>
+            </div>
+            <div class="toolbar-actions">
+              <button id="refreshWalletBtn" class="secondary glass">Sync Chain</button>
+            </div>
+          </div>
+          <div class="section-grid two-up">
+            <div class="panel glass box-glow">
+              <div class="panel-header">
+                <div>
+                  <h2>Agent Identity</h2>
+                  <p>In-process sovereign wallet held in encrypted storage.</p>
+                </div>
+              </div>
+              <div class="stack">
+                <div class="info-row">
+                  <span>Address</span>
+                  <code id="agentWalletAddress" class="meta-code">...</code>
+                </div>
+                <div class="info-row">
+                  <span>Native Balance (ETH)</span>
+                  <h1 id="agentWalletBalance" class="hero-value">0.0000</h1>
+                </div>
+                <div class="info-row">
+                    <span>Network</span>
+                    <span id="agentWalletNetwork" class="pill status-ok">Base Mainnet</span>
+                </div>
+              </div>
+            </div>
+            <div class="panel glass">
+              <div class="panel-header">
+                <div>
+                  <h2>Controller Linkage</h2>
+                  <p>Authorize your Metamask to oversee autonomous operations.</p>
+                </div>
+              </div>
+              <div class="stack">
+                <button id="connectMetamaskBtn" class="primary-btn pulse-glow">Connect Metamask</button>
+                <div id="metamaskStatus" class="meta" style="margin-top:10px;">No wallet connected</div>
+                <div id="controllerLinkRow" style="display:none; margin-top:20px;">
+                    <div class="info-row">
+                        <span>Current Controller</span>
+                        <code id="currentControllerAddr" class="meta-code">Not Linked</code>
+                    </div>
+                    <button id="linkControllerBtn" class="secondary glass" style="width:100%; margin-top:10px;">Link Connected Wallet</button>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
