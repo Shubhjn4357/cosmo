@@ -142,30 +142,24 @@ android {
 }
 
 // Apply static values from `gradle.properties` to the `android.packaging`
-// Accepts values in comma delimited lists, example:
-// android.packaging.resources.pickFirsts=/LICENSE,**/picasa.ini
-["pickFirsts", "excludes", "merges"].each { prop ->
-    def options = (findProperty("android.packagingOptions.$prop") ?: "").split(",");
-    for (i in 0..<options.size()) options[i] = options[i].trim();
-    options -= ""
-
-    if (options.length > 0) {
-        println "android.packaging.resources.$prop += $options ($options.length)"
-        options.each {
-            android.packaging.resources[prop] += it
+// Example: android.packaging.pickFirsts=**/libc++_shared.so
+android {
+    packaging {
+        resources {
+            (findProperty("android.packaging.pickFirsts") ?: "").split(",").each {
+                if (it.trim()) pickFirsts += it.trim()
+            }
+            (findProperty("android.packaging.excludes") ?: "").split(",").each {
+                if (it.trim()) excludes += it.trim()
+            }
+            (findProperty("android.packaging.merges") ?: "").split(",").each {
+                if (it.trim()) merges += it.trim()
+            }
         }
-    }
-}
-
-["doNotStrip"].each { prop ->
-    def options = (findProperty("android.packagingOptions.$prop") ?: "").split(",");
-    for (i in 0..<options.size()) options[i] = options[i].trim();
-    options -= ""
-
-    if (options.length > 0) {
-        println "android.packaging.jniLibs.$prop += $options ($options.length)"
-        options.each {
-            android.packaging.jniLibs[prop] += it
+        jniLibs {
+            (findProperty("android.packaging.doNotStrip") ?: "").split(",").each {
+                if (it.trim()) keepDebugSymbols += it.trim()
+            }
         }
     }
 }
