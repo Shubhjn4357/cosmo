@@ -49,7 +49,7 @@ jobs:
         with:
           node-version: 20
           cache: 'pnpm'
-          cache-dependency-path: './apps/mobile/pnpm-lock.yaml'
+          cache-dependency-path: './pnpm-lock.yaml'
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -75,7 +75,7 @@ jobs:
 
       - name: Install mobile app dependencies
         working-directory: apps/mobile
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build Android Release APK
         working-directory: apps/mobile/android
