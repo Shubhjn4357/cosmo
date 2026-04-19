@@ -100,7 +100,7 @@ android {
     defaultConfig {
         applicationId 'com.cosmo.ai'
         minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
+        targetSdk rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "3.5.0"
 
