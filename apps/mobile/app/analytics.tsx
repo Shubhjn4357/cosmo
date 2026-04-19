@@ -217,7 +217,7 @@ export default function AnalyticsScreen() {
                             Requests Over Time
                         </Text>
                         <BarChart
-                            data={usageData.requests_by_day.map((d) => ({
+                            data={usageData.requests_by_day.map((d: { date: string; count: number }) => ({
                                 label: new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' }),
                                 value: d.count,
                             }))}
@@ -233,7 +233,7 @@ export default function AnalyticsScreen() {
                             Token Usage Over Time
                         </Text>
                         <BarChart
-                            data={tokenData.tokens_by_day.map((d) => ({
+                            data={tokenData.tokens_by_day.map((d: { date: string; tokens: number }) => ({
                                 label: new Date(d.date).toLocaleDateString('en-US', { weekday: 'short' }),
                                 value: d.tokens,
                             }))}
@@ -249,7 +249,7 @@ export default function AnalyticsScreen() {
                             Tokens by Feature
                         </Text>
                         <View style={styles.featureList}>
-                            {tokenData.tokens_by_feature.map((feature, index: number) => (
+                            {tokenData.tokens_by_feature.map((feature: { feature: string; tokens: number }, index: number) => (
                                 <View key={index} style={styles.featureRow}>
                                     <View style={styles.featureInfo}>
                                         <Text style={[styles.featureName, { color: theme.colors.text }]}>

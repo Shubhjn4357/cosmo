@@ -122,7 +122,7 @@ export function useAIRuntime() {
         return {
             ...DEFAULT_AI_RUNTIME,
             isReady: false,
-            isFreeMode: DEFAULT_AI_RUNTIME.mode !== 'cloud',
+            isFreeMode: (DEFAULT_AI_RUNTIME.mode as ModelType) !== 'cloud',
             setMode: async () => {},
             cycleMode: async () => DEFAULT_AI_RUNTIME.mode,
             setCloudModel: async () => {},

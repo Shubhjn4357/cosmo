@@ -45,12 +45,6 @@ Pipfile.lock
 apps/mobile/.expo/
 apps/mobile/.expo-shared/
 apps/mobile/dist/
-apps/mobile/web-build/
-apps/mobile/android/.gradle/
-apps/mobile/android/build/
-apps/mobile/android/app/build/
-apps/mobile/ios/build/
-apps/mobile/ios/Pods/
 *.apk
 *.aab
 *.p12

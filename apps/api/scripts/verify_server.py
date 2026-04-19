@@ -52,7 +52,7 @@ def verify_imports():
                 print(f"  [SKIP] {pkg} (directory not found)")
                 continue
                 
-            optional_deps = ["google", "cryptography", "bs4", "faiss", "psutil", "torch", "sse_starlette", "openai"]
+            optional_deps = ["google", "cryptography", "bs4", "faiss", "psutil", "torch", "sse_starlette", "openai", "web3", "eth_account"]
             for _, name, is_pkg in pkgutil.walk_packages([pkg_path], prefix=f"{pkg}."):
                 try:
                     importlib.import_module(name)

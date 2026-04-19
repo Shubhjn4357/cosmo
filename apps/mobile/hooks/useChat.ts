@@ -108,15 +108,15 @@ function serializeMessages(messages: Message[]): RawMessage[] {
 }
 
 function buildHistoryTitle(historyMessages: Message[]) {
-    const firstUserMessage = historyMessages.find((message) => message.isUser && message.text.trim());
+    const firstUserMessage = historyMessages.find((message: Message) => message.isUser && message.text.trim());
     if (firstUserMessage) return truncate(firstUserMessage.text.trim().replace(/\s+/g, ' '), 60);
-    const fallback = historyMessages.find((message) => message.text.trim());
+    const fallback = historyMessages.find((message: Message) => message.text.trim());
     return truncate(fallback?.text.trim().replace(/\s+/g, ' ') || 'Chat', 60);
 }
 
 function historySignature(history: ChatHistory) {
-    const firstUser = history.messages.find((message) => message.isUser)?.text.trim().toLowerCase() || '';
-    const firstAssistant = history.messages.find((message) => !message.isUser)?.text.trim().toLowerCase() || '';
+    const firstUser = history.messages.find((message: Message) => message.isUser)?.text.trim().toLowerCase() || '';
+    const firstAssistant = history.messages.find((message: Message) => !message.isUser)?.text.trim().toLowerCase() || '';
     return `${firstUser.slice(0, 80)}::${firstAssistant.slice(0, 80)}::${history.messages.length}`;
 }
 

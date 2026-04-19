@@ -107,7 +107,7 @@ export function ChatHistoryDrawer({
         if (!query) return histories;
         return histories.filter((history) => (
             history.title.toLowerCase().includes(query)
-            || history.messages.some((message) => message.text.toLowerCase().includes(query))
+            || history.messages.some((message: { text: string }) => message.text.toLowerCase().includes(query))
         ));
     }, [histories, searchQuery]);
 
@@ -188,7 +188,7 @@ export function ChatHistoryDrawer({
                                     <Text style={[styles.groupTitle, { color: theme.colors.textMuted }]}>{group}</Text>
                                     {entries.map((history) => {
                                         const preview = history.messages
-                                            .filter((message) => message.isUser)
+                                            .filter((message: { isUser: boolean; text: string }) => message.isUser)
                                             .slice(-1)[0]?.text
                                             || history.messages.slice(-1)[0]?.text
                                             || 'No preview';

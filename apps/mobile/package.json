@@ -17,6 +17,8 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@cosmo/types": "workspace:*",
+    "@cosmo/constants": "workspace:*",
     "@expo/vector-icons": "^15.0.3",
     "@huggingface/inference": "^4.13.5",
     "@react-native-async-storage/async-storage": "^2.2.0",

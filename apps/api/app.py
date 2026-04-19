@@ -3,8 +3,10 @@ import sys
 import time
 
 # Total stream synchronization
-sys.stdout.reconfigure(line_buffering=True)  # type: ignore
-sys.stderr.reconfigure(line_buffering=True)  # type: ignore
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)  # type: ignore
 
 
 def _prebind_delay_seconds() -> float:

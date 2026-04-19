@@ -15,7 +15,9 @@
       "@/services": ["./services"],
       "@/services/*": ["./services/*"],
       "@/utils": ["./utils"],
-      "@/utils/*": ["./utils/*"]
+      "@/utils/*": ["./utils/*"],
+      "@cosmo/types": ["../../packages/types/src"],
+      "@cosmo/constants": ["../../packages/constants/src"]
     }
   },
   "extends": "expo/tsconfig.base",

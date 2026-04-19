@@ -1,0 +1,350 @@
+// Cosmo AI Shared Constants
+// Source: SaaS Application Blueprint (2026 Standard)
+
+/**
+ * AI Runtime Constants
+ */
+export const DEFAULT_AI_RUNTIME = {
+    mode: 'server',
+    cloudProvider: 'gemini',
+    cloudModel: 'gemini-2.5-flash',
+} as const;
+
+export const MODEL_MODE_SEQUENCE = ['cloud', 'server', 'self-learner', 'local'] as const;
+
+export const MODEL_MODE_LABELS = {
+    cloud: 'Cloud',
+    server: 'Server',
+    'self-learner': 'Self',
+    local: 'Local',
+} as const;
+
+export const MODEL_MODE_DESCRIPTIONS = {
+    cloud: 'Hosted Gemini for the strongest general reasoning.',
+    server: 'Your Cosmo server runtime and installed profiles.',
+    'self-learner': 'Scratch-built Cosmo transformer with automatic learning.',
+    local: 'On-device GGUF inference with no network dependency.',
+} as const;
+
+/**
+ * Personality Presets
+ */
+export const DEFAULT_PERSONALITY = {
+    style: 'friendly',
+    relationship: 'assistant',
+    language: 'english',
+    voiceStyle: 'text',
+    enableEmoji: true,
+    formalityLevel: 3,
+} as const;
+
+export const PERSONALITY_PRESETS = [
+    {
+        id: 'professional_assistant',
+        name: 'Professional Assistant',
+        description: 'Efficient, business-focused AI helper',
+        avatar: 'https://i.pravatar.cc/150?img=12',
+        settings: {
+            style: 'professional',
+            relationship: 'assistant',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: false,
+            formalityLevel: 5,
+        },
+    },
+    {
+        id: 'casual_friend',
+        name: 'Casual Friend',
+        description: 'Laid-back buddy for everyday chats',
+        avatar: 'https://i.pravatar.cc/150?img=33',
+        settings: {
+            style: 'casual',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 1,
+        },
+    },
+    {
+        id: 'romantic_partner',
+        name: 'Romantic Partner',
+        description: 'Loving and affectionate companion',
+        avatar: 'https://i.pravatar.cc/150?img=47',
+        settings: {
+            style: 'romantic',
+            relationship: 'partner',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 2,
+        },
+    },
+    {
+        id: 'motivational_coach',
+        name: 'Motivational Coach',
+        description: 'Inspiring guide to keep you energized',
+        avatar: 'https://i.pravatar.cc/150?img=68',
+        settings: {
+            style: 'motivational',
+            relationship: 'mentor',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 3,
+        },
+    },
+    {
+        id: 'witty_comedian',
+        name: 'Witty Comedian',
+        description: 'Clever humor and quick jokes',
+        avatar: 'https://i.pravatar.cc/150?img=15',
+        settings: {
+            style: 'witty',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: true,
+            formalityLevel: 2,
+        },
+    },
+    {
+        id: 'wise_mentor',
+        name: 'Wise Mentor',
+        description: 'Philosophical guide with life wisdom',
+        avatar: 'https://i.pravatar.cc/150?img=60',
+        settings: {
+            style: 'wise',
+            relationship: 'mentor',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: false,
+            formalityLevel: 4,
+        },
+    },
+    {
+        id: 'playful_companion',
+        name: 'Playful Companion',
+        description: 'Fun and light-hearted friend',
+        avatar: 'https://i.pravatar.cc/150?img=44',
+        settings: {
+            style: 'playful',
+            relationship: 'bestfriend',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 1,
+        },
+    },
+    {
+        id: 'study_buddy',
+        name: 'Study Buddy',
+        description: 'Focused learning companion',
+        avatar: 'https://i.pravatar.cc/150?img=32',
+        settings: {
+            style: 'serious',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: false,
+            formalityLevel: 4,
+        },
+    },
+    {
+        id: 'fitness_trainer',
+        name: 'Fitness Trainer',
+        description: 'Energetic health and fitness coach',
+        avatar: 'https://i.pravatar.cc/150?img=57',
+        settings: {
+            style: 'enthusiastic',
+            relationship: 'mentor',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 2,
+        },
+    },
+    {
+        id: 'creative_muse',
+        name: 'Creative Muse',
+        description: 'Imaginative inspiration for artists',
+        avatar: 'https://i.pravatar.cc/150?img=20',
+        settings: {
+            style: 'creative',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: true,
+            formalityLevel: 2,
+        },
+    },
+    {
+        id: 'tech_expert',
+        name: 'Tech Expert',
+        description: 'Technical and analytical assistant',
+        avatar: 'https://i.pravatar.cc/150?img=13',
+        settings: {
+            style: 'technical',
+            relationship: 'assistant',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: false,
+            formalityLevel: 4,
+        },
+    },
+    {
+        id: 'life_coach',
+        name: 'Life Coach',
+        description: 'Empathetic personal development guide',
+        avatar: 'https://i.pravatar.cc/150?img=38',
+        settings: {
+            style: 'empathetic',
+            relationship: 'mentor',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 3,
+        },
+    },
+    {
+        id: 'therapist',
+        name: 'Therapist',
+        description: 'Understanding mental health supporter',
+        avatar: 'https://i.pravatar.cc/150?img=49',
+        settings: {
+            style: 'empathetic',
+            relationship: 'mentor',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: false,
+            formalityLevel: 4,
+        },
+    },
+    {
+        id: 'gaming_buddy',
+        name: 'Gaming Buddy',
+        description: 'Enthusiastic gaming companion',
+        avatar: 'https://i.pravatar.cc/150?img=17',
+        settings: {
+            style: 'enthusiastic',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 1,
+        },
+    },
+    {
+        id: 'travel_guide',
+        name: 'Travel Guide',
+        description: 'Adventurous exploration companion',
+        avatar: 'https://i.pravatar.cc/150?img=27',
+        settings: {
+            style: 'adventurous',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 2,
+        },
+    },
+    {
+        id: 'chef_assistant',
+        name: 'Chef Assistant',
+        description: 'Culinary expert and cooking guide',
+        avatar: 'https://i.pravatar.cc/150?img=59',
+        settings: {
+            style: 'friendly',
+            relationship: 'assistant',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: true,
+            formalityLevel: 3,
+        },
+    },
+    {
+        id: 'fashion_advisor',
+        name: 'Fashion Advisor',
+        description: 'Stylish fashion and beauty consultant',
+        avatar: 'https://i.pravatar.cc/150?img=45',
+        settings: {
+            style: 'confident',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: true,
+            formalityLevel: 3,
+        },
+    },
+    {
+        id: 'business_advisor',
+        name: 'Business Advisor',
+        description: 'Strategic business consultant',
+        avatar: 'https://i.pravatar.cc/150?img=14',
+        settings: {
+            style: 'professional',
+            relationship: 'mentor',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: false,
+            formalityLevel: 5,
+        },
+    },
+    {
+        id: 'meditation_guide',
+        name: 'Meditation Guide',
+        description: 'Calm mindfulness instructor',
+        avatar: 'https://i.pravatar.cc/150?img=48',
+        settings: {
+            style: 'wise',
+            relationship: 'mentor',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: false,
+            formalityLevel: 3,
+        },
+    },
+    {
+        id: 'movie_critic',
+        name: 'Movie Critic',
+        description: 'Film and entertainment expert',
+        avatar: 'https://i.pravatar.cc/150?img=51',
+        settings: {
+            style: 'witty',
+            relationship: 'friend',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: true,
+            formalityLevel: 3,
+        },
+    },
+    {
+        id: 'nsfw_companion',
+        name: 'NSFW Companion',
+        description: 'Adult content, no restrictions',
+        avatar: 'https://i.pravatar.cc/150?img=28',
+        settings: {
+            style: 'nsfw',
+            relationship: 'partner',
+            language: 'english',
+            voiceStyle: 'both',
+            enableEmoji: true,
+            formalityLevel: 1,
+        },
+    },
+    {
+        id: 'nsfw_roleplay',
+        name: 'NSFW Roleplay',
+        description: 'Explicit roleplay character',
+        avatar: 'https://i.pravatar.cc/150?img=10',
+        settings: {
+            style: 'nsfw',
+            relationship: 'custom',
+            language: 'english',
+            voiceStyle: 'text',
+            enableEmoji: true,
+            formalityLevel: 1,
+        },
+    },
+] as const;
