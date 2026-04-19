@@ -31,13 +31,24 @@ env/
 
 # Node / Expo / React Native artifacts
 **/node_modules/
-cosmo/.expo/
-cosmo/.expo-shared/
-cosmo/dist/
-cosmo/web-build/
-cosmo/android/.gradle/
-cosmo/android/app/build/
-cosmo/ios/build/
+apps/mobile/.expo/
+apps/mobile/.expo-shared/
+apps/mobile/dist/
+apps/mobile/web-build/
+# apps/mobile/android/.gradle/
+# apps/mobile/android/build/
+# apps/mobile/android/app/build/
+apps/mobile/ios/build/
+apps/mobile/ios/Pods/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.secret
+
 
 # Editor and OS noise
 .DS_Store

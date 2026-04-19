@@ -6,9 +6,9 @@ on:
       - main
     paths:
       - .github/workflows/image-encoder-space.yml
-      - image-encoder/**
-      - cosmo-ai/.env.example
-      - cosmo-ai/native/**
+      - apps/image-encoder/**
+      - apps/api/.env.example
+      - apps/api/native/**
   workflow_dispatch:
 
 permissions:
@@ -36,8 +36,8 @@ jobs:
       - name: Validate Space payload
         run: |
           set -euo pipefail
-          test -f image-encoder/README.md
-          test -f image-encoder/Dockerfile
+          test -f apps/image-encoder/README.md
+          test -f apps/image-encoder/Dockerfile
 
       - name: Configure git
         run: |
@@ -48,16 +48,16 @@ jobs:
         id: subtree
         run: |
           set -euo pipefail
-          split_sha="$(git subtree split --prefix=image-encoder HEAD)"
+          split_sha="$(git subtree split --prefix=apps/image-encoder HEAD)"
           echo "sha=$split_sha" >> "$GITHUB_OUTPUT"
 
       - name: Resolve image-encoder Space URL
         id: image-encoder-space
         run: |
           set -euo pipefail
-          space_url="$(grep -E '^(IMAGE_ENCODER_URL|HF_IMAGE_ENCODER_ID)=' cosmo-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
+          space_url="$(grep -E '^(IMAGE_ENCODER_URL|HF_IMAGE_ENCODER_ID)=' apps/api/.env.example | head -n 1 | cut -d '=' -f 2-)"
           if [ -z "$space_url" ]; then
-             echo "IMAGE_ENCODER_URL is not set in cosmo-ai/.env.example — Using fallback"
+             echo "IMAGE_ENCODER_URL is not set in apps/api/.env.example — Using fallback"
              space_url="https://shubhjn-cosmo-image-encoder.hf.space"
           fi
           echo "url=$space_url" >> "$GITHUB_OUTPUT"

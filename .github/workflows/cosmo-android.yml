@@ -1,30 +1,30 @@
 name: Cosmo Android
 
 on:
+  release:
+    types: [published]
   push:
     paths:
       - .github/workflows/cosmo-android.yml
-      - cosmo/**
+      - apps/mobile/**
   pull_request:
     paths:
       - .github/workflows/cosmo-android.yml
-      - cosmo/**
+      - apps/mobile/**
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apks:
-    name: Build Debug And Signed Release APKs
+    name: Build Split Release APKs
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
       CI: "1"
       EXPO_NO_TELEMETRY: "1"
       EXPO_USE_PNPM: "1"
-      COSMO_ANDROID_CI_ABIS: arm64-v8a
-      ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
 
     steps:
@@ -49,7 +49,7 @@ jobs:
         with:
           node-version: 20
           cache: 'pnpm'
-          cache-dependency-path: './cosmo/pnpm-lock.yaml'
+          cache-dependency-path: './apps/mobile/pnpm-lock.yaml'
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -67,41 +67,29 @@ jobs:
 
       - name: Accept all Android licenses (Fallback)
         run: |
-          # Try both PATH and absolute path
           yes | sdkmanager --licenses || true
           if [ -d "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" ]; then
             yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
           fi
-          # Diagnostics
           sdkmanager --list_installed || true
 
       - name: Install mobile app dependencies
-        working-directory: cosmo
+        working-directory: apps/mobile
         run: pnpm install --frozen-lockfile
 
-      - name: Build Android APKs
-        working-directory: cosmo
-        run: bash scripts/ci/build-android-apks.sh
+      - name: Build Android Split APKs
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cosmo-android-apks-${{ github.run_number }}
           retention-days: 14
-          path: |
-            cosmo/artifacts/android/cosmo-debug.apk
-            cosmo/artifacts/android/cosmo-release-signed.apk
-            cosmo/artifacts/android/build-metadata.json
-            cosmo/artifacts/android/signing-summary.txt
+          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
 
-      - name: Upload signing materials
-        uses: actions/upload-artifact@v4
+      - name: Publish to GitHub Release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          name: cosmo-android-signing-materials-${{ github.run_number }}
-          retention-days: 14
-          path: |
-            cosmo/artifacts/android/keystores/debug.keystore
-            cosmo/artifacts/android/keystores/release.keystore
-            cosmo/artifacts/android/credentials/generated-key.properties
-            cosmo/artifacts/android/credentials/debug-key-info.txt
-            cosmo/artifacts/android/credentials/release-key-info.txt
+          files: apps/mobile/android/app/build/outputs/apk/release/*.apk

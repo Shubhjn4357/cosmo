@@ -1,1 +1,0 @@
-# Cosmo AI - API Routes

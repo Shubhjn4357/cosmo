@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0a0a0f;
+  --color-surface: #12121a;
+  --color-surface2: #1a1a28;
+  --color-border: #2a2a3d;
+  --color-text: #f0f0ff;
+  --color-text2: #a0a0c0;
+  --color-text3: #606080;
+  --color-primary: #8b5cf6;
+  --color-cyan: #06b6d4;
+  --color-green: #10b981;
+  --color-error: #ef4444;
+
+  --radius-premium: 14px;
+
+  --font-outfit: "Outfit", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --animate-fade-up: fadeUp 0.25s ease forwards;
+  --animate-pulse-glow: pulseGlow 2s infinite;
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+    50% { box-shadow: 0 0 20px 0 rgba(139, 92, 246, 0.6); }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-text font-outfit;
+    background-image: radial-gradient(circle at 50% -20%, #1e1b4b 0%, transparent 50%);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-surface border border-border backdrop-blur-md;
+  }
+  
+  .glass-input {
+    @apply bg-surface2 border border-border rounded-lg text-text px-4 py-2 focus:border-primary outline-none transition-all;
+  }
+  
+  .primary-btn {
+    @apply bg-primary text-white font-semibold py-3 px-6 rounded-lg hover:opacity-90 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2;
+  }
+  
+  .secondary-btn {
+    @apply bg-surface2 border border-border text-text font-semibold py-3 px-6 rounded-lg hover:bg-border transition-all flex items-center justify-center gap-2;
+  }
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a3d; border-radius: 3px; }

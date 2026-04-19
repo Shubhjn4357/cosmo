@@ -6,8 +6,8 @@ on:
       - main
     paths:
       - .github/workflows/cosmo-ai-space.yml
-      - cosmo-ai/**
-      - cosmo-ai/native/**
+      - apps/api/**
+      - apps/api/native/**
   workflow_dispatch:
 
 permissions:
@@ -35,29 +35,29 @@ jobs:
       - name: Validate Space payload
         run: |
           set -euo pipefail
-          test -f cosmo-ai/README.md
-          test -f cosmo-ai/Dockerfile
+          test -f apps/api/README.md
+          test -f apps/api/Dockerfile
           # Ensure the native directory was successfully integrated
-          test -d cosmo-ai/native
+          test -d apps/api/native
 
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Build clean cosmo-ai deployment repo
+      - name: Build clean apps/api deployment repo
         id: deployment_repo
         run: |
           set -euo pipefail
           repo_dir="$(mktemp -d)"
-          cp -a cosmo-ai/. "$repo_dir/"
+          cp -a apps/api/. "$repo_dir/"
           (
             cd "$repo_dir"
             git init -b main
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .
-            git commit -m "Deploy cosmo-ai from ${GITHUB_SHA}"
+            git commit -m "Deploy apps/api from ${GITHUB_SHA}"
           )
           echo "path=$repo_dir" >> "$GITHUB_OUTPUT"
 
@@ -66,7 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           # Fallback to cosmo key if cosmo not yet set in example env
-          space_url="$(grep -E '^(COSMO_AI_URL|HF_SPACE_ID)=' cosmo-ai/.env.example | head -n 1 | cut -d '=' -f 2-)"
+          space_url="$(grep -E '^(COSMO_AI_URL|HF_SPACE_ID)=' apps/api/.env.example | head -n 1 | cut -d '=' -f 2-)"
           if [ -z "$space_url" ]; then
             space_url="https://shubhjn-cosmo-ai.hf.space"
           fi
