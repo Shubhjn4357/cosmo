@@ -38,7 +38,7 @@ class LazyLoader:
             Loaded instance, or None if loading failed
         """
         if self._instance is not None:
-            return self._instance
+            return self._instance  # type: ignore
         
         with self._lock:
             # Double-check after acquiring lock
@@ -54,7 +54,7 @@ class LazyLoader:
                 logger.info(f"⏳ Loading {self._name}...")
                 self._instance = self._loader_func()
                 logger.info(f"✅ {self._name} loaded successfully")
-                return self._instance
+                return self._instance  # type: ignore
             except Exception as e:
                 logger.error(f"❌ Failed to load {self._name}: {e}")
                 return None

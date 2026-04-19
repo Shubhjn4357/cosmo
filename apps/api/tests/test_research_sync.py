@@ -107,9 +107,9 @@ def test_scraper_force_refresh_allows_recrawling_visited_url(tmp_path: Path):
             content_hash="duplicate",
         )
 
-    scraper._check_robots = fake_check_robots  # type: ignore[method-assign]
-    scraper._fetch_url = fake_fetch_url  # type: ignore[method-assign]
-    scraper._extract_content = fake_extract_content  # type: ignore[method-assign]
+    scraper._check_robots = fake_check_robots  # type: ignore[assignment]
+    scraper._fetch_url = fake_fetch_url  # type: ignore[assignment]
+    scraper._extract_content = fake_extract_content  # type: ignore[assignment]
     scraper.prepare_session(
         [url],
         force_urls=[url],

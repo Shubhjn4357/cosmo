@@ -92,4 +92,8 @@ jobs:
         if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: apps/mobile/android/app/build/outputs/apk/release/*.apk
+          files: |
+            apps/mobile/android/app/build/outputs/apk/release/*.apk
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+

@@ -52,17 +52,18 @@ def verify_imports():
                 print(f"  [SKIP] {pkg} (directory not found)")
                 continue
                 
+            optional_deps = ["google", "cryptography", "bs4", "faiss", "psutil", "torch", "sse_starlette", "openai"]
             for _, name, is_pkg in pkgutil.walk_packages([pkg_path], prefix=f"{pkg}."):
                 try:
                     importlib.import_module(name)
                     print(f"  [OK] {name}")
                 except Exception as e:
-                    # Ignore some intentional import failures if they depend on specific hardware/env
-                    if "Optional" in str(e):
+                    # Treat missing optional dependencies as warnings
+                    if any(dep in str(e) for dep in optional_deps):
+                        print(f"  [WARN] {name} - Warning: {e}")
+                    else:
                         print(f"  [FAIL] {name} - CRITICAL: {e}")
                         fail_count += 1
-                    else:
-                        print(f"  [WARN] {name} - Warning: {e}")
         except Exception as e:
             print(f"[ERROR] scanning {pkg}: {e}")
             fail_count += 1

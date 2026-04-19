@@ -8,8 +8,12 @@ import os
 import time
 from typing import Any
 
-from google.auth.transport import requests as google_requests  # type: ignore
-from google.oauth2 import id_token as google_id_token  # type: ignore
+try:
+    from google.auth.transport import requests as google_requests  # type: ignore
+    from google.oauth2 import id_token as google_id_token  # type: ignore
+except ImportError:
+    google_requests = None
+    google_id_token = None
 
 
 GOOGLE_DEFAULT_CERTS_URL = "https://www.googleapis.com/oauth2/v1/certs"

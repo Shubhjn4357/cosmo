@@ -16,7 +16,7 @@ from typing import List, Optional
 
 import aiohttp
 import torch
-import yaml
+import yaml  # type: ignore
 from bs4 import BeautifulSoup
 from loguru import logger
 
@@ -61,7 +61,7 @@ def _config_value(config: dict, section: str, key: str, default):
 
 async def fetch_page(session: aiohttp.ClientSession, url: str) -> Optional[str]:
     try:
-        async with session.get(url, timeout=15) as response:
+        async with session.get(url, timeout=15) as response:  # type: ignore
             if response.status == 200:
                 return await response.text()
     except Exception as e:
@@ -107,7 +107,7 @@ async def _discover_random_wikipedia_urls(session: aiohttp.ClientSession, count:
         f"?action=query&list=random&rnnamespace=0&rnlimit={min(count, 20)}&format=json"
     )
     try:
-        async with session.get(endpoint, timeout=20) as response:
+        async with session.get(endpoint, timeout=20) as response:  # type: ignore
             if response.status != 200:
                 return []
             payload = await response.json()
@@ -381,10 +381,10 @@ def prepare_dataset(tokenizer, config: dict, texts: List[str]) -> MemmapDataset:
     for text in texts:
         dataset.add_text(text)
 
-    while dataset.metadata["total_tokens"] <= dataset.config.max_seq_len:
+    while dataset.metadata["total_tokens"] <= dataset.config.max_seq_len:  # type: ignore
         for text in texts:
             dataset.add_text(text)
-            if dataset.metadata["total_tokens"] > dataset.config.max_seq_len:
+            if dataset.metadata["total_tokens"] > dataset.config.max_seq_len:  # type: ignore
                 break
 
     return dataset

@@ -86,14 +86,14 @@ def main() -> int:
         )
         require(profiles_response.status_code == 200, f"Runtime profiles failed: {profiles_response.status_code}")
         profiles_payload = read_json(profiles_response)
-        require(profiles_payload.get("profiles"), "Runtime profiles payload is empty")
+        require(profiles_payload.get("profiles"), "Runtime profiles payload is empty")  # type: ignore
 
         gguf_profile = next(
             (profile for profile in profiles_payload["profiles"] if profile.get("id") == "gguf-coder"),
             None,
         )
         require(gguf_profile is not None, "GGUF profile is missing from runtime profiles")
-        require("status_message" in gguf_profile, "GGUF profile diagnostics are missing")
+        require("status_message" in gguf_profile, "GGUF profile diagnostics are missing")  # type: ignore
 
         print_step("Checking selected runtime validation")
         runtime_validate_response = session.post(
@@ -217,8 +217,8 @@ def main() -> int:
         )
         require(chat_response.status_code == 200, f"Chat failed: {chat_response.status_code}")
         chat_payload = read_json(chat_response)
-        require(chat_payload.get("response"), "Chat returned an empty response")
-        require(chat_payload.get("backend"), "Chat payload missing backend")
+        require(chat_payload.get("response"), "Chat returned an empty response")  # type: ignore
+        require(chat_payload.get("backend"), "Chat payload missing backend")  # type: ignore
 
     if not args.skip_image:
         print_step("Checking image model catalog")
@@ -226,7 +226,7 @@ def main() -> int:
         require(image_models_response.status_code == 200, f"Image model catalog failed: {image_models_response.status_code}")
         image_models_payload = read_json(image_models_response)
         models = image_models_payload.get("models") or []
-        require(models, "Image model catalog is empty")
+        require(models, "Image model catalog is empty")  # type: ignore
         model_id = image_models_payload.get("current_model") or models[0]["id"]
 
         print_step("Checking image generation")
@@ -245,7 +245,7 @@ def main() -> int:
         )
         require(image_response.status_code == 200, f"Image generation failed: {image_response.status_code}")
         image_payload = read_json(image_response)
-        require(image_payload.get("image_url"), "Image generation returned no image_url")
+        require(image_payload.get("image_url"), "Image generation returned no image_url")  # type: ignore
 
     print_step("Checking vision feed stats")
     vision_stats_response = session.get(f"{args.base_url}/api/feed/vision/stats", timeout=60)
@@ -280,7 +280,7 @@ def main() -> int:
     )
     require(vision_response.status_code == 200, f"Vision retrieval failed: {vision_response.status_code}")
     vision_payload = read_json(vision_response)
-    require(vision_payload.get("method"), "Vision payload missing method")
+    require(vision_payload.get("method"), "Vision payload missing method")  # type: ignore
     require(vision_payload["method"] in {"retrieval", "trained_model"}, "Unexpected vision method")
 
     print_step("Smoke checks passed")

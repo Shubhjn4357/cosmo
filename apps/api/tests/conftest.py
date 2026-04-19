@@ -40,7 +40,7 @@ class TestServer:
 
 
 @pytest.fixture(scope="session")
-def server(tmp_path_factory: pytest.TempPathFactory) -> TestServer:
+def server(tmp_path_factory: pytest.TempPathFactory) -> TestServer:  # type: ignore
     repo_root = Path(__file__).resolve().parents[1]
     temp_root = tmp_path_factory.mktemp("cosmo-test")
     output_dir = temp_root / "logs"

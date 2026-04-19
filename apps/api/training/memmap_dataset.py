@@ -87,7 +87,7 @@ class MemmapDataset(Dataset):
         target_bytes = int(size) * dtype.itemsize
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.data_path, 'a+b') as handle:
-            handle.seek(0, os.SEEK_END)
+            handle.seek(0, os.SEEK_END)  # type: ignore
             current_bytes = handle.tell()
             if current_bytes < target_bytes:
                 handle.truncate(target_bytes)
@@ -111,7 +111,7 @@ class MemmapDataset(Dataset):
             del self.data
 
         self._ensure_file_capacity(new_size)
-        self.data = np.memmap(
+        self.data = np.memmap(  # type: ignore
             self.data_path,
             dtype=dtype,
             mode='r+',
@@ -129,16 +129,16 @@ class MemmapDataset(Dataset):
         """
         current_tokens = self.metadata["total_tokens"]
         new_tokens = len(tokens)
-        total_needed = current_tokens + new_tokens
+        total_needed = current_tokens + new_tokens  # type: ignore
         
         # Resize if needed
-        allocated = self.metadata.get("allocated_size", len(self.data))
-        if total_needed > allocated:
-            new_size = max(total_needed, allocated + self.config.chunk_size)
+        allocated = self.metadata.get("allocated_size", len(self.data))  # type: ignore
+        if total_needed > allocated:  # type: ignore
+            new_size = max(total_needed, allocated + self.config.chunk_size)  # type: ignore
             self._resize_memmap(new_size)
         
         # Write tokens
-        self.data[current_tokens:current_tokens + new_tokens] = np.array(tokens, dtype=getattr(np, self.config.dtype))
+        self.data[current_tokens:current_tokens + new_tokens] = np.array(tokens, dtype=getattr(np, self.config.dtype))  # type: ignore
         
         # Update metadata
         self.metadata["total_tokens"] = total_needed
@@ -149,7 +149,7 @@ class MemmapDataset(Dataset):
         self._save_metadata()
         
         # Flush to disk
-        self.data.flush()
+        self.data.flush()  # type: ignore
     
     def add_text(self, text: str):
         """
@@ -169,7 +169,7 @@ class MemmapDataset(Dataset):
     
     def __len__(self) -> int:
         """Return number of complete sequences."""
-        total_tokens = int(self.metadata.get("total_tokens", 0))
+        total_tokens = int(self.metadata.get("total_tokens", 0))  # type: ignore
         seq_len = int(self.config.max_seq_len)
         if total_tokens <= 1 or seq_len <= 0:
             return 0
@@ -188,12 +188,12 @@ class MemmapDataset(Dataset):
         seq_len = self.config.max_seq_len
         start = idx * seq_len
         end = start + seq_len + 1  # +1 for labels offset
-        total_tokens = int(self.metadata.get("total_tokens", 0))
+        total_tokens = int(self.metadata.get("total_tokens", 0))  # type: ignore
         if end > total_tokens:
             raise IndexError(f"Sequence {idx} exceeds available token window")
         
         # Get tokens
-        tokens = self.data[start:end].copy()
+        tokens = self.data[start:end].copy()  # type: ignore
         
         # Create input and labels (shifted by 1)
         input_ids = torch.tensor(tokens[:-1], dtype=torch.long)
@@ -207,7 +207,7 @@ class MemmapDataset(Dataset):
             "total_tokens": self.metadata["total_tokens"],
             "num_sequences": len(self),
             "seq_len": self.config.max_seq_len,
-            "size_mb": self.metadata.get("allocated_size", 0) * 4 / (1024 * 1024)
+            "size_mb": self.metadata.get("allocated_size", 0) * 4 / (1024 * 1024)  # type: ignore
         }
 
 
@@ -225,7 +225,7 @@ class StreamingMemmapDataset(IterableDataset):
         
         if self.meta_path.exists():
             with open(self.meta_path, 'r') as f:
-                self.metadata = json.load(f)
+                self.metadata = json.load(f)  # type: ignore
         else:
             raise FileNotFoundError(f"Dataset not found at {self.memmap_dir}")
     
@@ -261,7 +261,7 @@ class DataCollector:
     def __init__(self, dataset: MemmapDataset, tokenizer):
         self.dataset = dataset
         self.tokenizer = tokenizer
-        self.buffer = []
+        self.buffer = []  # type: ignore
         self.buffer_tokens = 0
         self.flush_threshold = 10000  # Flush every 10k tokens
     

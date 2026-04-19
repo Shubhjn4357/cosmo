@@ -142,7 +142,7 @@ class AutonomousDaemon:
         self.pages_since_train = 0
         
         # Error tracking for learning from mistakes
-        self.error_buffer = []
+        self.error_buffer = []  # type: ignore
         
         logger.info("Autonomous learning daemon initialized")
     

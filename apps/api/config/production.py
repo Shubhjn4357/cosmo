@@ -46,7 +46,7 @@ LOCAL_MODEL_PATH = "./models"
 # === LOAD BALANCING ===
 
 # Distribute across multiple HF accounts (if you have them)
-HF_API_KEYS = [
+HF_API_KEYS: list[str] = [
     # Add multiple keys if you have backup accounts
     # "hf_key_1",
     # "hf_key_2",

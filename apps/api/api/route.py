@@ -182,7 +182,7 @@ class HardenedWSManager:
     def __init__(self):
         self.active_connections: dict[str, list[WebSocket]] = {}
         self._heartbeat_interval = 25 # Seconds
-        self._loop = asyncio.get_event_loop()
+        self._loop = None # Initialized lazily if needed
 
     async def connect(self, websocket: WebSocket, session_id: str, token: Optional[str] = None):
         # 1. Verification Handshake
@@ -630,8 +630,13 @@ app.add_middleware(
 
 ensure_app_dirs()
 app.mount("/static", StaticFiles(directory=str(UPLOADS_DIR)), name="static")
-app.mount("/assets", StaticFiles(directory=str(get_ui_dir() / "assets")), name="assets")
-app.mount("/ui-assets", StaticFiles(directory=str(get_ui_dir())), name="ui-assets")
+assets_dir = get_ui_dir() / "assets"
+assets_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+ui_dir = get_ui_dir()
+ui_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/ui-assets", StaticFiles(directory=str(ui_dir)), name="ui-assets")
 
 # Register all routes immediately (Eager) to prevent 404s
 _register_api_routes(app, _load_api_route_modules())

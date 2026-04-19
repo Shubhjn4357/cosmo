@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Protocol, Optional, dict  # type: ignore
+from typing import Any, Protocol, Optional
 
 class StateProtocol(Protocol):
     training_process: Optional[subprocess.Popen]

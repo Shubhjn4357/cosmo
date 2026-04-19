@@ -8,14 +8,17 @@ import asyncio
 import base64
 import json
 import os
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from typing_extensions import TypedDict
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 from utils.anonymizer import anonymize_lesson
 from pydantic import BaseModel, Field
-from sse_starlette.sse import EventSourceResponse  # type: ignore
+try:
+    from sse_starlette.sse import EventSourceResponse  # type: ignore
+except ImportError:
+    EventSourceResponse = Any  # type: ignore
 
 
 router = APIRouter()

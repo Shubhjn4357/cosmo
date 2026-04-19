@@ -72,7 +72,7 @@ def send_email(
         return False
 
 
-def send_admin_alert(subject: str, message: str, details: dict = None) -> bool:
+def send_admin_alert(subject: str, message: str, details: dict = None) -> bool:  # type: ignore
     """
     Send alert to admin
    

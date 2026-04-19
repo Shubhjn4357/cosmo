@@ -8,7 +8,10 @@ on:
       - .github/workflows/cosmo-ai-space.yml
       - apps/api/**
       - apps/api/native/**
+  release:
+    types: [published]
   workflow_dispatch:
+
 
 permissions:
   contents: read

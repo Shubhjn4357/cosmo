@@ -9,7 +9,10 @@ from datetime import date, datetime, timedelta, timezone
 from threading import Lock
 from typing import Dict, Any, List
 
-import psutil
+try:
+    import psutil
+except ImportError:
+    psutil = None  # type: ignore
 from dataclasses import dataclass, field
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel

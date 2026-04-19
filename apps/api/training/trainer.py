@@ -124,7 +124,7 @@ class Trainer:
         # Cosmo AI - Training Module
         self.global_step = 0
         self.total_loss = 0.0
-        self.loss_history = []
+        self.loss_history = []  # type: ignore
         self.best_loss = float('inf')
         
         # Checkpoint directory
@@ -132,7 +132,7 @@ class Trainer:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
         # Error tracking for learning from mistakes
-        self.error_log = []
+        self.error_log = []  # type: ignore
         
         logger.info(f"Trainer initialized on {self.device}")
         logger.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")

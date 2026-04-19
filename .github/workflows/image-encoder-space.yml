@@ -9,7 +9,10 @@ on:
       - apps/image-encoder/**
       - apps/api/.env.example
       - apps/api/native/**
+  release:
+    types: [published]
   workflow_dispatch:
+
 
 permissions:
   contents: read
