@@ -25,6 +25,7 @@ jobs:
       CI: "1"
       EXPO_NO_TELEMETRY: "1"
       EXPO_USE_PNPM: "1"
+      EXPO_ROUTER_APP_ROOT: ./app
       GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
 
     steps:
