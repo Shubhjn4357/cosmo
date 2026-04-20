@@ -78,11 +78,15 @@ jobs:
         working-directory: apps/mobile
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build Android Release APK
+      - name: Clean Managed Assets
         working-directory: apps/mobile/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew clean
+
+      - name: Build Android Release APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
