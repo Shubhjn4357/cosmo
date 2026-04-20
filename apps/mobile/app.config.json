@@ -3,7 +3,7 @@
     "name": "Cosmo AI",
     "slug": "cosmo",
     "version": "3.5.0",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "cosmo",
