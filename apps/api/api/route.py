@@ -664,14 +664,18 @@ def _record_request_analytics(
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global Error for {request.url.path}: {exc}")
+    import traceback
+    error_traceback = traceback.format_exc()
+    logger.error(f"Global Error for {request.url.path}: {exc}\n{error_traceback}")
+    
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "message": "Internal Server Error",
-            "detail": str(exc) if TEST_MODE else "Application error encountered",
-            "error": "InternalServerError"
+            "detail": str(exc) if (TEST_MODE or os.getenv("COSMO_DEBUG_MODE", "false").lower() == "true") else "Application error encountered",
+            "error": "InternalServerError",
+            "path": request.url.path
         }
     )
 

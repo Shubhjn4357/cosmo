@@ -80,7 +80,20 @@ if __name__ == "__main__":
             os.environ.setdefault("COSMO_PREBIND_DELAY_SECONDS", "0")
             
             # Map Hugging Face secrets to environment variables securely
-            for secret_key in ("HF_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"):
+            secrets_to_map = (
+                "HF_TOKEN", 
+                "CLOUDFLARE_ACCOUNT_ID", 
+                "CLOUDFLARE_API_TOKEN",
+                "TURSO_DATABASE_URL",
+                "TURSO_AUTH_TOKEN",
+                "OPENAI_API_KEY",
+                "GEMINI_API_KEY",
+                "SENDGRID_API_KEY",
+                "ENCRYPTION_KEY",
+                "JWT_SECRET",
+                "ADMIN_PASSWORD"
+            )
+            for secret_key in secrets_to_map:
                 # Use absolute path for /run/secrets
                 secret_path = Path("/run/secrets").joinpath(secret_key)
                 if secret_path.exists() and not os.getenv(secret_key):

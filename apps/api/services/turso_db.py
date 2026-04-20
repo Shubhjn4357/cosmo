@@ -27,7 +27,7 @@ except ImportError:
     libsql = None
 
 
-MIGRATION_PATH = Path(__file__).resolve().parents[1] / "drizzle" / "0000_cosmo_initial.sql"
+MIGRATION_PATH = Path(__file__).resolve().parents[1] / "drizzle" / "0000_whisper_initial.sql"
 AUTO_ID_TABLES = {
     "chat_history",
     "token_purchases",
