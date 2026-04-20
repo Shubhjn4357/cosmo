@@ -168,9 +168,9 @@ class NativeBitNetService {
         if (Platform.OS === 'web') return false;
 
         // ── JSI path ──────────────────────────────────────────────────────────
-        if (global.cosmoBitNet) {
+        if (globalThis.cosmoBitNet) {
             try {
-                const res = global.cosmoBitNet.loadModel(path);
+                const res = globalThis.cosmoBitNet.loadModel(path);
                 this._isInitialized = res.status === 'loaded';
                 this._currentModelPath = this._isInitialized ? path : null;
                 if (!this._isInitialized) {
@@ -231,8 +231,8 @@ class NativeBitNetService {
         }
 
         // ── JSI path ──────────────────────────────────────────────────────────
-        if (global.cosmoBitNet) {
-            const res = global.cosmoBitNet.generate(prompt, options);
+        if (globalThis.cosmoBitNet) {
+            const res = globalThis.cosmoBitNet.generate(prompt, options);
             return {
                 text: res.text ?? '',
                 tokens_per_second: res.tokens_per_second ?? 0,
@@ -281,8 +281,8 @@ class NativeBitNetService {
      * externally via the stopCompletion() method on the context.
      */
     stopGeneration(): void {
-        if (global.cosmoBitNet) {
-            global.cosmoBitNet.stopGeneration();
+        if (globalThis.cosmoBitNet) {
+            globalThis.cosmoBitNet.stopGeneration();
         }
         // For llama.rn, the caller must cancel via context.stopCompletion().
     }
@@ -291,9 +291,9 @@ class NativeBitNetService {
 
     /** Tokenizes text and returns token IDs. JSI path only. */
     tokenize(text: string): number[] {
-        if (!global.cosmoBitNet || !this._isInitialized) return [];
+        if (!globalThis.cosmoBitNet || !this._isInitialized) return [];
         try {
-            return global.cosmoBitNet.tokenize(text);
+            return globalThis.cosmoBitNet.tokenize(text);
         } catch (err) {
             console.warn('[BitNet] tokenize error:', err);
             return [];
@@ -302,9 +302,9 @@ class NativeBitNetService {
 
     /** Converts token IDs back to a string. JSI path only. */
     detokenize(tokens: number[]): string {
-        if (!global.cosmoBitNet || !this._isInitialized) return '';
+        if (!globalThis.cosmoBitNet || !this._isInitialized) return '';
         try {
-            return global.cosmoBitNet.detokenize(tokens);
+            return globalThis.cosmoBitNet.detokenize(tokens);
         } catch (err) {
             console.warn('[BitNet] detokenize error:', err);
             return '';
@@ -315,11 +315,11 @@ class NativeBitNetService {
 
     /** Returns metadata about the currently loaded model. JSI path only. */
     getModelInfo(): BitNetModelInfo {
-        if (!global.cosmoBitNet) {
+        if (!globalThis.cosmoBitNet) {
             return { is_loaded: false, model_path: '' };
         }
         try {
-            return global.cosmoBitNet.getModelInfo();
+            return globalThis.cosmoBitNet.getModelInfo();
         } catch {
             return { is_loaded: false, model_path: '' };
         }
@@ -327,11 +327,11 @@ class NativeBitNetService {
 
     /** Returns live memory stats. JSI path only. */
     getMemoryStats(): BitNetMemoryStats {
-        if (!global.cosmoBitNet) {
+        if (!globalThis.cosmoBitNet) {
             return { kv_cache_mb: 0, model_size_mb: 0 };
         }
         try {
-            return global.cosmoBitNet.getMemoryStats();
+            return globalThis.cosmoBitNet.getMemoryStats();
         } catch {
             return { kv_cache_mb: 0, model_size_mb: 0 };
         }
@@ -341,8 +341,8 @@ class NativeBitNetService {
 
     /** Frees the loaded model and all associated memory. */
     async unloadModel(): Promise<void> {
-        if (global.cosmoBitNet && this._isInitialized) {
-            global.cosmoBitNet.unloadModel();
+        if (globalThis.cosmoBitNet && this._isInitialized) {
+            globalThis.cosmoBitNet.unloadModel();
         }
         if (this._llamaCtx) {
             await this._llamaCtx.release();
@@ -356,7 +356,7 @@ class NativeBitNetService {
 
     get isInitialized(): boolean { return this._isInitialized; }
     get currentModelPath(): string | null { return this._currentModelPath; }
-    get useJSI(): boolean { return !!global.cosmoBitNet; }
+    get useJSI(): boolean { return !!globalThis.cosmoBitNet; }
 
     /**
      * Hardware-accelerated acoustic feature extraction.

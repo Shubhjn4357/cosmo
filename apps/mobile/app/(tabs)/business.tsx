@@ -69,7 +69,7 @@ export default function BusinessScreen() {
     const [isDistilling, setIsDistilling] = useState(false);
 
     const subscriptionCleanup = useRef<(() => void) | null>(null);
-    const pollInterval = useRef<NodeJS.Timeout | null>(null);
+    const pollInterval = useRef<ReturnType<typeof setTimeout> | null>(null);
     const chatScrollRef = useRef<ScrollView>(null);
 
     useEffect(() => {
